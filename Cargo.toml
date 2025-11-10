@@ -1,9 +1,5 @@
 [workspace]
-members = [
-    "niri-config",
-    "niri-ipc",
-    "niri-visual-tests",
-]
+members = ["niri-config", "niri-ipc", "niri-visual-tests"]
 
 [workspace.package]
 version = "25.8.0"
@@ -21,7 +17,10 @@ clap = { version = "4.5.48", features = ["derive"] }
 insta = "1.43.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-tracing = { version = "0.1.41", features = ["max_level_trace", "release_max_level_debug"] }
+tracing = { version = "0.1.41", features = [
+  "max_level_trace",
+  "release_max_level_debug",
+] }
 # 0.3.20 filters out all ANSI codes to "fix a security issue" while also breaking
 # everyone who relied on them for color output, with no fallback available.
 # https://github.com/tokio-rs/tracing/issues/3378
@@ -62,29 +61,43 @@ async-io = { version = "2.6.0", optional = true }
 atomic = "0.6.1"
 bitflags.workspace = true
 bytemuck = { version = "1.23.2", features = ["derive"] }
-calloop = { version = "0.14.3", features = ["executor", "futures-io", "signals"] }
+calloop = { version = "0.14.3", features = [
+  "executor",
+  "futures-io",
+  "signals",
+] }
 clap = { workspace = true, features = ["string"] }
 clap_complete = "4.5.58"
 clap_complete_nushell = "4.5.8"
 directories = "6.0.0"
 drm-ffi = "0.9.0"
 fastrand = "2.3.0"
-futures-util = { version = "0.3.31", default-features = false, features = ["std", "io"] }
+futures-util = { version = "0.3.31", default-features = false, features = [
+  "std",
+  "io",
+] }
 git-version = "0.3.9"
 glam = "0.30.8"
 input = { version = "0.9.1", features = ["libinput_1_21"] }
 keyframe = { version = "1.1.1", default-features = false }
 libc = "0.2.176"
 libdisplay-info = "0.3.0"
-log = { version = "0.4.28", features = ["max_level_trace", "release_max_level_debug"] }
+log = { version = "0.4.28", features = [
+  "max_level_trace",
+  "release_max_level_debug",
+] }
 niri-config = { version = "25.8.0", path = "niri-config" }
 niri-ipc = { version = "25.8.0", path = "niri-ipc", features = ["clap"] }
 ordered-float = "5.1.0"
 pango = { version = "0.20.12", features = ["v1_44"] }
 pangocairo = "0.20.10"
-pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", optional = true, features = ["v0_3_33"] }
+pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", optional = true, features = [
+  "v0_3_33",
+] }
 png = "0.18.0"
-portable-atomic = { version = "1.11.1", default-features = false, features = ["float"] }
+portable-atomic = { version = "1.11.1", default-features = false, features = [
+  "float",
+] }
 profiling = "1.0.17"
 sd-notify = "0.4.5"
 serde.workspace = true
@@ -102,19 +115,19 @@ zbus = { version = "5.11.0", optional = true }
 [dependencies.smithay]
 workspace = true
 features = [
-    "backend_drm",
-    "backend_egl",
-    "backend_gbm",
-    "backend_libinput",
-    "backend_session_libseat",
-    "backend_udev",
-    "backend_winit",
-    "desktop",
-    "renderer_gl",
-    "renderer_pixman",
-    "renderer_multi",
-    "use_system_lib",
-    "wayland_frontend",
+  "backend_drm",
+  "backend_egl",
+  "backend_gbm",
+  "backend_libinput",
+  "backend_session_libseat",
+  "backend_udev",
+  "backend_winit",
+  "desktop",
+  "renderer_gl",
+  "renderer_pixman",
+  "renderer_multi",
+  "use_system_lib",
+  "wayland_frontend",
 ]
 
 [dev-dependencies]
@@ -130,7 +143,13 @@ xshell = "0.2.7"
 [features]
 default = ["dbus", "systemd", "xdp-gnome-screencast"]
 # Enables D-Bus support (serve various freedesktop and GNOME interfaces, accessibility tree, power button handling).
-dbus = ["dep:zbus", "dep:async-io", "dep:url", "dep:accesskit", "dep:accesskit_unix"]
+dbus = [
+  "dep:zbus",
+  "dep:async-io",
+  "dep:url",
+  "dep:accesskit",
+  "dep:accesskit_unix",
+]
 # Enables systemd integration (global environment, apps in transient scopes).
 systemd = ["dbus"]
 # Enables screencasting support through xdg-desktop-portal-gnome.
@@ -138,7 +157,11 @@ xdp-gnome-screencast = ["dbus", "pipewire"]
 # Enables the Tracy profiler instrumentation.
 profile-with-tracy = ["profiling/profile-with-tracy", "tracy-client/default"]
 # Enables the on-demand Tracy profiler instrumentation.
-profile-with-tracy-ondemand = ["profile-with-tracy", "tracy-client/ondemand", "tracy-client/manual-lifetime"]
+profile-with-tracy-ondemand = [
+  "profile-with-tracy",
+  "tracy-client/ondemand",
+  "tracy-client/manual-lifetime",
+]
 # Enables Tracy allocation profiling.
 profile-with-tracy-allocations = ["profile-with-tracy"]
 # Enables dinit integration (global environment).
@@ -163,12 +186,12 @@ similar.opt-level = 3
 [package.metadata.generate-rpm]
 version = "25.08"
 assets = [
-    { source = "target/release/niri", dest = "/usr/bin/", mode = "755" },
-    { source = "resources/niri-session", dest = "/usr/bin/", mode = "755" },
-    { source = "resources/niri.desktop", dest = "/usr/share/wayland-sessions/", mode = "644" },
-    { source = "resources/niri-portals.conf", dest = "/usr/share/xdg-desktop-portal/", mode = "644" },
-    { source = "resources/niri.service", dest = "/usr/lib/systemd/user/", mode = "644" },
-    { source = "resources/niri-shutdown.target", dest = "/usr/lib/systemd/user/", mode = "644" },
+  { source = "target/release/niri", dest = "/usr/bin/", mode = "755" },
+  { source = "resources/niri-session", dest = "/usr/bin/", mode = "755" },
+  { source = "resources/niri.desktop", dest = "/usr/share/wayland-sessions/", mode = "644" },
+  { source = "resources/niri-portals.conf", dest = "/usr/share/xdg-desktop-portal/", mode = "644" },
+  { source = "resources/niri.service", dest = "/usr/lib/systemd/user/", mode = "644" },
+  { source = "resources/niri-shutdown.target", dest = "/usr/lib/systemd/user/", mode = "644" },
 ]
 [package.metadata.generate-rpm.requires]
 alacritty = "*"
@@ -177,10 +200,34 @@ fuzzel = "*"
 [package.metadata.deb]
 depends = "alacritty, fuzzel"
 assets = [
-    ["target/release/niri", "usr/bin/", "755"],
-    ["resources/niri-session", "usr/bin/", "755"],
-    ["resources/niri.desktop", "/usr/share/wayland-sessions/", "644"],
-    ["resources/niri-portals.conf", "/usr/share/xdg-desktop-portal/", "644"],
-    ["resources/niri.service", "/usr/lib/systemd/user/", "644"],
-    ["resources/niri-shutdown.target", "/usr/lib/systemd/user/", "644"],
+  [
+    "target/release/niri",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "resources/niri-session",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "resources/niri.desktop",
+    "/usr/share/wayland-sessions/",
+    "644",
+  ],
+  [
+    "resources/niri-portals.conf",
+    "/usr/share/xdg-desktop-portal/",
+    "644",
+  ],
+  [
+    "resources/niri.service",
+    "/usr/lib/systemd/user/",
+    "644",
+  ],
+  [
+    "resources/niri-shutdown.target",
+    "/usr/lib/systemd/user/",
+    "644",
+  ],
 ]
