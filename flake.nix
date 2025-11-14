@@ -135,6 +135,10 @@
 
       packages = forEachSupportedSystem ({ ourPackages, ... }: ourPackages);
 
+      nixosModules.default = import ./nix/modules/niri-nixos.nix { overlay = self.overlays.default; };
+
+      homeManagerModules.default = import ./nix/modules/niri-home-manager.nix;
+
       overlays.default = final: _: {
         niriPackages = final.callPackage ./scope.nix {
           inherit
