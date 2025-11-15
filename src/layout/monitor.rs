@@ -508,6 +508,7 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_window(
         &mut self,
         window: W,
@@ -516,6 +517,7 @@ impl<W: LayoutElement> Monitor<W> {
         width: ColumnWidth,
         is_full_width: bool,
         is_floating: bool,
+        cursor_pos: Option<Point<f64, Logical>>,
     ) {
         // Currently, everything a workspace sets on a Tile is the same across all workspaces of a
         // monitor. So we can use any workspace, not necessarily the exact target workspace.
@@ -529,6 +531,7 @@ impl<W: LayoutElement> Monitor<W> {
             width,
             is_full_width,
             is_floating,
+            cursor_pos,
         );
     }
 
@@ -566,12 +569,21 @@ impl<W: LayoutElement> Monitor<W> {
         width: ColumnWidth,
         is_full_width: bool,
         is_floating: bool,
+        cursor_pos: Option<Point<f64, Logical>>,
     ) {
         let (mut workspace_idx, target) = self.resolve_add_window_target(target);
 
         let workspace = &mut self.workspaces[workspace_idx];
 
-        workspace.add_tile(tile, target, activate, width, is_full_width, is_floating);
+        workspace.add_tile(
+            tile,
+            target,
+            activate,
+            width,
+            is_full_width,
+            is_floating,
+            cursor_pos,
+        );
 
         // After adding a new window, workspace becomes this output's own.
         if workspace.name().is_none() {
@@ -811,6 +823,7 @@ impl<W: LayoutElement> Monitor<W> {
             removed.width,
             removed.is_full_width,
             removed.is_floating,
+            None,
         );
     }
 
@@ -845,6 +858,7 @@ impl<W: LayoutElement> Monitor<W> {
             removed.width,
             removed.is_full_width,
             removed.is_floating,
+            None,
         );
     }
 
@@ -900,6 +914,7 @@ impl<W: LayoutElement> Monitor<W> {
             removed.width,
             removed.is_full_width,
             removed.is_floating,
+            None,
         );
 
         if self.workspace_switch.is_none() {

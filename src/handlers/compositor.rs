@@ -216,6 +216,7 @@ impl CompositorHandler for State {
                         is_full_width,
                         is_floating,
                         activate,
+                        self.niri.seat.get_pointer().map(|e| e.current_location()),
                     );
                     let output = output.cloned();
 
