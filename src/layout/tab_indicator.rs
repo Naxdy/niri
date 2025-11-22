@@ -89,10 +89,7 @@ impl TabIndicator {
         let gaps_between = round_max1(self.config.gaps_between_tabs);
 
         let position = self.config.position;
-        let side = match position {
-            TabIndicatorPosition::Left | TabIndicatorPosition::Right => area.size.h,
-            TabIndicatorPosition::Top | TabIndicatorPosition::Bottom => area.size.w,
-        };
+        let side = area.size.w;
         let total_prop = self.config.length.total_proportion.unwrap_or(0.5);
         let min_length = round(side * total_prop.clamp(0., 2.));
 
@@ -103,18 +100,16 @@ impl TabIndicator {
         let length = f64::max(min_length, shortest_length);
         let px_per_tab = (length + gaps_between) / count as f64 - gaps_between;
 
-        let px_per_tab = px_per_tab * progress;
         let gaps_between = round(self.config.gaps_between_tabs * progress);
 
-        let length = count as f64 * (px_per_tab + gaps_between) - gaps_between;
+        let length = (count - 1) as f64 * (px_per_tab + gaps_between) + px_per_tab * progress;
         let px_per_tab = floor_logical_in_physical_max1(scale, px_per_tab);
-        let floored_length = count as f64 * (px_per_tab + gaps_between) - gaps_between;
+        let floored_length =
+            (count - 1) as f64 * (px_per_tab + gaps_between) + px_per_tab * progress;
         let mut ones_left = ((length - floored_length) / pixel).round() as usize;
 
         let mut shader_loc = Point::from((-gap - width, round((side - length) / 2.)));
         match position {
-            TabIndicatorPosition::Left => (),
-            TabIndicatorPosition::Right => shader_loc.x = area.size.w + gap,
             TabIndicatorPosition::Top => mem::swap(&mut shader_loc.x, &mut shader_loc.y),
             TabIndicatorPosition::Bottom => {
                 shader_loc.x = shader_loc.y;
@@ -123,7 +118,7 @@ impl TabIndicator {
         }
         shader_loc += area.loc;
 
-        (0..count).map(move |_| {
+        (0..count).map(move |idx| {
             let mut px_per_tab = px_per_tab;
             if ones_left > 0 {
                 ones_left -= 1;
@@ -132,23 +127,12 @@ impl TabIndicator {
 
             let loc = shader_loc;
 
-            match position {
-                TabIndicatorPosition::Left | TabIndicatorPosition::Right => {
-                    shader_loc.y += px_per_tab + gaps_between
-                }
-                TabIndicatorPosition::Top | TabIndicatorPosition::Bottom => {
-                    shader_loc.x += px_per_tab + gaps_between
-                }
-            }
+            shader_loc.x += px_per_tab + gaps_between;
 
-            let size = match position {
-                TabIndicatorPosition::Left | TabIndicatorPosition::Right => {
-                    Size::from((width, px_per_tab))
-                }
-                TabIndicatorPosition::Top | TabIndicatorPosition::Bottom => {
-                    Size::from((px_per_tab, width))
-                }
-            };
+            let size = Size::from((
+                px_per_tab * if idx == count - 1 { progress } else { 1. },
+                width,
+            ));
 
             Rectangle::new(loc, size)
         })
@@ -184,7 +168,6 @@ impl TabIndicator {
         self.shaders.resize_with(count, Default::default);
         self.shader_locs.resize_with(count, Default::default);
 
-        let position = self.config.position;
         let radius = self.config.corner_radius as f32;
         let shared_rounded_corners = self.config.gaps_between_tabs == 0.;
         let mut tabs_left = tab_count;
@@ -212,35 +195,19 @@ impl TabIndicator {
             let radius = if shared_rounded_corners && tab_count > 1 {
                 if tabs_left == tab_count {
                     // First tab.
-                    match position {
-                        TabIndicatorPosition::Left | TabIndicatorPosition::Right => CornerRadius {
-                            top_left: radius,
-                            top_right: radius,
-                            bottom_right: 0.,
-                            bottom_left: 0.,
-                        },
-                        TabIndicatorPosition::Top | TabIndicatorPosition::Bottom => CornerRadius {
-                            top_left: radius,
-                            top_right: 0.,
-                            bottom_right: 0.,
-                            bottom_left: radius,
-                        },
+                    CornerRadius {
+                        top_left: radius,
+                        top_right: 0.,
+                        bottom_right: 0.,
+                        bottom_left: radius,
                     }
                 } else if tabs_left == 1 {
                     // Last tab.
-                    match position {
-                        TabIndicatorPosition::Left | TabIndicatorPosition::Right => CornerRadius {
-                            top_left: 0.,
-                            top_right: 0.,
-                            bottom_right: radius,
-                            bottom_left: radius,
-                        },
-                        TabIndicatorPosition::Top | TabIndicatorPosition::Bottom => CornerRadius {
-                            top_left: 0.,
-                            top_right: radius,
-                            bottom_right: radius,
-                            bottom_left: 0.,
-                        },
+                    CornerRadius {
+                        top_left: 0.,
+                        top_right: radius,
+                        bottom_right: radius,
+                        bottom_left: 0.,
                     }
                 } else {
                     // Tab in the middle.
@@ -309,10 +276,7 @@ impl TabIndicator {
 
     /// Extra size occupied by the tab indicator.
     pub fn extra_size(&self, tab_count: usize, scale: f64) -> Size<f64, Logical> {
-        if self.config.off
-            || !self.config.place_within_column
-            || (self.config.hide_when_single_tab && tab_count == 1)
-        {
+        if self.config.off || (self.config.hide_when_single_tab && tab_count == 1) {
             return Size::from((0., 0.));
         }
 
@@ -324,19 +288,14 @@ impl TabIndicator {
         // that it peeks from the other side of the window".
         let size = f64::max(0., width + gap);
 
-        match self.config.position {
-            TabIndicatorPosition::Left | TabIndicatorPosition::Right => Size::from((size, 0.)),
-            TabIndicatorPosition::Top | TabIndicatorPosition::Bottom => Size::from((0., size)),
-        }
+        Size::from((0., size))
     }
 
     /// Offset of the tabbed content due to space occupied by the tab indicator.
     pub fn content_offset(&self, tab_count: usize, scale: f64) -> Point<f64, Logical> {
         match self.config.position {
-            TabIndicatorPosition::Left | TabIndicatorPosition::Top => {
-                self.extra_size(tab_count, scale).to_point()
-            }
-            TabIndicatorPosition::Right | TabIndicatorPosition::Bottom => Point::from((0., 0.)),
+            TabIndicatorPosition::Top => self.extra_size(tab_count, scale).to_point(),
+            TabIndicatorPosition::Bottom => Point::from((0., 0.)),
         }
     }
 
@@ -353,7 +312,7 @@ impl TabInfo {
         is_urgent: bool,
         config: &niri_config::TabIndicator,
     ) -> Self {
-        let rules = tile.window().rules();
+        let rules = tile.focused_window().rules();
         let rule = rules.tab_indicator;
 
         let gradient_from_rule = || {

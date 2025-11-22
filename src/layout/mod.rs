@@ -39,9 +39,10 @@ use std::time::Duration;
 use monitor::{InsertHint, InsertPosition, InsertWorkspace, MonitorAddWindowTarget};
 use niri_config::utils::MergeWith as _;
 use niri_config::{
-    Config, CornerRadius, LayoutPart, PresetSize, Workspace as WorkspaceConfig, WorkspaceReference,
+    Config, CornerRadius, LayoutPart, PresetSize, WindowMoveDirection,
+    Workspace as WorkspaceConfig, WorkspaceReference,
 };
-use niri_ipc::{ColumnDisplay, PositionChange, SizeChange, WindowLayout};
+use niri_ipc::{PositionChange, SizeChange, WindowLayout};
 use scrolling::{Column, ColumnWidth};
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::RescaleRenderElement;
@@ -89,7 +90,7 @@ pub mod workspace;
 mod tests;
 
 /// Size changes up to this many pixels don't animate.
-pub const RESIZE_ANIMATION_THRESHOLD: f64 = 10.;
+pub const RESIZE_ANIMATION_THRESHOLD: f64 = 3.;
 
 /// Pointer needs to move this far to pull a window from the layout.
 const INTERACTIVE_MOVE_START_THRESHOLD: f64 = 256. * 256.;
@@ -584,7 +585,7 @@ impl HitType {
     ) -> Option<(&W, Self)> {
         let pos_within_tile = point - tile_pos;
         tile.hit(pos_within_tile)
-            .map(|hit| (tile.window(), hit.offset_win_pos(tile_pos)))
+            .map(|hit| (tile.focused_window(), hit.offset_win_pos(tile_pos)))
     }
 
     pub fn to_activate(self) -> Self {
@@ -934,7 +935,7 @@ impl<W: LayoutElement> Layout<W> {
                                     None
                                 }
                             })
-                            .filter(|move_| next_to == move_.tile.window().id())
+                            .filter(|move_| move_.tile.has_window(next_to))
                             .map(|move_| move_.output.clone())
                         {
                             // The next_to window is being interactively moved.
@@ -1017,7 +1018,7 @@ impl<W: LayoutElement> Layout<W> {
                                     None
                                 }
                             })
-                            .filter(|move_| next_to == move_.tile.window().id())
+                            .filter(|move_| move_.tile.has_window(next_to))
                             .is_some()
                         {
                             // The next_to window is being interactively moved. If there are no
@@ -1066,10 +1067,11 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    pub fn remove_window(
+    fn remove_window_or_tile(
         &mut self,
         window: &W::Id,
         transaction: Transaction,
+        remove_tile: bool,
     ) -> Option<RemovedTile<W>> {
         if let Some(state) = &self.interactive_move {
             match state {
@@ -1079,8 +1081,8 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
                 InteractiveMoveState::Moving(move_) => {
-                    if move_.tile.window().id() == window {
-                        let Some(InteractiveMoveState::Moving(move_)) =
+                    if move_.tile.has_window(window) {
+                        let Some(InteractiveMoveState::Moving(mut move_)) =
                             self.interactive_move.take()
                         else {
                             unreachable!()
@@ -1095,12 +1097,16 @@ impl<W: LayoutElement> Layout<W> {
                             ws.dnd_scroll_gesture_end();
                         }
 
-                        return Some(RemovedTile {
-                            tile: move_.tile,
-                            width: move_.width,
-                            is_full_width: move_.is_full_width,
-                            is_floating: false,
-                        });
+                        if remove_tile || move_.tile.remove_window(window) == 0 {
+                            return Some(RemovedTile {
+                                tile: move_.tile,
+                                width: move_.width,
+                                is_full_width: move_.is_full_width,
+                                is_floating: false,
+                            });
+                        } else {
+                            return None;
+                        }
                     }
                 }
             }
@@ -1111,7 +1117,11 @@ impl<W: LayoutElement> Layout<W> {
                 for mon in monitors {
                     for (idx, ws) in mon.workspaces.iter_mut().enumerate() {
                         if ws.has_window(window) {
-                            let removed = ws.remove_tile(window, transaction);
+                            let removed = if remove_tile {
+                                Some(ws.remove_tile(window, transaction))
+                            } else {
+                                ws.remove_window(window, transaction)
+                            };
 
                             // Clean up empty workspaces that are not active and not last.
                             if !ws.has_windows_or_name()
@@ -1137,7 +1147,8 @@ impl<W: LayoutElement> Layout<W> {
                                 mon.workspaces.remove(1);
                                 mon.active_workspace_idx = 0;
                             }
-                            return Some(removed);
+
+                            return removed;
                         }
                     }
                 }
@@ -1145,20 +1156,40 @@ impl<W: LayoutElement> Layout<W> {
             MonitorSet::NoOutputs { workspaces, .. } => {
                 for (idx, ws) in workspaces.iter_mut().enumerate() {
                     if ws.has_window(window) {
-                        let removed = ws.remove_tile(window, transaction);
+                        let removed = if remove_tile {
+                            Some(ws.remove_tile(window, transaction))
+                        } else {
+                            ws.remove_window(window, transaction)
+                        };
 
                         // Clean up empty workspaces.
                         if !ws.has_windows_or_name() {
                             workspaces.remove(idx);
                         }
 
-                        return Some(removed);
+                        return removed;
                     }
                 }
             }
         }
 
         None
+    }
+
+    pub fn remove_window(
+        &mut self,
+        window: &W::Id,
+        transaction: Transaction,
+    ) -> Option<RemovedTile<W>> {
+        self.remove_window_or_tile(window, transaction, false)
+    }
+
+    pub fn remove_tile(
+        &mut self,
+        window: &W::Id,
+        transaction: Transaction,
+    ) -> Option<RemovedTile<W>> {
+        self.remove_window_or_tile(window, transaction, true)
     }
 
     pub fn descendants_added(&mut self, id: &W::Id) -> bool {
@@ -1173,10 +1204,10 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn update_window(&mut self, window: &W::Id, serial: Option<Serial>) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 // Do this before calling update_window() so it can get up-to-date info.
                 if let Some(serial) = serial {
-                    move_.tile.window_mut().on_commit(serial);
+                    move_.tile.focused_window_mut().on_commit(serial);
                 }
 
                 move_.tile.update_window();
@@ -1321,8 +1352,8 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn find_window_and_output(&self, wl_surface: &WlSurface) -> Option<(&W, Option<&Output>)> {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().is_wl_surface(wl_surface) {
-                return Some((move_.tile.window(), Some(&move_.output)));
+            if let Some(window) = move_.tile.windows().find(|w| w.is_wl_surface(wl_surface)) {
+                return Some((window, Some(&move_.output)));
             }
         }
 
@@ -1353,8 +1384,12 @@ impl<W: LayoutElement> Layout<W> {
         wl_surface: &WlSurface,
     ) -> Option<(&mut W, Option<&Output>)> {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if move_.tile.window().is_wl_surface(wl_surface) {
-                return Some((move_.tile.window_mut(), Some(&move_.output)));
+            if let Some(window) = move_
+                .tile
+                .windows_mut()
+                .find(|w| w.is_wl_surface(wl_surface))
+            {
+                return Some((window, Some(&move_.output)));
             }
         }
 
@@ -1385,7 +1420,7 @@ impl<W: LayoutElement> Layout<W> {
     /// We will try to fit popups inside this rect.
     pub fn popup_target_rect(&self, window: &W::Id) -> Rectangle<f64, Logical> {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 // Follow the scrolling layout logic and fit the popup horizontally within the
                 // window geometry.
                 let width = move_.tile.window_size().w;
@@ -1417,7 +1452,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn scroll_amount_to_activate(&self, window: &W::Id) -> f64 {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 return 0.;
             }
         }
@@ -1441,7 +1476,7 @@ impl<W: LayoutElement> Layout<W> {
         // This function allows focus-follows-mouse to trigger only on the animation target
         // workspace.
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 return true;
             }
         }
@@ -1470,7 +1505,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn activate_window(&mut self, window: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 return;
             }
         }
@@ -1506,7 +1541,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn activate_window_without_raising(&mut self, window: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 return;
             }
         }
@@ -1591,7 +1626,7 @@ impl<W: LayoutElement> Layout<W> {
             .as_ref()
             .and_then(|x| x.moving())
             .filter(|move_| move_.output == *output)
-            .map(|move_| move_.tile.window())
+            .map(|move_| move_.tile.focused_window())
             .into_iter();
 
         let mon = monitors.iter().find(|mon| &mon.output == output).unwrap();
@@ -1610,7 +1645,7 @@ impl<W: LayoutElement> Layout<W> {
             .as_mut()
             .and_then(|x| x.moving_mut())
             .filter(|move_| move_.output == *output)
-            .map(|move_| move_.tile.window_mut())
+            .map(|move_| move_.tile.focused_window_mut())
             .into_iter();
 
         let mon = monitors
@@ -1629,7 +1664,12 @@ impl<W: LayoutElement> Layout<W> {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             // We don't fill any positions for interactively moved windows.
             let layout = move_.tile.ipc_layout_template();
-            f(move_.tile.window(), Some(&move_.output), None, layout);
+            f(
+                move_.tile.focused_window(),
+                Some(&move_.output),
+                None,
+                layout,
+            );
         }
 
         match &self.monitor_set {
@@ -1637,7 +1677,12 @@ impl<W: LayoutElement> Layout<W> {
                 for mon in monitors {
                     for ws in &mon.workspaces {
                         for (tile, layout) in ws.tiles_with_ipc_layouts() {
-                            f(tile.window(), Some(&mon.output), Some(ws.id()), layout);
+                            f(
+                                tile.focused_window(),
+                                Some(&mon.output),
+                                Some(ws.id()),
+                                layout,
+                            );
                         }
                     }
                 }
@@ -1645,7 +1690,7 @@ impl<W: LayoutElement> Layout<W> {
             MonitorSet::NoOutputs { workspaces } => {
                 for ws in workspaces {
                     for (tile, layout) in ws.tiles_with_ipc_layouts() {
-                        f(tile.window(), None, Some(ws.id()), layout);
+                        f(tile.focused_window(), None, Some(ws.id()), layout);
                     }
                 }
             }
@@ -1654,7 +1699,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn with_windows_mut(&mut self, mut f: impl FnMut(&mut W, Option<&Output>)) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            f(move_.tile.window_mut(), Some(&move_.output));
+            f(move_.tile.focused_window_mut(), Some(&move_.output));
         }
 
         match &mut self.monitor_set {
@@ -1816,6 +1861,20 @@ impl<W: LayoutElement> Layout<W> {
         workspace.move_up();
     }
 
+    pub fn focus_next(&mut self) {
+        let Some(workspace) = self.active_workspace_mut() else {
+            return;
+        };
+        workspace.focus_next();
+    }
+
+    pub fn focus_prev(&mut self) {
+        let Some(workspace) = self.active_workspace_mut() else {
+            return;
+        };
+        workspace.focus_prev();
+    }
+
     pub fn move_down_or_to_workspace_down(&mut self) {
         let Some(monitor) = self.active_monitor() else {
             return;
@@ -1830,9 +1889,61 @@ impl<W: LayoutElement> Layout<W> {
         monitor.move_up_or_to_workspace_up();
     }
 
+    pub fn toggle_group(&mut self, window: Option<&W::Id>) {
+        if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
+            if window.is_none_or(|w| w == move_.tile.focused_window().id()) {
+                return;
+            }
+        }
+
+        let workspace = if let Some(window) = window {
+            Some(
+                self.workspaces_mut()
+                    .find(|ws| ws.has_window(window))
+                    .unwrap(),
+            )
+        } else {
+            self.active_workspace_mut()
+        };
+
+        let Some(workspace) = workspace else {
+            return;
+        };
+
+        workspace.toggle_group(window);
+    }
+
+    pub fn move_window_into_or_out_of_group(
+        &mut self,
+        window: Option<&W::Id>,
+        direction: WindowMoveDirection,
+    ) {
+        if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
+            if window.is_none_or(|w| w == move_.tile.focused_window().id()) {
+                return;
+            }
+        }
+
+        let workspace = if let Some(window) = window {
+            Some(
+                self.workspaces_mut()
+                    .find(|ws| ws.has_window(window))
+                    .unwrap(),
+            )
+        } else {
+            self.active_workspace_mut()
+        };
+
+        let Some(workspace) = workspace else {
+            return;
+        };
+
+        workspace.move_window_into_or_out_of_group(window, direction);
+    }
+
     pub fn consume_or_expel_window_left(&mut self, window: Option<&W::Id>) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|w| w == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -1855,7 +1966,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn consume_or_expel_window_right(&mut self, window: Option<&W::Id>) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|w| w == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -2081,7 +2192,7 @@ impl<W: LayoutElement> Layout<W> {
         activate: ActivateWindow,
     ) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none() || window == Some(move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -2182,20 +2293,6 @@ impl<W: LayoutElement> Layout<W> {
         workspace.swap_window_in_direction(direction);
     }
 
-    pub fn toggle_column_tabbed_display(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
-            return;
-        };
-        workspace.toggle_column_tabbed_display();
-    }
-
-    pub fn set_column_display(&mut self, display: ColumnDisplay) {
-        let Some(workspace) = self.active_workspace_mut() else {
-            return;
-        };
-        workspace.set_column_display(display);
-    }
-
     pub fn center_column(&mut self) {
         let Some(workspace) = self.active_workspace_mut() else {
             return;
@@ -2205,7 +2302,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn center_window(&mut self, id: Option<&W::Id>) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if id.is_none() || id == Some(move_.tile.window().id()) {
+            if id.is_none_or(|id| id == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -2235,7 +2332,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn focus_with_output(&self) -> Option<(&W, &Output)> {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            return Some((move_.tile.window(), &move_.output));
+            return Some((move_.tile.focused_window(), &move_.output));
         }
 
         let MonitorSet::Normal {
@@ -2348,7 +2445,11 @@ impl<W: LayoutElement> Layout<W> {
                 }
                 InteractiveMoveState::Moving(move_) => {
                     assert_eq!(self.clock, move_.tile.clock);
-                    assert!(move_.tile.window().pending_sizing_mode().is_normal());
+                    assert!(move_
+                        .tile
+                        .focused_window()
+                        .pending_sizing_mode()
+                        .is_normal());
 
                     move_.tile.verify_invariants();
 
@@ -2816,7 +2917,7 @@ impl<W: LayoutElement> Layout<W> {
                         ws.scrolling_insert_position(pos_within_workspace)
                     };
 
-                    let rules = move_.tile.window().rules();
+                    let rules = move_.tile.focused_window().rules();
                     let border_width = move_.tile.effective_border_width().unwrap_or(0.);
                     let corner_radius = rules
                         .geometry_corner_radius
@@ -2939,7 +3040,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_window_width(&mut self, window: Option<&W::Id>, forwards: bool) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -2962,7 +3063,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_window_height(&mut self, window: Option<&W::Id>, forwards: bool) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -2999,7 +3100,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn set_window_width(&mut self, window: Option<&W::Id>, change: SizeChange) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -3022,7 +3123,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn set_window_height(&mut self, window: Option<&W::Id>, change: SizeChange) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -3045,7 +3146,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn reset_window_height(&mut self, window: Option<&W::Id>) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -3075,13 +3176,13 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_window_floating(&mut self, window: Option<&W::Id>) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 move_.is_floating = !move_.is_floating;
 
                 // When going to floating, restore the floating window size.
                 if move_.is_floating {
                     let floating_size = move_.tile.floating_window_size;
-                    let win = move_.tile.window_mut();
+                    let win = move_.tile.focused_window_mut();
                     let mut size =
                         floating_size.unwrap_or_else(|| win.expected_size().unwrap_or_default());
 
@@ -3138,7 +3239,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn set_window_floating(&mut self, window: Option<&W::Id>, floating: bool) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 if move_.is_floating != floating {
                     self.toggle_window_floating(window);
                 }
@@ -3191,7 +3292,7 @@ impl<W: LayoutElement> Layout<W> {
         animate: bool,
     ) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if id.is_none() || id == Some(move_.tile.window().id()) {
+            if id.is_none_or(|id| id == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -3232,7 +3333,7 @@ impl<W: LayoutElement> Layout<W> {
         activate: ActivateWindow,
     ) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if window.is_none() || window == Some(move_.tile.window().id()) {
+            if window.is_none_or(|window| window == move_.tile.focused_window().id()) {
                 return;
             }
         }
@@ -3454,7 +3555,7 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == id {
+            if move_.tile.focused_window().id() == id {
                 return;
             }
         }
@@ -3469,7 +3570,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_fullscreen(&mut self, id: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == id {
+            if move_.tile.focused_window().id() == id {
                 return;
             }
         }
@@ -3504,7 +3605,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn set_maximized(&mut self, id: &W::Id, maximize: bool) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == id {
+            if move_.tile.focused_window().id() == id {
                 return;
             }
         }
@@ -3519,7 +3620,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_maximized(&mut self, id: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == id {
+            if move_.tile.focused_window().id() == id {
                 return;
             }
         }
@@ -3760,10 +3861,19 @@ impl<W: LayoutElement> Layout<W> {
         let zoom = mon.overview_zoom();
 
         let is_floating = ws.is_floating(&window_id);
-        let (tile, tile_offset, _visible) = ws
-            .tiles_with_render_positions()
-            .find(|(tile, _, _)| tile.window().id() == &window_id)
-            .unwrap();
+        let Some((tile, tile_offset)) =
+            ws.tiles_with_render_positions()
+                .find_map(|(tile, tile_offset, _)| {
+                    if tile.focused_window().id() == &window_id {
+                        Some((tile, tile_offset))
+                    } else {
+                        None
+                    }
+                })
+        else {
+            error!("cannot interactive move non-focused window {window_id:?}");
+            return false;
+        };
         let window_offset = tile.window_loc();
 
         let tile_pos = ws_geo.loc + tile_offset.upscale(zoom);
@@ -3844,7 +3954,7 @@ impl<W: LayoutElement> Layout<W> {
                         (
                             ws.is_floating(&window_id),
                             ws.tiles_mut()
-                                .find(|tile| *tile.window().id() == window_id)
+                                .find(|tile| *tile.focused_window().id() == window_id)
                                 .unwrap(),
                             workspace_config,
                         )
@@ -3884,7 +3994,7 @@ impl<W: LayoutElement> Layout<W> {
                     if mon.output() == &output {
                         let (_, tile_offset, _) = ws
                             .tiles_with_render_positions()
-                            .find(|(tile, _, _)| tile.window().id() == window)
+                            .find(|(tile, _, _)| tile.focused_window().id() == window)
                             .unwrap();
 
                         let zoom = mon.overview_zoom();
@@ -3910,12 +4020,12 @@ impl<W: LayoutElement> Layout<W> {
                     width,
                     is_full_width,
                     is_floating,
-                } = self.remove_window(window, Transaction::new()).unwrap();
+                } = self.remove_tile(window, Transaction::new()).unwrap();
 
                 tile.stop_move_animations();
                 tile.interactive_move_offset = Point::from((0., 0.));
-                tile.window().output_enter(&output);
-                tile.window().set_preferred_scale_transform(
+                tile.focused_window().output_enter(&output);
+                tile.focused_window().set_preferred_scale_transform(
                     output.current_scale(),
                     output.current_transform(),
                 );
@@ -3965,7 +4075,7 @@ impl<W: LayoutElement> Layout<W> {
                 self.interactive_move = Some(InteractiveMoveState::Moving(data));
             }
             InteractiveMoveState::Moving(mut move_) => {
-                if window != move_.tile.window().id() {
+                if window != move_.tile.focused_window().id() {
                     self.interactive_move = Some(InteractiveMoveState::Moving(move_));
                     return false;
                 }
@@ -3988,9 +4098,9 @@ impl<W: LayoutElement> Layout<W> {
                 }
 
                 if output != move_.output {
-                    move_.tile.window().output_leave(&move_.output);
-                    move_.tile.window().output_enter(&output);
-                    move_.tile.window().set_preferred_scale_transform(
+                    move_.tile.focused_window().output_leave(&move_.output);
+                    move_.tile.focused_window().output_enter(&output);
+                    move_.tile.focused_window().set_preferred_scale_transform(
                         output.current_scale(),
                         output.current_transform(),
                     );
@@ -4045,7 +4155,9 @@ impl<W: LayoutElement> Layout<W> {
                 }
 
                 for ws in self.workspaces_mut() {
-                    if let Some(tile) = ws.tiles_mut().find(|tile| *tile.window().id() == window_id)
+                    if let Some(tile) = ws
+                        .tiles_mut()
+                        .find(|tile| *tile.focused_window().id() == window_id)
                     {
                         let offset = tile.interactive_move_offset;
                         tile.interactive_move_offset = Point::from((0., 0.));
@@ -4069,7 +4181,7 @@ impl<W: LayoutElement> Layout<W> {
             InteractiveMoveState::Moving(move_) => move_,
         };
 
-        if window != move_.tile.window().id() {
+        if window != move_.tile.focused_window().id() {
             return;
         }
 
@@ -4157,7 +4269,7 @@ impl<W: LayoutElement> Layout<W> {
                         (mon, insert_ws, position, Some(ws_geo.loc), zoom)
                     };
 
-                let win_id = move_.tile.window().id().clone();
+                let win_id = move_.tile.focused_window().id().clone();
                 let tile_render_loc = move_.tile_render_location(zoom);
 
                 let ws_idx = match insert_ws {
@@ -4235,7 +4347,7 @@ impl<W: LayoutElement> Layout<W> {
 
                         // Set the floating size so it takes into account any window resizing that
                         // took place during the move.
-                        if let Some(size) = tile.window().expected_size() {
+                        if let Some(size) = tile.focused_window().expected_size() {
                             tile.floating_window_size = Some(size);
                         }
 
@@ -4261,7 +4373,7 @@ impl<W: LayoutElement> Layout<W> {
                     .workspaces_with_render_geo_mut(false)
                     .find_map(|(ws, geo)| {
                         ws.tiles_with_render_positions_mut(false)
-                            .find(|(tile, _)| tile.window().id() == &win_id)
+                            .find(|(tile, _)| tile.focused_window().id() == &win_id)
                             .map(|(tile, tile_offset)| (tile, tile_offset, geo))
                     })
                     .unwrap();
@@ -4365,7 +4477,7 @@ impl<W: LayoutElement> Layout<W> {
         delta: Point<f64, Logical>,
     ) -> bool {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 return false;
             }
         }
@@ -4394,7 +4506,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn interactive_resize_end(&mut self, window: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 return;
             }
         }
@@ -4586,7 +4698,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn start_open_animation_for_window(&mut self, window: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 return;
             }
         }
@@ -4602,7 +4714,7 @@ impl<W: LayoutElement> Layout<W> {
         let _span = tracy_client::span!("Layout::store_unmap_snapshot");
 
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 move_.tile.store_unmap_snapshot_if_empty(renderer);
                 return;
             }
@@ -4632,7 +4744,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn clear_unmap_snapshot(&mut self, window: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 let _ = move_.tile.take_unmap_snapshot();
                 return;
             }
@@ -4671,7 +4783,7 @@ impl<W: LayoutElement> Layout<W> {
         let zoom = self.overview_zoom();
 
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            if move_.tile.window().id() == window {
+            if move_.tile.focused_window().id() == window {
                 let Some(snapshot) = move_.tile.take_unmap_snapshot() else {
                     return;
                 };
@@ -4763,7 +4875,7 @@ impl<W: LayoutElement> Layout<W> {
         let mut ongoing_scrolling_dnd = self.dnd.is_some().then_some(true);
 
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
-            let win = move_.tile.window_mut();
+            let win = move_.tile.focused_window_mut();
 
             win.set_active_in_column(true);
             win.set_floating(move_.is_floating);
@@ -4901,7 +5013,12 @@ impl<W: LayoutElement> Layout<W> {
             .interactive_move
             .as_ref()
             .and_then(|x| x.moving())
-            .map(|move_| (self.monitor_for_output(&move_.output), move_.tile.window()))
+            .map(|move_| {
+                (
+                    self.monitor_for_output(&move_.output),
+                    move_.tile.focused_window(),
+                )
+            })
             .into_iter();
 
         let rest = self

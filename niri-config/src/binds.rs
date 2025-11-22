@@ -4,10 +4,9 @@ use std::time::Duration;
 
 use bitflags::bitflags;
 use knuffel::errors::DecodeError;
+use knuffel::DecodeScalar;
 use miette::miette;
-use niri_ipc::{
-    ColumnDisplay, LayoutSwitchTarget, PositionChange, SizeChange, WorkspaceReferenceArg,
-};
+use niri_ipc::{LayoutSwitchTarget, PositionChange, SizeChange, WorkspaceReferenceArg};
 use smithay::input::keyboard::keysyms::KEY_NoSymbol;
 use smithay::input::keyboard::xkb::{keysym_from_name, KEYSYM_CASE_INSENSITIVE, KEYSYM_NO_FLAGS};
 use smithay::input::keyboard::Keysym;
@@ -51,6 +50,14 @@ pub enum Trigger {
     TouchpadScrollUp,
     TouchpadScrollLeft,
     TouchpadScrollRight,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, DecodeScalar, Hash)]
+pub enum WindowMoveDirection {
+    Up,
+    Left,
+    Right,
+    Down,
 }
 
 bitflags! {
@@ -145,6 +152,10 @@ pub enum Action {
     CloseWindow,
     #[knuffel(skip)]
     CloseWindowById(u64),
+    ToggleGroup,
+    MoveWindowIntoOrOutOfGroup(#[knuffel(argument)] WindowMoveDirection),
+    FocusNextWindow,
+    FocusPreviousWindow,
     FullscreenWindow,
     #[knuffel(skip)]
     FullscreenWindowById(u64),
@@ -203,8 +214,6 @@ pub enum Action {
     ExpelWindowFromColumn,
     SwapWindowLeft,
     SwapWindowRight,
-    ToggleColumnTabbedDisplay,
-    SetColumnDisplay(#[knuffel(argument, str)] ColumnDisplay),
     CenterColumn,
     CenterWindow,
     #[knuffel(skip)]
@@ -387,6 +396,7 @@ pub enum Action {
     MruCycleScope,
 }
 
+// TODO: macro, bruh
 impl From<niri_ipc::Action> for Action {
     fn from(value: niri_ipc::Action) -> Self {
         match value {
@@ -490,8 +500,6 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::ExpelWindowFromColumn {} => Self::ExpelWindowFromColumn,
             niri_ipc::Action::SwapWindowRight {} => Self::SwapWindowRight,
             niri_ipc::Action::SwapWindowLeft {} => Self::SwapWindowLeft,
-            niri_ipc::Action::ToggleColumnTabbedDisplay {} => Self::ToggleColumnTabbedDisplay,
-            niri_ipc::Action::SetColumnDisplay { display } => Self::SetColumnDisplay(display),
             niri_ipc::Action::CenterColumn {} => Self::CenterColumn,
             niri_ipc::Action::CenterWindow { id: None } => Self::CenterWindow,
             niri_ipc::Action::CenterWindow { id: Some(id) } => Self::CenterWindowById(id),

@@ -267,7 +267,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
     pub fn update_render_elements(&mut self, is_active: bool, view_rect: Rectangle<f64, Logical>) {
         let active = self.active_window_id.clone();
         for (tile, offset) in self.tiles_with_offsets_mut() {
-            let id = tile.window().id();
+            let id = tile.focused_window().id();
             let is_active = is_active && Some(id) == active.as_ref();
 
             let mut tile_view_rect = view_rect;
@@ -358,7 +358,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
     pub fn popup_target_rect(&self, id: &W::Id) -> Option<Rectangle<f64, Logical>> {
         for (tile, pos) in self.tiles_with_offsets() {
-            if tile.window().id() == id {
+            if tile.focused_window().id() == id {
                 // Position within the working area.
                 let mut target = self.working_area;
                 target.loc -= pos;
@@ -371,7 +371,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
     }
 
     fn idx_of(&self, id: &W::Id) -> Option<usize> {
-        self.tiles.iter().position(|tile| tile.window().id() == id)
+        self.tiles.iter().position(|tile| tile.has_window(id))
     }
 
     fn contains(&self, id: &W::Id) -> bool {
@@ -380,22 +380,72 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
     pub fn active_window(&self) -> Option<&W> {
         let id = self.active_window_id.as_ref()?;
-        self.tiles
-            .iter()
-            .find(|tile| tile.window().id() == id)
-            .map(Tile::window)
+        self.tiles.iter().find_map(|tile| {
+            if tile.focused_window().id() == id {
+                Some(tile.focused_window())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn active_window_mut(&mut self) -> Option<&mut W> {
         let id = self.active_window_id.as_ref()?;
-        self.tiles
-            .iter_mut()
-            .find(|tile| tile.window().id() == id)
-            .map(Tile::window_mut)
+        self.tiles.iter_mut().find_map(|tile| {
+            if tile.focused_window().id() == id {
+                Some(tile.focused_window_mut())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn focus_next(&mut self) -> bool {
+        if self.interactive_resize.is_some() {
+            return false;
+        }
+
+        let Some(id) = self.active_window_id.clone() else {
+            return false;
+        };
+
+        let Some(tile) = self.tiles_mut().find(|t| t.focused_window().id() == &id) else {
+            return false;
+        };
+
+        tile.focus_next();
+
+        let id = tile.focused_window().id().clone();
+        self.activate_window(&id);
+        self.update_window(&id, None);
+
+        true
+    }
+
+    pub fn focus_prev(&mut self) -> bool {
+        if self.interactive_resize.is_some() {
+            return false;
+        }
+
+        let Some(id) = self.active_window_id.clone() else {
+            return false;
+        };
+
+        let Some(tile) = self.tiles_mut().find(|t| t.focused_window().id() == &id) else {
+            return false;
+        };
+
+        tile.focus_prev();
+
+        let id = tile.focused_window().id().clone();
+        self.activate_window(&id);
+        self.update_window(&id, None);
+
+        true
     }
 
     pub fn has_window(&self, id: &W::Id) -> bool {
-        self.tiles.iter().any(|tile| tile.window().id() == id)
+        self.tiles.iter().any(|tile| tile.has_window(id))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -423,7 +473,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         // Restore the previous floating window size, and in case the tile is fullscreen,
         // unfullscreen it.
         let floating_size = tile.floating_window_size;
-        let win = tile.window_mut();
+        let win = tile.focused_window_mut();
         let mut size = if !win.pending_sizing_mode().is_normal() {
             // If the window was fullscreen or maximized without a floating size, ask for (0, 0).
             floating_size.unwrap_or_default()
@@ -449,7 +499,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         // Make sure the tile isn't inserted below its parent.
         for (i, tile_above) in self.tiles.iter().enumerate().take(idx) {
-            if win.is_child_of(tile_above.window()) {
+            if win.is_child_of(tile_above.focused_window()) {
                 idx = i;
                 break;
             }
@@ -489,17 +539,17 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
     fn bring_up_descendants_of(&mut self, idx: usize) {
         let tile = &self.tiles[idx];
-        let win = tile.window();
+        let win = tile.focused_window();
 
         // We always maintain the correct stacking order, so walking descendants back to front
         // should give us all of them.
         let mut descendants: Vec<usize> = Vec::new();
         for (i, tile_below) in self.tiles.iter().enumerate().skip(idx + 1).rev() {
-            let win_below = tile_below.window();
+            let win_below = tile_below.focused_window();
             if win_below.is_child_of(win)
                 || descendants
                     .iter()
-                    .any(|idx| win_below.is_child_of(self.tiles[*idx].window()))
+                    .any(|idx| win_below.is_child_of(self.tiles[*idx].focused_window()))
             {
                 descendants.push(i);
             }
@@ -530,20 +580,20 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         if self.tiles.is_empty() {
             self.active_window_id = None;
-        } else if Some(tile.window().id()) == self.active_window_id.as_ref() {
+        } else if Some(tile.focused_window().id()) == self.active_window_id.as_ref() {
             // The active tile was removed, make the topmost tile active.
-            self.active_window_id = Some(self.tiles[0].window().id().clone());
+            self.active_window_id = Some(self.tiles[0].focused_window().id().clone());
         }
 
         // Stop interactive resize.
         if let Some(resize) = &self.interactive_resize {
-            if tile.window().id() == &resize.window {
+            if tile.focused_window().id() == &resize.window {
                 self.interactive_resize = None;
             }
         }
 
         // Store the floating size if we have one.
-        if let Some(size) = tile.window().expected_size() {
+        if let Some(size) = tile.focused_window().expected_size() {
             tile.floating_window_size = Some(size);
         }
         // Store the floating position.
@@ -564,10 +614,13 @@ impl<W: LayoutElement> FloatingSpace<W> {
         id: &W::Id,
         blocker: TransactionBlocker,
     ) {
-        let (tile, tile_pos) = self
+        let Some((tile, tile_pos)) = self
             .tiles_with_render_positions_mut(false)
-            .find(|(tile, _)| tile.window().id() == id)
-            .unwrap();
+            .find(|(tile, _)| tile.focused_window().id() == id)
+        else {
+            // if the affected window is not focused, we don't play any animation
+            return;
+        };
 
         let Some(snapshot) = tile.take_unmap_snapshot() else {
             return;
@@ -575,6 +628,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let tile_size = tile.tile_size();
 
+        // TODO: how does this look?
         self.start_close_animation_for_tile(renderer, snapshot, tile_size, tile_pos, blocker);
     }
 
@@ -767,8 +821,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let tile = &mut self.tiles[idx];
         tile.floating_preset_width_idx = None;
 
+        tile.focus_window(id);
+
         let available_size = self.working_area.size.w;
-        let win = tile.window();
+        let win = tile.focused_window();
         let current_window = win.expected_size().unwrap_or_else(|| win.size()).w;
         let current_tile = tile.tile_expected_or_current_size().w;
 
@@ -792,7 +848,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         };
         let win_width = win_width.round().clamp(1., MAX_PX) as i32;
 
-        let win = tile.window_mut();
+        let win = tile.focused_window_mut();
         let min_size = win.min_size();
         let max_size = win.max_size();
 
@@ -814,8 +870,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let tile = &mut self.tiles[idx];
         tile.floating_preset_height_idx = None;
 
+        tile.focus_window(id);
+
         let available_size = self.working_area.size.h;
-        let win = tile.window();
+        let win = tile.focused_window();
         let current_window = win.expected_size().unwrap_or_else(|| win.size()).h;
         let current_tile = tile.tile_expected_or_current_size().h;
 
@@ -839,7 +897,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         };
         let win_height = win_height.round().clamp(1., MAX_PX) as i32;
 
-        let win = tile.window_mut();
+        let win = tile.focused_window_mut();
         let min_size = win.min_size();
         let max_size = win.max_size();
 
@@ -863,12 +921,12 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let center = self.data[active_idx].center();
 
         let result = zip(&self.tiles, &self.data)
-            .filter(|(tile, _)| tile.window().id() != active_id)
+            .filter(|(tile, _)| tile.focused_window().id() != active_id)
             .map(|(tile, data)| (tile, distance(center, data.center())))
             .filter(|(_, dist)| *dist > 0.)
             .min_by(|(_, dist_a), (_, dist_b)| f64::total_cmp(dist_a, dist_b));
         if let Some((tile, _)) = result {
-            let id = tile.window().id().clone();
+            let id = tile.focused_window().id().clone();
             self.activate_window(&id);
             true
         } else {
@@ -897,7 +955,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             .tiles_with_offsets()
             .min_by(|(_, pos_a), (_, pos_b)| f64::total_cmp(&pos_a.x, &pos_b.x));
         if let Some((tile, _)) = result {
-            let id = tile.window().id().clone();
+            let id = tile.focused_window().id().clone();
             self.activate_window(&id);
         }
     }
@@ -907,7 +965,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             .tiles_with_offsets()
             .max_by(|(_, pos_a), (_, pos_b)| f64::total_cmp(&pos_a.x, &pos_b.x));
         if let Some((tile, _)) = result {
-            let id = tile.window().id().clone();
+            let id = tile.focused_window().id().clone();
             self.activate_window(&id);
         }
     }
@@ -917,7 +975,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             .tiles_with_offsets()
             .min_by(|(_, pos_a), (_, pos_b)| f64::total_cmp(&pos_a.y, &pos_b.y));
         if let Some((tile, _)) = result {
-            let id = tile.window().id().clone();
+            let id = tile.focused_window().id().clone();
             self.activate_window(&id);
         }
     }
@@ -927,7 +985,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             .tiles_with_offsets()
             .max_by(|(_, pos_a), (_, pos_b)| f64::total_cmp(&pos_a.y, &pos_b.y));
         if let Some((tile, _)) = result {
-            let id = tile.window().id().clone();
+            let id = tile.focused_window().id().clone();
             self.activate_window(&id);
         }
     }
@@ -1045,11 +1103,15 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let tile = &mut self.tiles[tile_idx];
         let data = &mut self.data[tile_idx];
 
-        let resize = tile.window_mut().interactive_resize_data();
+        if tile.focused_window().id() != id {
+            return false;
+        }
+
+        let resize = tile.focused_window_mut().interactive_resize_data();
 
         // Do this before calling update_window() so it can get up-to-date info.
         if let Some(serial) = serial {
-            tile.window_mut().on_commit(serial);
+            tile.focused_window_mut().on_commit(serial);
         }
 
         let prev_size = data.size;
@@ -1094,7 +1156,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let active = self.active_window_id.clone();
         for (tile, tile_pos) in self.tiles_with_render_positions() {
             // For the active tile, draw the focus ring.
-            let focus_ring = focus_ring && Some(tile.window().id()) == active.as_ref();
+            let focus_ring = focus_ring && Some(tile.focused_window().id()) == active.as_ref();
 
             rv.extend(
                 tile.render(renderer, tile_pos, focus_ring, target)
@@ -1113,7 +1175,13 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let tile = self
             .tiles
             .iter_mut()
-            .find(|tile| tile.window().id() == &window)
+            .find_map(|tile| {
+                if tile.focus_window(&window) {
+                    Some(tile)
+                } else {
+                    None
+                }
+            })
             .unwrap();
 
         let original_window_size = tile.window_size();
@@ -1184,7 +1252,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
     pub fn refresh(&mut self, is_active: bool, is_focused: bool) {
         let active = self.active_window_id.clone();
         for tile in &mut self.tiles {
-            let win = tile.window_mut();
+            let win = tile.focused_window_mut();
 
             win.set_active_in_column(true);
             win.set_floating(true);
@@ -1299,42 +1367,45 @@ impl<W: LayoutElement> FloatingSpace<W> {
     ) -> Option<Point<f64, Logical>> {
         let pos = tile.floating_pos.map(|pos| self.scale_by_working_area(pos));
         pos.or_else(|| {
-            tile.window().rules().default_floating_position.map(|pos| {
-                let relative_to = pos.relative_to;
-                let size = tile.tile_size();
-                let area = self.working_area;
+            tile.focused_window()
+                .rules()
+                .default_floating_position
+                .map(|pos| {
+                    let relative_to = pos.relative_to;
+                    let size = tile.tile_size();
+                    let area = self.working_area;
 
-                let mut pos = Point::from((pos.x.0, pos.y.0));
+                    let mut pos = Point::from((pos.x.0, pos.y.0));
 
-                if relative_to == RelativeTo::Cursor {
-                    if let Some(cursor_pos) = cursor_pos {
-                        pos.x += cursor_pos.x - (area.size.w - self.view_size.w).abs();
-                        pos.y += cursor_pos.y - (area.size.h - self.view_size.h).abs();
+                    if relative_to == RelativeTo::Cursor {
+                        if let Some(cursor_pos) = cursor_pos {
+                            pos.x += cursor_pos.x - (area.size.w - self.view_size.w).abs();
+                            pos.y += cursor_pos.y - (area.size.h - self.view_size.h).abs();
+                        }
                     }
-                }
 
-                if relative_to == RelativeTo::TopRight
-                    || relative_to == RelativeTo::BottomRight
-                    || relative_to == RelativeTo::Right
-                {
-                    pos.x = area.size.w - size.w - pos.x;
-                }
-                if relative_to == RelativeTo::BottomLeft
-                    || relative_to == RelativeTo::BottomRight
-                    || relative_to == RelativeTo::Bottom
-                {
-                    pos.y = area.size.h - size.h - pos.y;
-                }
+                    if relative_to == RelativeTo::TopRight
+                        || relative_to == RelativeTo::BottomRight
+                        || relative_to == RelativeTo::Right
+                    {
+                        pos.x = area.size.w - size.w - pos.x;
+                    }
+                    if relative_to == RelativeTo::BottomLeft
+                        || relative_to == RelativeTo::BottomRight
+                        || relative_to == RelativeTo::Bottom
+                    {
+                        pos.y = area.size.h - size.h - pos.y;
+                    }
 
-                if relative_to == RelativeTo::Top || relative_to == RelativeTo::Bottom {
-                    pos.x += area.size.w / 2.0 - size.w / 2.0
-                }
-                if relative_to == RelativeTo::Left || relative_to == RelativeTo::Right {
-                    pos.y += area.size.h / 2.0 - size.h / 2.0
-                }
+                    if relative_to == RelativeTo::Top || relative_to == RelativeTo::Bottom {
+                        pos.x += area.size.w / 2.0 - size.w / 2.0
+                    }
+                    if relative_to == RelativeTo::Left || relative_to == RelativeTo::Right {
+                        pos.y += area.size.h / 2.0 - size.h / 2.0
+                    }
 
-                pos + self.working_area.loc
-            })
+                    pos + self.working_area.loc
+                })
         })
     }
 
@@ -1385,7 +1456,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             }
 
             assert_eq!(
-                tile.window().pending_sizing_mode(),
+                tile.focused_window().pending_sizing_mode(),
                 SizingMode::Normal,
                 "floating windows cannot be maximized or fullscreen"
             );
@@ -1399,7 +1470,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
             for tile_below in &self.tiles[i + 1..] {
                 assert!(
-                    !tile_below.window().is_child_of(tile.window()),
+                    !tile_below
+                        .focused_window()
+                        .is_child_of(tile.focused_window()),
                     "children must be stacked above parents"
                 );
             }

@@ -13,7 +13,7 @@ fn format_tiles(layout: &Layout<TestWindow>) -> String {
     // We sort by id since that gives us a consistent order (from first opened to last), but we
     // don't print the id since it's nondeterministic (the id is a global counter across all
     // running tests in the same binary).
-    tiles.sort_by_key(|(tile, _, _)| tile.window().id());
+    tiles.sort_by_key(|(tile, _, _)| tile.focused_window().id());
     for (tile, pos, _visible) in tiles {
         let Size { w, h, .. } = tile.animated_tile_size();
         let Point { x, y, .. } = pos;
@@ -244,14 +244,14 @@ fn height_resize_and_cancel() {
         Op::Communicate(1),
         Op::Communicate(2),
         // Advance the time slightly.
-        Op::AdvanceAnimations { msec_delta: 50 },
+        Op::AdvanceAnimations { msec_delta: 20 },
     ];
     check_ops_on_layout(&mut layout, ops);
 
     // Top window is half-resized at 105 px tall, bottom window is at y=105 matching it.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 105 at x:  0 y:  0
-    200 × 200 at x:  0 y:105
+    100 × 102 at x:  0 y:  0
+    200 × 200 at x:  0 y:102
     ");
 
     let ops = [
@@ -276,7 +276,7 @@ fn height_resize_and_cancel() {
     // position doesn't jump, instead the animation is offset to preserve the current position.
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    200 × 200 at x:  0 y:105
+    200 × 200 at x:  0 y:102
     ");
 
     // Advance to the end of the move animation.
@@ -486,15 +486,15 @@ fn height_resize_and_cancel_during_another_y_anim() {
         Op::Communicate(1),
         Op::Communicate(2),
         // Advance the time slightly.
-        Op::AdvanceAnimations { msec_delta: 50 },
+        Op::AdvanceAnimations { msec_delta: 20 },
     ];
     check_ops_on_layout(&mut layout, ops);
 
     // X changed by 5, but y changed by 8 since the Y movement from the resize compounds with the Y
     // movement from consume-into-column.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 105 at x:  0 y:  0
-    200 × 200 at x: 45 y: 58
+    100 × 102 at x:  0 y:  0
+    200 × 200 at x: 48 y: 53
     ");
 
     let ops = [
@@ -519,17 +519,17 @@ fn height_resize_and_cancel_during_another_y_anim() {
     // current position while targeting the new final position.
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    200 × 200 at x: 45 y: 58
+    200 × 200 at x: 48 y: 53
     ");
 
     // Advance the time to complete the consume movement.
-    Op::AdvanceAnimations { msec_delta: 450 }.apply(&mut layout);
+    Op::AdvanceAnimations { msec_delta: 480 }.apply(&mut layout);
 
     // Since we don't cancel the resize-induced part of the anim (in fact the move Y anim isn't
     // split into parts, so there's no way to tell), it keeps going still.
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    200 × 200 at x:  0 y: 78
+    200 × 200 at x:  0 y: 76
     ");
 
     // Advance the time to complete the resize-induced anim.
@@ -693,13 +693,13 @@ fn height_resize_before_another_y_anim_then_cancel() {
         Op::Communicate(1),
         Op::Communicate(2),
         // Advance the time a bit.
-        Op::AdvanceAnimations { msec_delta: 20 },
+        Op::AdvanceAnimations { msec_delta: 10 },
     ];
     let mut layout = check_ops_with_options(make_options(), ops);
 
     // The resize is in progress.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 102 at x:  0 y:  0
+    100 × 101 at x:  0 y:  0
     200 × 200 at x:100 y:  0
     ");
 
@@ -708,17 +708,17 @@ fn height_resize_before_another_y_anim_then_cancel() {
 
     // No time had passed, so no change in coordinates yet.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 102 at x:  0 y:  0
+    100 × 101 at x:  0 y:  0
     200 × 200 at x:100 y:  0
     ");
 
     // Advance the time a little.
-    Op::AdvanceAnimations { msec_delta: 20 }.apply(&mut layout);
+    Op::AdvanceAnimations { msec_delta: 10 }.apply(&mut layout);
 
     // Second window on its way to the bottom.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 104 at x:  0 y:  0
-    200 × 200 at x: 98 y:  4
+    100 × 102 at x:  0 y:  0
+    200 × 200 at x: 99 y:  2
     ");
 
     let ops = [
@@ -742,11 +742,11 @@ fn height_resize_before_another_y_anim_then_cancel() {
     // The second window's trajectory readjusts to the new final position at 100 px, without jumps.
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    200 × 200 at x: 98 y:  4
+    200 × 200 at x: 99 y:  2
     ");
 
     // Advance the time to complete the consume movement.
-    Op::AdvanceAnimations { msec_delta: 980 }.apply(&mut layout);
+    Op::AdvanceAnimations { msec_delta: 1000 }.apply(&mut layout);
 
     // Final state.
     assert_snapshot!(format_tiles(&layout), @r"
@@ -820,6 +820,307 @@ fn clientside_height_change_during_another_y_anim() {
 }
 
 #[test]
+fn appear_group_indicator() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::FocusColumnLeft,
+        Op::SetForcedSize {
+            id: 1,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::Communicate(1),
+        Op::Communicate(2),
+        Op::CompleteAnimations,
+        Op::ToggleGroup,
+        Op::AdvanceAnimations { msec_delta: 50 },
+    ];
+
+    let mut layout = check_ops_with_options(make_options(), ops);
+
+    // when initiating the tab spawn animation, the tile should have a slight offset in the
+    // beginning
+    assert_snapshot!(format_tiles(&layout), @"100 × 100 at x:  0 y: -9");
+
+    let ops = [Op::AdvanceAnimations { msec_delta: 1000 }];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // at the end, we should be left with a regular tile.
+    assert_snapshot!(format_tiles(&layout), @"100 × 100 at x:  0 y:  0");
+}
+
+#[test]
+fn move_window_into_and_out_of_group_down() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusColumnLeft,
+        Op::SetForcedSize {
+            id: 1,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::SetForcedSize {
+            id: 2,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::Communicate(1),
+        Op::Communicate(2),
+        Op::ToggleGroup,
+        Op::CompleteAnimations,
+        Op::FocusColumnRight,
+    ];
+
+    let mut layout = check_ops_with_options(make_options(), ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:100 y:  0
+    ");
+
+    let ops = [Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Left)];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"100 × 100 at x:  0 y:  0");
+
+    let ops = [
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Down),
+        Op::AdvanceAnimations { msec_delta: 50 },
+    ];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // y on the ejected window should be slightly positive due to the tab indicator offset
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:  0 y: 14
+    ");
+
+    let ops = [Op::CompleteAnimations];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // at the end, the ejected window (2) should be below the grouped window (1) PLUS the tab
+    // indicator offset (since we manipulate window size directly, as opposed to tile size, and
+    // grouped tiles have a larger bounding box)
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:  0 y:109
+    ");
+
+    let ops = [Op::FocusWindowUp, Op::ToggleGroup, Op::CompleteAnimations];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // when ungrouping the initial window, we should expect a regular single column
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:  0 y:100
+    ");
+}
+
+#[test]
+fn move_window_into_and_out_of_group_up() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusColumnLeft,
+        Op::SetForcedSize {
+            id: 1,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::SetForcedSize {
+            id: 2,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::Communicate(1),
+        Op::Communicate(2),
+        Op::ToggleGroup,
+        Op::CompleteAnimations,
+        Op::FocusColumnRight,
+    ];
+
+    let mut layout = check_ops_with_options(make_options(), ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:100 y:  0
+    ");
+
+    let ops = [Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Left)];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"100 × 100 at x:  0 y:  0");
+
+    let ops = [
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Up),
+        Op::AdvanceAnimations { msec_delta: 50 },
+    ];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // y on the ejected window should be slightly positive due to the tab indicator offset
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  5
+    100 × 100 at x:  0 y:  9
+    ");
+
+    let ops = [Op::CompleteAnimations];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // at the end, the ejected window (2) should be above the grouped window (1)
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:100
+    100 × 100 at x:  0 y:  0
+    ");
+}
+
+#[test]
+fn move_window_into_and_out_of_group_right() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusColumnLeft,
+        Op::SetForcedSize {
+            id: 1,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::SetForcedSize {
+            id: 2,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::Communicate(1),
+        Op::Communicate(2),
+        Op::ToggleGroup,
+        Op::CompleteAnimations,
+        Op::FocusColumnRight,
+    ];
+
+    let mut layout = check_ops_with_options(make_options(), ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:100 y:  0
+    ");
+
+    let ops = [Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Left)];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"100 × 100 at x:  0 y:  0");
+
+    let ops = [
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Right),
+        Op::AdvanceAnimations { msec_delta: 50 },
+    ];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // y on the ejected window should be slightly positive due to the tab indicator offset
+    //
+    // important: the x difference here should be the same as in the "left" variant of this test.
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:  5 y:  9
+    ");
+
+    let ops = [Op::CompleteAnimations];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // at the end, we should have the same coords again
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:100 y:  0
+    ");
+}
+
+#[test]
+fn move_window_into_and_out_of_group_left() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusColumnLeft,
+        Op::SetForcedSize {
+            id: 1,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::SetForcedSize {
+            id: 2,
+            size: Some(Size::new(100, 100)),
+        },
+        Op::Communicate(1),
+        Op::Communicate(2),
+        Op::ToggleGroup,
+        Op::CompleteAnimations,
+        Op::FocusColumnRight,
+    ];
+
+    let mut layout = check_ops_with_options(make_options(), ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:  0 y:  0
+    100 × 100 at x:100 y:  0
+    ");
+
+    let ops = [Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Left)];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    assert_snapshot!(format_tiles(&layout), @r"100 × 100 at x:  0 y:  0");
+
+    let ops = [
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Left),
+        Op::AdvanceAnimations { msec_delta: 50 },
+    ];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // y on the ejected window should be slightly positive due to the tab indicator offset
+    //
+    // important: the x difference here should be the same as in the "right" variant of this test.
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x: 41 y:  0
+    100 × 100 at x: 36 y:  9
+    ");
+
+    let ops = [Op::CompleteAnimations];
+
+    check_ops_on_layout(&mut layout, ops);
+
+    // at the end, windows 1 and 2 should have swapped locations
+    assert_snapshot!(format_tiles(&layout), @r"
+    100 × 100 at x:100 y:  0
+    100 × 100 at x:  0 y:  0
+    ");
+}
+
+#[test]
 fn height_resize_cancel_with_stationary_second_window() {
     let ops = [
         Op::AddOutput(1),
@@ -855,7 +1156,7 @@ fn height_resize_cancel_with_stationary_second_window() {
         Op::Communicate(1),
         Op::Communicate(2),
         // Advance the time a bit.
-        Op::AdvanceAnimations { msec_delta: 20 },
+        Op::AdvanceAnimations { msec_delta: 10 },
     ];
     let mut options = make_options();
     // Window movement will happen instantly.
@@ -864,7 +1165,7 @@ fn height_resize_cancel_with_stationary_second_window() {
 
     // The resize is in progress.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 102 at x:  0 y:  0
+    100 × 101 at x:  0 y:  0
     200 × 200 at x:100 y:  0
     ");
 
@@ -873,18 +1174,18 @@ fn height_resize_cancel_with_stationary_second_window() {
 
     // No time had passed, so no change in coordinates yet.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 102 at x:  0 y:  0
+    100 × 101 at x:  0 y:  0
     200 × 200 at x:100 y:  0
     ");
 
     // Advance the time a little.
-    Op::AdvanceAnimations { msec_delta: 20 }.apply(&mut layout);
+    Op::AdvanceAnimations { msec_delta: 10 }.apply(&mut layout);
 
     // The window movement anim is off, so the second window is already at the bottom. Since
     // consume started after the resize, the second window is unaffected by the resize-induced Y
     // movement, and sits at the final position at 200 px.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 104 at x:  0 y:  0
+    100 × 102 at x:  0 y:  0
     200 × 200 at x:  0 y:200
     ");
 
@@ -963,14 +1264,14 @@ fn width_resize_and_cancel() {
         Op::Communicate(1),
         Op::Communicate(2),
         // Advance the time slightly.
-        Op::AdvanceAnimations { msec_delta: 50 },
+        Op::AdvanceAnimations { msec_delta: 20 },
     ];
     check_ops_on_layout(&mut layout, ops);
 
     // Left window is half-resized at 105 px wide, right window is at x=105 matching it.
     assert_snapshot!(format_tiles(&layout), @r"
-    105 × 100 at x:  0 y:  0
-    200 × 200 at x:105 y:  0
+    102 × 100 at x:  0 y:  0
+    200 × 200 at x:102 y:  0
     ");
 
     let ops = [
@@ -995,7 +1296,7 @@ fn width_resize_and_cancel() {
     // position doesn't jump, instead the animation is restarted to preserve the current position.
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    200 × 200 at x:105 y:  0
+    200 × 200 at x:102 y:  0
     ");
 
     // Advance to the end of the move animation.
@@ -1053,13 +1354,13 @@ fn width_resize_and_cancel_of_column_to_the_left() {
         Op::Communicate(1),
         Op::Communicate(2),
         // Advance the time slightly.
-        Op::AdvanceAnimations { msec_delta: 50 },
+        Op::AdvanceAnimations { msec_delta: 20 },
     ];
     check_ops_on_layout(&mut layout, ops);
 
     // Left window is half-resized at 105 px wide, it's at x=-5 matching the right edge position.
     assert_snapshot!(format_tiles(&layout), @r"
-    105 × 100 at x: -5 y:  0
+    102 × 100 at x: -2 y:  0
     200 × 200 at x:100 y:  0
     ");
 
@@ -1084,7 +1385,7 @@ fn width_resize_and_cancel_of_column_to_the_left() {
     // Since the resize animation is cancelled, the width goes to the new value immediately. The X
     // position doesn't jump, instead the animation is restarted to preserve the current position.
     assert_snapshot!(format_tiles(&layout), @r"
-    100 × 100 at x: -5 y:  0
+    100 × 100 at x: -2 y:  0
     200 × 200 at x:100 y:  0
     ");
 
