@@ -459,7 +459,6 @@ impl MergeWith<WorkspaceShadowPart> for WorkspaceShadow {
 pub struct TabIndicator {
     pub off: bool,
     pub hide_when_single_tab: bool,
-    pub place_within_column: bool,
     pub gap: f64,
     pub width: f64,
     pub length: TabIndicatorLength,
@@ -479,13 +478,12 @@ impl Default for TabIndicator {
         Self {
             off: false,
             hide_when_single_tab: false,
-            place_within_column: false,
             gap: 5.,
             width: 4.,
             length: TabIndicatorLength {
                 total_proportion: Some(0.5),
             },
-            position: TabIndicatorPosition::Left,
+            position: TabIndicatorPosition::Top,
             gaps_between_tabs: 0.,
             corner_radius: 0.,
             active_color: None,
@@ -508,7 +506,6 @@ impl MergeWith<TabIndicatorPart> for TabIndicator {
         merge!(
             (self, part),
             hide_when_single_tab,
-            place_within_column,
             gap,
             width,
             gaps_between_tabs,
@@ -534,8 +531,6 @@ pub struct TabIndicatorPart {
     pub on: bool,
     #[knuffel(child)]
     pub hide_when_single_tab: Option<Flag>,
-    #[knuffel(child)]
-    pub place_within_column: Option<Flag>,
     #[knuffel(child, unwrap(argument))]
     pub gap: Option<FloatOrInt<-65535, 65535>>,
     #[knuffel(child, unwrap(argument))]
@@ -570,8 +565,6 @@ pub struct TabIndicatorLength {
 
 #[derive(knuffel::DecodeScalar, Debug, Clone, Copy, PartialEq)]
 pub enum TabIndicatorPosition {
-    Left,
-    Right,
     Top,
     Bottom,
 }

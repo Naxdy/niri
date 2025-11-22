@@ -20,7 +20,7 @@ fn format_tiles(niri: &Niri) -> String {
     // We sort by id since that gives us a consistent order (from first opened to last), but we
     // don't print the id since it's nondeterministic (the id is a global counter across all
     // running tests in the same binary).
-    tiles.sort_by_key(|(tile, _, _)| tile.window().id().get());
+    tiles.sort_by_key(|(tile, _, _)| tile.focused_window().id().get());
     for (tile, pos, _visible) in tiles {
         let Size { w, h, .. } = tile.animated_tile_size();
         let Point { x, y, .. } = pos;

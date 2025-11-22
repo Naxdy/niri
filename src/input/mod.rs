@@ -803,6 +803,22 @@ impl State {
                     mapped.toplevel().send_close();
                 }
             }
+            Action::MoveWindowIntoOrOutOfGroup(direction) => {
+                self.niri
+                    .layout
+                    .move_window_into_or_out_of_group(None, direction);
+                self.niri.queue_redraw_all();
+            }
+            Action::ToggleGroup => {
+                self.niri.layout.toggle_group(None);
+                self.niri.queue_redraw_all();
+            }
+            Action::FocusNextWindow => {
+                self.niri.layout.focus_next();
+            }
+            Action::FocusPreviousWindow => {
+                self.niri.layout.focus_prev();
+            }
             Action::FullscreenWindow => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
@@ -1549,18 +1565,6 @@ impl State {
                 self.niri
                     .layout
                     .swap_window_in_direction(ScrollDirection::Left);
-                self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
-                self.niri.queue_redraw_all();
-            }
-            Action::ToggleColumnTabbedDisplay => {
-                self.niri.layout.toggle_column_tabbed_display();
-                self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
-                self.niri.queue_redraw_all();
-            }
-            Action::SetColumnDisplay(display) => {
-                self.niri.layout.set_column_display(display);
                 self.maybe_warp_cursor_to_focus();
                 // FIXME: granular
                 self.niri.queue_redraw_all();

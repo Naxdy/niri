@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use niri_config::utils::MergeWith as _;
 use niri_config::{
-    CenterFocusedColumn, CornerRadius, OutputName, PresetSize, Workspace as WorkspaceConfig,
+    CenterFocusedColumn, CornerRadius, OutputName, PresetSize, WindowMoveDirection,
+    Workspace as WorkspaceConfig,
 };
-use niri_ipc::{ColumnDisplay, PositionChange, SizeChange, WindowLayout};
+use niri_ipc::{PositionChange, SizeChange, WindowLayout};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{layer_map_for_output, Window};
@@ -440,11 +441,11 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn windows(&self) -> impl Iterator<Item = &W> + '_ {
-        self.tiles().map(Tile::window)
+        self.tiles().flat_map(Tile::windows)
     }
 
     pub fn windows_mut(&mut self) -> impl Iterator<Item = &mut W> + '_ {
-        self.tiles_mut().map(Tile::window_mut)
+        self.tiles_mut().flat_map(Tile::windows_mut)
     }
 
     pub fn tiles(&self) -> impl Iterator<Item = &Tile<W>> + '_ {
@@ -457,6 +458,16 @@ impl<W: LayoutElement> Workspace<W> {
         let scrolling = self.scrolling.tiles_mut();
         let floating = self.floating.tiles_mut();
         scrolling.chain(floating)
+    }
+
+    pub fn find_and_focus_window(&mut self, window: &W::Id) -> Option<&mut Tile<W>> {
+        self.tiles_mut().find_map(|tile| {
+            if tile.focus_window(window) {
+                Some(tile)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn is_floating(&self, id: &W::Id) -> bool {
@@ -608,7 +619,7 @@ impl<W: LayoutElement> Workspace<W> {
         is_floating: bool,
         cursor_pos: Option<Point<f64, Logical>>,
     ) {
-        self.enter_output_for_window(tile.window());
+        self.enter_output_for_window(tile.focused_window());
         tile.restore_to_floating = is_floating;
 
         match target {
@@ -618,7 +629,7 @@ impl<W: LayoutElement> Workspace<W> {
 
                 // If the tile is pending maximized or fullscreen, open it in the scrolling layout
                 // where it can do that.
-                if is_floating && tile.window().pending_sizing_mode().is_normal() {
+                if is_floating && tile.focused_window().pending_sizing_mode().is_normal() {
                     self.floating.add_tile(tile, activate, cursor_pos);
 
                     if activate || self.scrolling.is_empty() {
@@ -647,16 +658,16 @@ impl<W: LayoutElement> Workspace<W> {
 
                 let floating_has_window = self.floating.has_window(next_to);
 
-                if is_floating && tile.window().pending_sizing_mode().is_normal() {
+                if is_floating && tile.focused_window().pending_sizing_mode().is_normal() {
                     if floating_has_window {
                         self.floating
                             .add_tile_above(next_to, tile, activate, cursor_pos);
                     } else {
                         // FIXME: use static pos
-                        let (next_to_tile, render_pos, _visible) = self
+                        let (next_to_tile, render_pos) = self
                             .scrolling
                             .tiles_with_render_positions()
-                            .find(|(tile, _, _)| tile.window().id() == next_to)
+                            .find(|(tile, _)| tile.has_window(next_to))
                             .unwrap();
 
                         // Position the new tile in the center above the next_to tile. Think a
@@ -701,7 +712,7 @@ impl<W: LayoutElement> Workspace<W> {
         tile: Tile<W>,
         activate: bool,
     ) {
-        self.enter_output_for_window(tile.window());
+        self.enter_output_for_window(tile.focused_window());
         self.scrolling
             .add_tile_to_column(col_idx, tile_idx, tile, activate);
 
@@ -712,7 +723,7 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn add_column(&mut self, column: Column<W>, activate: bool) {
         for (tile, _) in column.tiles() {
-            self.enter_output_for_window(tile.window());
+            self.enter_output_for_window(tile.focused_window());
         }
 
         self.scrolling.add_column(None, column, activate, None);
@@ -735,6 +746,65 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
+    /// Remove a _window_, and optionally the entire tile, if the window in question is the last
+    /// remaining one within its tile.
+    pub fn remove_window(
+        &mut self,
+        id: &W::Id,
+        transaction: Transaction,
+    ) -> Option<RemovedTile<W>> {
+        let is_active = self
+            .floating
+            .active_window()
+            .map_or_else(
+                || self.scrolling.active_window().map(|w| w.id().clone()),
+                |w| Some(w.id().clone()),
+            )
+            .map(|w| &w == id)
+            .unwrap_or(false);
+
+        let (tile, from_floating) =
+            if let Some(tile) = self.floating.tiles_mut().find(|t| t.has_window(id)) {
+                (tile, true)
+            } else if let Some(tile) = self.scrolling.tiles_mut().find(|t| t.has_window(id)) {
+                (tile, false)
+            } else {
+                error!(
+                "attempted to remove window {id:?}, but no matching window was found in any layout"
+            );
+                return None;
+            };
+
+        if let Some(output) = &self.output {
+            if let Some(w) = tile.windows().find(|w| w.id() == id) {
+                w.output_leave(output)
+            }
+        }
+
+        if tile.remove_window(id) == 0 {
+            self.update_focus_floating_tiling_after_removing(from_floating);
+
+            let removed = if from_floating {
+                self.floating.remove_tile(id)
+            } else {
+                self.scrolling.remove_tile(id, transaction)
+            };
+
+            Some(removed)
+        } else {
+            // if we just removed the active window from a group, we need to ensure we
+            // move active focus to the next window in the group
+            if is_active {
+                let to_activate = tile.focused_window().id().clone();
+                if !self.floating.activate_window(&to_activate) {
+                    self.scrolling.activate_window(&to_activate);
+                }
+            }
+
+            None
+        }
+    }
+
     pub fn remove_tile(&mut self, id: &W::Id, transaction: Transaction) -> RemovedTile<W> {
         let mut from_floating = false;
         let removed = if self.floating.has_window(id) {
@@ -745,7 +815,7 @@ impl<W: LayoutElement> Workspace<W> {
         };
 
         if let Some(output) = &self.output {
-            removed.tile.window().output_leave(output);
+            removed.tile.windows().for_each(|w| w.output_leave(output));
         }
 
         self.update_focus_floating_tiling_after_removing(from_floating);
@@ -762,7 +832,7 @@ impl<W: LayoutElement> Workspace<W> {
         };
 
         if let Some(output) = &self.output {
-            removed.tile.window().output_leave(output);
+            removed.tile.windows().for_each(|w| w.output_leave(output));
         }
 
         self.update_focus_floating_tiling_after_removing(from_floating);
@@ -780,7 +850,7 @@ impl<W: LayoutElement> Workspace<W> {
 
         if let Some(output) = &self.output {
             for (tile, _) in column.tiles() {
-                tile.window().output_leave(output);
+                tile.windows().for_each(|w| w.output_leave(output));
             }
         }
 
@@ -1098,6 +1168,47 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
+    pub fn focus_next(&mut self) -> bool {
+        if self.floating_is_active.get() {
+            self.floating.focus_next()
+        } else {
+            self.scrolling.focus_next()
+        }
+    }
+
+    pub fn focus_prev(&mut self) -> bool {
+        if self.floating_is_active.get() {
+            self.floating.focus_prev()
+        } else {
+            self.scrolling.focus_prev()
+        }
+    }
+
+    pub fn move_window_into_or_out_of_group(
+        &mut self,
+        window: Option<&W::Id>,
+        direction: WindowMoveDirection,
+    ) {
+        if window.map_or(self.floating_is_active.get(), |id| {
+            self.floating.has_window(id)
+        }) {
+            return;
+        }
+
+        self.scrolling
+            .move_window_into_or_out_of_group(window, direction);
+    }
+
+    pub fn toggle_group(&mut self, window: Option<&W::Id>) {
+        if window.map_or(self.floating_is_active.get(), |id| {
+            self.floating.has_window(id)
+        }) {
+            return;
+        }
+
+        self.scrolling.toggle_group(window);
+    }
+
     pub fn consume_or_expel_window_left(&mut self, window: Option<&W::Id>) {
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
@@ -1135,20 +1246,6 @@ impl<W: LayoutElement> Workspace<W> {
             return;
         }
         self.scrolling.swap_window_in_direction(direction);
-    }
-
-    pub fn toggle_column_tabbed_display(&mut self) {
-        if self.floating_is_active.get() {
-            return;
-        }
-        self.scrolling.toggle_column_tabbed_display();
-    }
-
-    pub fn set_column_display(&mut self, display: ColumnDisplay) {
-        if self.floating_is_active.get() {
-            return;
-        }
-        self.scrolling.set_column_display(display);
     }
 
     pub fn center_column(&mut self) {
@@ -1274,15 +1371,22 @@ impl<W: LayoutElement> Workspace<W> {
             // need to unfullscreen into floating.
             let col = self
                 .scrolling
-                .columns()
-                .find(|col| col.contains(window))
-                .unwrap();
+                .columns_mut()
+                .find(|(col, _)| col.contains(window))
+                .unwrap()
+                .0;
 
             // When going from fullscreen to maximized, don't consider restore_to_floating yet.
             if col.is_pending_fullscreen() && !col.is_pending_maximized() {
-                let (tile, _) = col
-                    .tiles()
-                    .find(|(tile, _)| tile.window().id() == window)
+                let tile = col
+                    .tiles_mut()
+                    .find_map(|(tile, _)| {
+                        if tile.focus_window(window) {
+                            Some(tile)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap();
                 if tile.restore_to_floating {
                     // Unfullscreen and float in one call so it has a chance to notice and request a
@@ -1293,32 +1397,21 @@ impl<W: LayoutElement> Workspace<W> {
             }
         }
 
-        let tile = self
-            .scrolling
-            .tiles()
-            .find(|tile| tile.window().id() == window)
-            .unwrap();
-        let was_normal = tile.window().pending_sizing_mode().is_normal();
+        let tile = self.scrolling.find_and_focus_window(window).unwrap();
+        let was_normal = tile.focused_window().pending_sizing_mode().is_normal();
 
         self.scrolling.set_fullscreen(window, is_fullscreen);
 
         // When going from normal to fullscreen, remember if we should unfullscreen to floating.
-        let tile = self
-            .scrolling
-            .tiles_mut()
-            .find(|tile| tile.window().id() == window)
-            .unwrap();
-        if was_normal && !tile.window().pending_sizing_mode().is_normal() {
+        let tile = self.scrolling.find_and_focus_window(window).unwrap();
+        if was_normal && !tile.focused_window().pending_sizing_mode().is_normal() {
             tile.restore_to_floating = restore_to_floating;
         }
     }
 
     pub fn toggle_fullscreen(&mut self, window: &W::Id) {
-        let tile = self
-            .tiles()
-            .find(|tile| tile.window().id() == window)
-            .unwrap();
-        let current = tile.window().pending_sizing_mode().is_fullscreen();
+        let tile = self.find_and_focus_window(window).unwrap();
+        let current = tile.focused_window().pending_sizing_mode().is_fullscreen();
         self.set_fullscreen(window, !current);
     }
 
@@ -1337,14 +1430,12 @@ impl<W: LayoutElement> Workspace<W> {
             // The window is in the scrolling layout and we're requesting to unmaximize. If it is
             // indeed maximized (i.e. this isn't a duplicate unmaximize request), then we may
             // need to unmaximize into floating.
-            let tile = self
-                .scrolling
-                .tiles()
-                .find(|tile| tile.window().id() == window)
-                .unwrap();
+            let tile = self.scrolling.find_and_focus_window(window).unwrap();
             // The tile cannot unmaximize into fullscreen (pending_sizing_mode() will be fullscreen
             // in that case and not maximized), so this check works.
-            if tile.window().pending_sizing_mode().is_maximized() && tile.restore_to_floating {
+            if tile.focused_window().pending_sizing_mode().is_maximized()
+                && tile.restore_to_floating
+            {
                 // Unmaximize and float in one call so it has a chance to notice and request a
                 // (0, 0) size, rather than the scrolling column size.
                 self.toggle_window_floating(Some(window));
@@ -1352,22 +1443,14 @@ impl<W: LayoutElement> Workspace<W> {
             }
         }
 
-        let tile = self
-            .scrolling
-            .tiles()
-            .find(|tile| tile.window().id() == window)
-            .unwrap();
-        let was_normal = tile.window().pending_sizing_mode().is_normal();
+        let tile = self.scrolling.find_and_focus_window(window).unwrap();
+        let was_normal = tile.focused_window().pending_sizing_mode().is_normal();
 
         self.scrolling.set_maximized(window, maximize);
 
         // When going from normal to maximized, remember if we should unmaximize to floating.
-        let tile = self
-            .scrolling
-            .tiles_mut()
-            .find(|tile| tile.window().id() == window)
-            .unwrap();
-        if was_normal && !tile.window().pending_sizing_mode().is_normal() {
+        let tile = self.scrolling.find_and_focus_window(window).unwrap();
+        if was_normal && !tile.focused_window().pending_sizing_mode().is_normal() {
             tile.restore_to_floating = restore_to_floating;
         }
     }
@@ -1396,7 +1479,7 @@ impl<W: LayoutElement> Workspace<W> {
 
         let (_, render_pos, _) = self
             .tiles_with_render_positions()
-            .find(|(tile, _, _)| *tile.window().id() == id)
+            .find(|(tile, _, _)| tile.has_window(&id))
             .unwrap();
 
         if self.floating.has_window(&id) {
@@ -1443,7 +1526,13 @@ impl<W: LayoutElement> Workspace<W> {
 
         let (tile, new_render_pos) = self
             .tiles_with_render_positions_mut(false)
-            .find(|(tile, _)| *tile.window().id() == id)
+            .find_map(|(tile, new_render_pos)| {
+                if tile.focus_window(&id) {
+                    Some((tile, new_render_pos))
+                } else {
+                    None
+                }
+            })
             .unwrap();
 
         tile.animate_move_from(render_pos - new_render_pos);
@@ -1502,10 +1591,7 @@ impl<W: LayoutElement> Workspace<W> {
         } else {
             // If the target tile isn't floating, set its stored floating position.
             let tile = if let Some(id) = id {
-                self.scrolling
-                    .tiles_mut()
-                    .find(|tile| tile.window().id() == id)
-                    .unwrap()
+                self.scrolling.find_and_focus_window(id).unwrap()
             } else if let Some(tile) = self.scrolling.active_tile_mut() {
                 tile
             } else {
@@ -1589,7 +1675,10 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn tiles_with_render_positions(
         &self,
     ) -> impl Iterator<Item = (&Tile<W>, Point<f64, Logical>, bool)> {
-        let scrolling = self.scrolling.tiles_with_render_positions();
+        let scrolling = self
+            .scrolling
+            .tiles_with_render_positions()
+            .map(|(tile, pos)| (tile, pos, true));
 
         let floating = self.floating.tiles_with_render_positions();
         let visible = self.is_floating_visible();
@@ -1688,7 +1777,7 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn store_unmap_snapshot_if_empty(&mut self, renderer: &mut GlesRenderer, window: &W::Id) {
         let view_size = self.view_size();
         for (tile, tile_pos) in self.tiles_with_render_positions_mut(false) {
-            if tile.window().id() == window {
+            if tile.focused_window().id() == window {
                 let view_pos = Point::from((-tile_pos.x, -tile_pos.y));
                 let view_rect = Rectangle::new(view_pos, view_size);
                 tile.update_render_elements(false, view_rect);
@@ -1700,7 +1789,7 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn clear_unmap_snapshot(&mut self, window: &W::Id) {
         for tile in self.tiles_mut() {
-            if tile.window().id() == window {
+            if tile.focused_window().id() == window {
                 let _ = tile.take_unmap_snapshot();
                 return;
             }
@@ -2022,7 +2111,7 @@ impl<W: LayoutElement> Workspace<W> {
         }
 
         for (tile, tile_pos, visible) in self.tiles_with_render_positions() {
-            if Some(tile.window().id()) != move_win_id {
+            if Some(tile.focused_window().id()) != move_win_id {
                 assert_eq!(tile.interactive_move_offset, Point::from((0., 0.)));
             }
 

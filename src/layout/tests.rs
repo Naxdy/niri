@@ -366,6 +366,15 @@ fn arbitrary_view_offset_gesture_delta() -> impl Strategy<Value = f64> {
     prop_oneof![(-10f64..10f64), (-50000f64..50000f64),]
 }
 
+fn arbitrary_move_direction() -> impl Strategy<Value = WindowMoveDirection> {
+    prop_oneof![
+        Just(WindowMoveDirection::Up),
+        Just(WindowMoveDirection::Left),
+        Just(WindowMoveDirection::Right),
+        Just(WindowMoveDirection::Down),
+    ]
+}
+
 fn arbitrary_resize_edge() -> impl Strategy<Value = ResizeEdge> {
     prop_oneof![
         Just(ResizeEdge::RIGHT),
@@ -403,10 +412,6 @@ fn arbitrary_parent_id() -> impl Strategy<Value = Option<usize>> {
 
 fn arbitrary_scroll_direction() -> impl Strategy<Value = ScrollDirection> {
     prop_oneof![Just(ScrollDirection::Left), Just(ScrollDirection::Right)]
-}
-
-fn arbitrary_column_display() -> impl Strategy<Value = ColumnDisplay> {
-    prop_oneof![Just(ColumnDisplay::Normal), Just(ColumnDisplay::Tabbed)]
 }
 
 #[derive(Debug, Clone, Arbitrary)]
@@ -467,6 +472,12 @@ enum Op {
         is_fullscreen: bool,
     },
     ToggleWindowedFullscreen(#[proptest(strategy = "1..=5usize")] usize),
+    ToggleGroup,
+    MoveWindowIntoOrOutOfGroup(
+        #[proptest(strategy = "arbitrary_move_direction()")] WindowMoveDirection,
+    ),
+    FocusNextWindow,
+    FocusPreviousWindow,
     FocusColumnLeft,
     FocusColumnRight,
     FocusColumnFirst,
@@ -514,8 +525,6 @@ enum Op {
     ConsumeWindowIntoColumn,
     ExpelWindowFromColumn,
     SwapWindowInDirection(#[proptest(strategy = "arbitrary_scroll_direction()")] ScrollDirection),
-    ToggleColumnTabbedDisplay,
-    SetColumnDisplay(#[proptest(strategy = "arbitrary_column_display()")] ColumnDisplay),
     CenterColumn,
     CenterWindow {
         #[proptest(strategy = "proptest::option::of(1..=5usize)")]
@@ -928,7 +937,7 @@ impl Op {
                 let mut found_next_to = false;
 
                 if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    let win_id = move_.tile.window().0.id;
+                    let win_id = move_.tile.focused_window().0.id;
                     if win_id == params.id {
                         return;
                     }
@@ -999,7 +1008,7 @@ impl Op {
                 let mut ws_id = None;
 
                 if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    if move_.tile.window().0.id == params.id {
+                    if move_.tile.focused_window().0.id == params.id {
                         return;
                     }
                 }
@@ -1179,8 +1188,6 @@ impl Op {
             Op::ConsumeWindowIntoColumn => layout.consume_into_column(),
             Op::ExpelWindowFromColumn => layout.expel_from_column(),
             Op::SwapWindowInDirection(direction) => layout.swap_window_in_direction(direction),
-            Op::ToggleColumnTabbedDisplay => layout.toggle_column_tabbed_display(),
-            Op::SetColumnDisplay(display) => layout.set_column_display(display),
             Op::CenterColumn => layout.center_column(),
             Op::CenterWindow { id } => {
                 let id = id.filter(|id| layout.has_window(id));
@@ -1393,8 +1400,8 @@ impl Op {
                 let mut update = false;
 
                 if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    if move_.tile.window().0.id == id {
-                        move_.tile.window().0.parent_id.set(new_parent_id);
+                    if move_.tile.focused_window().0.id == id {
+                        move_.tile.focused_window().0.parent_id.set(new_parent_id);
                         update = true;
                     }
                 }
@@ -1444,8 +1451,8 @@ impl Op {
                 let mut update = false;
 
                 if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    if move_.tile.window().0.id == id {
-                        if move_.tile.window().communicate() {
+                    if move_.tile.focused_window().0.id == id {
+                        if move_.tile.focused_window().communicate() {
                             update = true;
                         }
 
@@ -1633,6 +1640,12 @@ impl Op {
 
                 layout.update_options(options);
             }
+            Op::ToggleGroup => layout.toggle_group(None),
+            Op::MoveWindowIntoOrOutOfGroup(window_move_direction) => {
+                layout.move_window_into_or_out_of_group(None, window_move_direction)
+            }
+            Op::FocusNextWindow => layout.focus_next(),
+            Op::FocusPreviousWindow => layout.focus_prev(),
         }
     }
 }
@@ -1756,7 +1769,13 @@ fn operations_dont_panic() {
         Op::ConsumeOrExpelWindowLeft { id: None },
         Op::ConsumeOrExpelWindowRight { id: None },
         Op::MoveWorkspaceToOutput(1),
-        Op::ToggleColumnTabbedDisplay,
+        Op::ToggleGroup,
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Up),
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Left),
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Right),
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Down),
+        Op::FocusNextWindow,
+        Op::FocusPreviousWindow,
     ];
 
     for third in &every_op {
@@ -1935,7 +1954,13 @@ fn operations_from_starting_state_dont_panic() {
         Op::MoveWindowUpOrToWorkspaceUp,
         Op::ConsumeOrExpelWindowLeft { id: None },
         Op::ConsumeOrExpelWindowRight { id: None },
-        Op::ToggleColumnTabbedDisplay,
+        Op::ToggleGroup,
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Up),
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Left),
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Right),
+        Op::MoveWindowIntoOrOutOfGroup(WindowMoveDirection::Down),
+        Op::FocusNextWindow,
+        Op::FocusPreviousWindow,
     ];
 
     for third in &every_op {
@@ -3638,45 +3663,6 @@ fn move_window_to_workspace_maximize_and_fullscreen() {
     assert_eq!(win.pending_sizing_mode(), SizingMode::Normal);
 }
 
-#[test]
-fn tabs_with_different_border() {
-    let ops = [
-        Op::AddOutput(1),
-        Op::AddWindow {
-            params: TestWindowParams {
-                rules: Some(ResolvedWindowRules {
-                    border: niri_config::BorderRule {
-                        on: true,
-                        ..Default::default()
-                    },
-                    ..ResolvedWindowRules::default()
-                }),
-                ..TestWindowParams::new(2)
-            },
-        },
-        Op::SwitchPresetWindowHeight { id: None },
-        Op::ToggleColumnTabbedDisplay,
-        Op::AddWindow {
-            params: TestWindowParams::new(3),
-        },
-        Op::ConsumeOrExpelWindowLeft { id: None },
-    ];
-
-    let options = Options {
-        layout: niri_config::Layout {
-            struts: Struts {
-                left: FloatOrInt(0.),
-                right: FloatOrInt(0.),
-                top: FloatOrInt(20000.),
-                bottom: FloatOrInt(0.),
-            },
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    check_ops_with_options(options, ops);
-}
-
 fn parent_id_causes_loop(layout: &Layout<TestWindow>, id: usize, mut parent_id: usize) -> bool {
     if parent_id == id {
         return true;
@@ -3748,8 +3734,6 @@ fn arbitrary_center_focused_column() -> impl Strategy<Value = CenterFocusedColum
 
 fn arbitrary_tab_indicator_position() -> impl Strategy<Value = TabIndicatorPosition> {
     prop_oneof![
-        Just(TabIndicatorPosition::Left),
-        Just(TabIndicatorPosition::Right),
         Just(TabIndicatorPosition::Top),
         Just(TabIndicatorPosition::Bottom),
     ]
@@ -3801,7 +3785,6 @@ prop_compose! {
     fn arbitrary_tab_indicator()(
         off in any::<bool>(),
         hide_when_single_tab in prop::option::of(any::<bool>().prop_map(Flag)),
-        place_within_column in prop::option::of(any::<bool>().prop_map(Flag)),
         width in prop::option::of(arbitrary_spacing().prop_map(FloatOrInt)),
         gap in prop::option::of(arbitrary_spacing_neg().prop_map(FloatOrInt)),
         length in prop::option::of((0f64..2f64)
@@ -3812,7 +3795,6 @@ prop_compose! {
             off,
             on: !off,
             hide_when_single_tab,
-            place_within_column,
             width,
             gap,
             length,
