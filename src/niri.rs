@@ -153,6 +153,7 @@ use crate::protocols::virtual_pointer::VirtualPointerManagerState;
 use crate::pw_utils::{Cast, PipeWire};
 #[cfg(feature = "xdp-gnome-screencast")]
 use crate::pw_utils::{CastSizeChange, PwToNiri};
+use crate::render_helpers::blur::{EffectsFramebuffers, EffectsFramebufffersUserData};
 use crate::render_helpers::debug::draw_opaque_regions;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -1673,6 +1674,11 @@ impl State {
             // This won't change the systemd environment, but oh well.
             *CHILD_DISPLAY.write().unwrap() = display_name;
         }
+
+        self.niri
+            .global_space
+            .outputs()
+            .for_each(EffectsFramebuffers::set_dirty);
 
         // Can't really update xdg-decoration settings since we have to hide the globals for CSD
         // due to the SDL2 bug... I don't imagine clients are prepared for the xdg-decoration
@@ -4447,9 +4453,18 @@ impl Niri {
 
         // Get layer-shell elements.
         let layer_map = layer_map_for_output(output);
+        let fx_buffers = EffectsFramebuffers::get_user_data(output);
         let mut extend_from_layer =
             |elements: &mut SplitElements<LayerSurfaceRenderElement<R>>, layer, for_backdrop| {
-                self.render_layer(renderer, target, &layer_map, layer, elements, for_backdrop);
+                self.render_layer(
+                    renderer,
+                    target,
+                    &layer_map,
+                    layer,
+                    elements,
+                    for_backdrop,
+                    fx_buffers.clone(),
+                );
             };
 
         // The overlay layer elements go next.
@@ -4564,6 +4579,20 @@ impl Niri {
             draw_opaque_regions(&mut elements, output_scale);
         }
 
+        if let Some(mut fx_buffers) = EffectsFramebuffers::get(output) {
+            let blur_config = self.config.borrow().layout.blur;
+            if blur_config.on && blur_config.passes > 0 {
+                if let Err(e) = fx_buffers.update_optimized_blur_buffer(
+                    renderer.as_gles_renderer(),
+                    layer_map,
+                    output_scale,
+                    blur_config,
+                ) {
+                    error!("failed to update optimized blur buffer: {e:?}");
+                };
+            }
+        }
+
         elements
     }
 
@@ -4576,6 +4605,7 @@ impl Niri {
         layer: Layer,
         elements: &mut SplitElements<LayerSurfaceRenderElement<R>>,
         for_backdrop: bool,
+        fx_buffers: Option<EffectsFramebufffersUserData>,
     ) {
         // LayerMap returns layers in reverse stacking order.
         let iter = layer_map.layers_on(layer).rev().filter_map(|surface| {
@@ -4589,7 +4619,7 @@ impl Niri {
             Some((mapped, geo))
         });
         for (mapped, geo) in iter {
-            elements.extend(mapped.render(renderer, geo.loc.to_f64(), target));
+            elements.extend(mapped.render(renderer, geo.loc.to_f64(), target, fx_buffers.clone()));
         }
     }
 

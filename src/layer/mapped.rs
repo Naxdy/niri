@@ -1,17 +1,19 @@
 use niri_config::utils::MergeWith as _;
-use niri_config::{Config, LayerRule};
+use niri_config::{Blur, Config, LayerRule};
 use smithay::backend::renderer::element::surface::{
     render_elements_from_surface_tree, WaylandSurfaceRenderElement,
 };
 use smithay::backend::renderer::element::Kind;
 use smithay::desktop::{LayerSurface, PopupManager};
-use smithay::utils::{Logical, Point, Scale, Size};
+use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, Layer};
 
 use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
+use crate::render_helpers::blur::element::BlurRenderElement;
+use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
@@ -32,6 +34,13 @@ pub struct MappedLayer {
     /// The shadow around the surface.
     shadow: Shadow,
 
+    /// Configuration for this layer's blur.
+    blur_config: Blur,
+
+    /// Size (used for blur).
+    // TODO: move to standalone blur struct
+    size: Size<f64, Logical>,
+
     /// The view size for the layer surface's output.
     view_size: Size<f64, Logical>,
 
@@ -47,6 +56,7 @@ niri_render_elements! {
         Wayland = WaylandSurfaceRenderElement<R>,
         SolidColor = SolidColorRenderElement,
         Shadow = ShadowRenderElement,
+        Blur = BlurRenderElement,
     }
 }
 
@@ -64,6 +74,8 @@ impl MappedLayer {
         shadow_config.on = false;
         shadow_config.merge_with(&rules.shadow);
 
+        let blur_config = config.layout.blur.merged_with(&rules.blur);
+
         Self {
             surface,
             rules,
@@ -72,6 +84,8 @@ impl MappedLayer {
             scale,
             shadow: Shadow::new(shadow_config),
             clock,
+            blur_config,
+            size: Size::default(),
         }
     }
 
@@ -81,6 +95,8 @@ impl MappedLayer {
         shadow_config.on = false;
         shadow_config.merge_with(&self.rules.shadow);
         self.shadow.update_config(shadow_config);
+
+        self.blur_config = config.layout.blur.merged_with(&self.rules.blur);
     }
 
     pub fn update_shaders(&mut self) {
@@ -97,6 +113,8 @@ impl MappedLayer {
         let size = size
             .to_physical_precise_round(self.scale)
             .to_logical(self.scale);
+
+        self.size = size;
 
         self.block_out_buffer.resize(size);
 
@@ -161,6 +179,7 @@ impl MappedLayer {
         renderer: &mut R,
         location: Point<f64, Logical>,
         target: RenderTarget,
+        fx_buffers: Option<EffectsFramebufffersUserData>,
     ) -> SplitElements<LayerSurfaceRenderElement<R>> {
         let mut rv = SplitElements::default();
 
@@ -209,9 +228,34 @@ impl MappedLayer {
             );
         }
 
+        let blur_elem = (self.blur_config.on
+            && matches!(self.surface.layer(), Layer::Top | Layer::Overlay))
+        .then(|| {
+            let fx_buffers = fx_buffers?;
+
+            Some(
+                BlurRenderElement::new_true(
+                    fx_buffers,
+                    Rectangle::new(location, self.size).to_i32_round(),
+                    location.to_physical_precise_round(self.scale),
+                    self.rules
+                        .geometry_corner_radius
+                        .unwrap_or_default()
+                        .top_left,
+                    self.scale,
+                    self.blur_config,
+                )
+                .into(),
+            )
+        })
+        .flatten()
+        .into_iter();
+
         let location = location.to_physical_precise_round(scale).to_logical(scale);
         rv.normal
             .extend(self.shadow.render(renderer, location).map(Into::into));
+
+        rv.normal.extend(blur_elem);
 
         rv
     }

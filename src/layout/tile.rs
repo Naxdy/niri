@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
 use niri_config::utils::MergeWith as _;
-use niri_config::{Color, CornerRadius, GradientInterpolation};
+use niri_config::{Blur, Color, CornerRadius, GradientInterpolation};
 use niri_ipc::WindowLayout;
 use portable_atomic::AtomicU8;
 use smithay::backend::renderer::element::{Element, Kind};
@@ -21,6 +21,8 @@ use crate::animation::{Animation, Clock};
 use crate::layout::tab_indicator::{TabIndicator, TabIndicatorRenderElement, TabInfo};
 use crate::layout::SizingMode;
 use crate::niri_render_elements;
+use crate::render_helpers::blur::element::BlurRenderElement;
+use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::clipped_surface::{ClippedSurfaceRenderElement, RoundedCornerDamage};
 use crate::render_helpers::damage::ExtraDamage;
@@ -401,6 +403,10 @@ pub struct Tile<W: LayoutElement> {
     /// window still having to adjust, which causes a jerking visual without this compensation.
     window_size_override: WindowSizeOverride,
 
+    /// This tile's blur settings.
+    // TODO: create a proper struct for this, like e.g. Shadow
+    blur_config: Blur,
+
     /// Clock for driving animations.
     pub(super) clock: Clock,
 
@@ -417,6 +423,7 @@ niri_render_elements! {
         Resize = ResizeRenderElement,
         Border = BorderRenderElement,
         Shadow = ShadowRenderElement,
+        Blur = BlurRenderElement,
         ClippedSurface = ClippedSurfaceRenderElement<R>,
         Offscreen = OffscreenRenderElement,
         ExtraDamage = ExtraDamage,
@@ -476,12 +483,14 @@ impl<W: LayoutElement> Tile<W> {
         let shadow_config = options.layout.shadow.merged_with(&rules.shadow);
         let sizing_mode = window.sizing_mode();
         let tab_indicator_config = options.layout.tab_indicator;
+        let blur_config = options.layout.blur.merged_with(&rules.blur);
 
         Self {
             window: WindowInner::Single(Some(window)),
             border: FocusRing::new(border_config.into()),
             focus_ring: FocusRing::new(focus_ring_config),
             shadow: Shadow::new(shadow_config),
+            blur_config,
             sizing_mode,
             fullscreen_backdrop: SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.]),
             restore_to_floating: false,
@@ -541,6 +550,8 @@ impl<W: LayoutElement> Tile<W> {
 
         self.tab_indicator
             .update_config(self.options.layout.tab_indicator);
+
+        self.blur_config = self.options.layout.blur.merged_with(&rules.blur);
     }
 
     pub fn update_shaders(&mut self) {
@@ -1513,6 +1524,7 @@ impl<W: LayoutElement> Tile<W> {
         location: Point<f64, Logical>,
         focus_ring: bool,
         target: RenderTarget,
+        fx_buffers: Option<EffectsFramebufffersUserData>,
     ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
         let _span = tracy_client::span!("Tile::render_inner");
 
@@ -1830,9 +1842,47 @@ impl<W: LayoutElement> Tile<W> {
             .then(|| self.focus_ring.render(renderer, location).map(Into::into));
         let rv = rv.chain(elem.into_iter().flatten());
 
+        let blur_elem = self
+            .blur_config
+            .on
+            .then(|| {
+                let fx_buffers = fx_buffers?;
+
+                if self.focused_window().is_floating() {
+                    Some(
+                        BlurRenderElement::new_true(
+                            fx_buffers,
+                            area.to_i32_round(),
+                            window_render_loc.to_physical(self.scale).to_i32_round(),
+                            radius.top_left,
+                            self.scale,
+                            self.blur_config,
+                        )
+                        .into(),
+                    )
+                } else {
+                    Some(
+                        BlurRenderElement::new_optimized(
+                            renderer,
+                            &fx_buffers.borrow_mut(),
+                            area.to_i32_round(),
+                            window_render_loc.to_physical(self.scale).to_i32_round(),
+                            radius.top_left,
+                            self.scale,
+                            self.blur_config,
+                        )
+                        .into(),
+                    )
+                }
+            })
+            .flatten()
+            .into_iter();
+
         let elem = (expanded_progress < 1.)
             .then(|| self.shadow.render(renderer, location).map(Into::into));
-        rv.chain(elem.into_iter().flatten())
+        let rv = rv.chain(elem.into_iter().flatten());
+
+        rv.chain(blur_elem)
     }
 
     pub fn render<'a, R: NiriRenderer + 'a>(
@@ -1841,6 +1891,7 @@ impl<W: LayoutElement> Tile<W> {
         location: Point<f64, Logical>,
         focus_ring: bool,
         target: RenderTarget,
+        fx_buffers: Option<EffectsFramebufffersUserData>,
     ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
         let _span = tracy_client::span!("Tile::render");
 
@@ -1859,7 +1910,13 @@ impl<W: LayoutElement> Tile<W> {
 
         if let Some(open) = &self.open_animation {
             let renderer = renderer.as_gles_renderer();
-            let elements = self.render_inner(renderer, Point::from((0., 0.)), focus_ring, target);
+            let elements = self.render_inner(
+                renderer,
+                Point::from((0., 0.)),
+                focus_ring,
+                target,
+                fx_buffers.clone(),
+            );
             let elements = elements.collect::<Vec<TileRenderElement<_>>>();
             match open.render(
                 renderer,
@@ -1879,7 +1936,13 @@ impl<W: LayoutElement> Tile<W> {
             }
         } else if let Some(alpha) = &self.alpha_animation {
             let renderer = renderer.as_gles_renderer();
-            let elements = self.render_inner(renderer, Point::from((0., 0.)), focus_ring, target);
+            let elements = self.render_inner(
+                renderer,
+                Point::from((0., 0.)),
+                focus_ring,
+                target,
+                fx_buffers.clone(),
+            );
             let elements = elements.collect::<Vec<TileRenderElement<_>>>();
             match alpha.offscreen.render(renderer, scale, &elements) {
                 Ok((elem, _sync, data)) => {
@@ -1896,7 +1959,8 @@ impl<W: LayoutElement> Tile<W> {
         }
 
         if open_anim_elem.is_none() && alpha_anim_elem.is_none() {
-            window_elems = Some(self.render_inner(renderer, location, focus_ring, target));
+            window_elems =
+                Some(self.render_inner(renderer, location, focus_ring, target, fx_buffers));
         }
 
         open_anim_elem
@@ -1916,7 +1980,13 @@ impl<W: LayoutElement> Tile<W> {
     fn render_snapshot(&self, renderer: &mut GlesRenderer) -> TileRenderSnapshot {
         let _span = tracy_client::span!("Tile::render_snapshot");
 
-        let contents = self.render(renderer, Point::from((0., 0.)), false, RenderTarget::Output);
+        let contents = self.render(
+            renderer,
+            Point::from((0., 0.)),
+            false,
+            RenderTarget::Output,
+            None,
+        );
 
         // A bit of a hack to render blocked out as for screencast, but I think it's fine here.
         let blocked_out_contents = self.render(
@@ -1924,6 +1994,7 @@ impl<W: LayoutElement> Tile<W> {
             Point::from((0., 0.)),
             false,
             RenderTarget::Screencast,
+            None,
         );
 
         RenderSnapshot {

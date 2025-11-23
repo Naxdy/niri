@@ -30,6 +30,7 @@ use super::{
 };
 use crate::animation::Clock;
 use crate::niri_render_elements;
+use crate::render_helpers::blur::EffectsFramebuffers;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
@@ -1727,18 +1728,29 @@ impl<W: LayoutElement> Workspace<W> {
         impl Iterator<Item = WorkspaceRenderElement<R>>,
         impl Iterator<Item = WorkspaceRenderElement<R>>,
     ) {
+        let fx_buffers = self
+            .current_output()
+            .and_then(EffectsFramebuffers::get_user_data);
+
         let scrolling_focus_ring = focus_ring && !self.floating_is_active();
-        let scrolling = self
-            .scrolling
-            .render_elements(renderer, target, scrolling_focus_ring);
+        let scrolling = self.scrolling.render_elements(
+            renderer,
+            target,
+            scrolling_focus_ring,
+            fx_buffers.clone(),
+        );
         let scrolling = scrolling.into_iter().map(WorkspaceRenderElement::from);
 
         let floating_focus_ring = focus_ring && self.floating_is_active();
         let floating = self.is_floating_visible().then(|| {
             let view_rect = Rectangle::from_size(self.view_size);
-            let floating =
-                self.floating
-                    .render_elements(renderer, view_rect, target, floating_focus_ring);
+            let floating = self.floating.render_elements(
+                renderer,
+                view_rect,
+                target,
+                floating_focus_ring,
+                fx_buffers.clone(),
+            );
             floating.into_iter().map(WorkspaceRenderElement::from)
         });
         let floating = floating.into_iter().flatten();

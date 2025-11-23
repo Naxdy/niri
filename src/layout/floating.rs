@@ -17,6 +17,7 @@ use super::{
 };
 use crate::animation::{Animation, Clock};
 use crate::niri_render_elements;
+use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::RenderTarget;
 use crate::utils::transaction::TransactionBlocker;
@@ -1140,6 +1141,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         view_rect: Rectangle<f64, Logical>,
         target: RenderTarget,
         focus_ring: bool,
+        fx_buffers: Option<EffectsFramebufffersUserData>,
     ) -> Vec<FloatingSpaceRenderElement<R>> {
         let mut rv = Vec::new();
 
@@ -1159,7 +1161,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             let focus_ring = focus_ring && Some(tile.focused_window().id()) == active.as_ref();
 
             rv.extend(
-                tile.render(renderer, tile_pos, focus_ring, target)
+                tile.render(renderer, tile_pos, focus_ring, target, fx_buffers.clone())
                     .map(Into::into),
             );
         }

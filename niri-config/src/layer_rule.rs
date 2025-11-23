@@ -1,5 +1,6 @@
 use crate::appearance::{BlockOutFrom, CornerRadius, ShadowRule};
 use crate::utils::RegexEq;
+use crate::BlurRule;
 
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
 pub struct LayerRule {
@@ -14,6 +15,8 @@ pub struct LayerRule {
     pub block_out_from: Option<BlockOutFrom>,
     #[knuffel(child, default)]
     pub shadow: ShadowRule,
+    #[knuffel(child, default)]
+    pub blur: BlurRule,
     #[knuffel(child)]
     pub geometry_corner_radius: Option<CornerRadius>,
     #[knuffel(child, unwrap(argument))]

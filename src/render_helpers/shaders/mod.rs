@@ -6,6 +6,8 @@ use smithay::backend::renderer::gles::{
     UniformValue,
 };
 
+use super::blur::shader::BlurShaders;
+
 use super::renderer::NiriRenderer;
 use super::shader_element::ShaderProgram;
 
@@ -18,6 +20,8 @@ pub struct Shaders {
     pub custom_resize: RefCell<Option<ShaderProgram>>,
     pub custom_close: RefCell<Option<ShaderProgram>>,
     pub custom_open: RefCell<Option<ShaderProgram>>,
+    pub blur_finish: Option<GlesTexProgram>,
+    pub blur: BlurShaders,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -97,6 +101,22 @@ impl Shaders {
             })
             .ok();
 
+        let blur_finish = renderer
+            .compile_custom_texture_shader(
+                include_str!("blur_finish.frag"),
+                &[
+                    UniformName::new("output_size", UniformType::_2f),
+                    UniformName::new("corner_radius", UniformType::_1f),
+                    UniformName::new("alpha", UniformType::_1f),
+                    UniformName::new("noise", UniformType::_1f),
+                    UniformName::new("geo", UniformType::_4f),
+                ],
+            )
+            .map_err(|e| warn!("error compiling clipped surface shader: {e:?}"))
+            .ok();
+
+        let blur = BlurShaders::compile(renderer).expect("blur shaders should always compile");
+
         let gradient_fade = renderer
             .compile_custom_texture_shader(
                 include_str!("gradient_fade.frag"),
@@ -116,6 +136,8 @@ impl Shaders {
             custom_resize: RefCell::new(None),
             custom_close: RefCell::new(None),
             custom_open: RefCell::new(None),
+            blur_finish,
+            blur,
         }
     }
 

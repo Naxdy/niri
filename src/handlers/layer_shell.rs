@@ -12,6 +12,7 @@ use smithay::wayland::shell::xdg::PopupSurface;
 
 use crate::layer::{MappedLayer, ResolvedLayerRules};
 use crate::niri::State;
+use crate::render_helpers::blur::EffectsFramebuffers;
 use crate::utils::{is_mapped, output_size, send_scale_transform};
 
 impl WlrLayerShellHandler for State {
@@ -23,7 +24,7 @@ impl WlrLayerShellHandler for State {
         &mut self,
         surface: WlrLayerSurface,
         wl_output: Option<WlOutput>,
-        _layer: Layer,
+        wlr_layer: Layer,
         namespace: String,
     ) {
         let output = if let Some(wl_output) = &wl_output {
@@ -36,6 +37,10 @@ impl WlrLayerShellHandler for State {
             surface.send_close();
             return;
         };
+
+        if matches!(wlr_layer, Layer::Background | Layer::Bottom) {
+            EffectsFramebuffers::set_dirty(&output);
+        }
 
         let wl_surface = surface.wl_surface().clone();
         let is_new = self.niri.unmapped_layer_surfaces.insert(wl_surface);
@@ -59,6 +64,10 @@ impl WlrLayerShellHandler for State {
                     .cloned();
                 layer.map(|layer| (o.clone(), map, layer))
             }) {
+            if matches!(layer.layer(), Layer::Background | Layer::Bottom) {
+                EffectsFramebuffers::set_dirty(&output);
+            }
+
             map.unmap_layer(&layer);
             self.niri.mapped_layer_surfaces.remove(&layer);
             Some(output)
@@ -112,6 +121,10 @@ impl State {
         let layer = map
             .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
             .unwrap();
+
+        if matches!(layer.layer(), Layer::Bottom | Layer::Background) {
+            EffectsFramebuffers::set_dirty(&output);
+        }
 
         if is_mapped(surface) {
             let was_unmapped = self.niri.unmapped_layer_surfaces.remove(surface);

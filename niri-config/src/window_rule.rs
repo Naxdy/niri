@@ -1,7 +1,7 @@
 use crate::appearance::{BlockOutFrom, BorderRule, CornerRadius, ShadowRule, TabIndicatorRule};
 use crate::layout::DefaultPresetSize;
 use crate::utils::RegexEq;
-use crate::FloatOrInt;
+use crate::{BlurRule, FloatOrInt};
 
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
 pub struct WindowRule {
@@ -44,6 +44,8 @@ pub struct WindowRule {
     pub focus_ring: BorderRule,
     #[knuffel(child, default)]
     pub border: BorderRule,
+    #[knuffel(child, default)]
+    pub blur: BlurRule,
     #[knuffel(child, default)]
     pub shadow: ShadowRule,
     #[knuffel(child, default)]

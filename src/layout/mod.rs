@@ -60,6 +60,7 @@ use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::layout::scrolling::ScrollDirection;
 use crate::niri_render_elements;
+use crate::render_helpers::blur::EffectsFramebuffers;
 use crate::render_helpers::offscreen::OffscreenData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::snapshot::RenderSnapshot;
@@ -214,6 +215,7 @@ pub trait LayoutElement {
     fn set_activated(&mut self, active: bool);
     fn set_active_in_column(&mut self, active: bool);
     fn set_floating(&mut self, floating: bool);
+    fn is_floating(&self) -> bool;
     fn set_bounds(&self, bounds: Size<i32, Logical>);
     fn is_ignoring_opacity_window_rule(&self) -> bool;
 
@@ -4850,9 +4852,10 @@ impl<W: LayoutElement> Layout<W> {
                 let scale = Scale::from(move_.output.current_scale().fractional_scale());
                 let zoom = self.overview_zoom();
                 let location = move_.tile_render_location(zoom);
+                let fx_buffers = EffectsFramebuffers::get_user_data(output);
                 let iter = move_
                     .tile
-                    .render(renderer, location, true, target)
+                    .render(renderer, location, true, target, fx_buffers)
                     .map(move |elem| {
                         RescaleRenderElement::from_element(
                             elem,
