@@ -69,12 +69,14 @@ impl MappedLayer {
         clock: Clock,
         config: &Config,
     ) -> Self {
+        // Shadows and blur for layer surfaces need to be explicitly enabled.
         let mut shadow_config = config.layout.shadow;
-        // Shadows for layer surfaces need to be explicitly enabled.
         shadow_config.on = false;
         shadow_config.merge_with(&rules.shadow);
 
-        let blur_config = config.layout.blur.merged_with(&rules.blur);
+        let mut blur_config = config.layout.blur;
+        blur_config.on = false;
+        blur_config.merge_with(&rules.blur);
 
         Self {
             surface,
@@ -90,13 +92,16 @@ impl MappedLayer {
     }
 
     pub fn update_config(&mut self, config: &Config) {
+        // Shadows and blur for layer surfaces need to be explicitly enabled.
         let mut shadow_config = config.layout.shadow;
-        // Shadows for layer surfaces need to be explicitly enabled.
         shadow_config.on = false;
         shadow_config.merge_with(&self.rules.shadow);
         self.shadow.update_config(shadow_config);
 
-        self.blur_config = config.layout.blur.merged_with(&self.rules.blur);
+        let mut blur_config = config.layout.blur;
+        blur_config.on = false;
+        blur_config.merge_with(&self.rules.blur);
+        self.blur_config = blur_config;
     }
 
     pub fn update_shaders(&mut self) {

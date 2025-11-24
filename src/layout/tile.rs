@@ -483,7 +483,11 @@ impl<W: LayoutElement> Tile<W> {
         let shadow_config = options.layout.shadow.merged_with(&rules.shadow);
         let sizing_mode = window.sizing_mode();
         let tab_indicator_config = options.layout.tab_indicator;
-        let blur_config = options.layout.blur.merged_with(&rules.blur);
+
+        // Blur needs to be enabled explicitly
+        let mut blur_config = options.layout.blur;
+        blur_config.on = false;
+        blur_config.merge_with(&rules.blur);
 
         Self {
             window: WindowInner::Single(Some(window)),
@@ -551,7 +555,11 @@ impl<W: LayoutElement> Tile<W> {
         self.tab_indicator
             .update_config(self.options.layout.tab_indicator);
 
-        self.blur_config = self.options.layout.blur.merged_with(&rules.blur);
+        // Blur needs to be enabled explicitly
+        let mut blur_config = self.options.layout.blur;
+        blur_config.on = false;
+        blur_config.merge_with(&rules.blur);
+        self.blur_config = blur_config;
     }
 
     pub fn update_shaders(&mut self) {
