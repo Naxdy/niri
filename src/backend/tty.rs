@@ -2425,6 +2425,22 @@ impl Tty {
                         surface.compositor.vrr_enabled(),
                     );
                     niri.output_resized(&output);
+                    let render_node = device.render_node.unwrap_or(self.primary_render_node);
+                    let renderer = self.gpu_manager.single_renderer(&render_node);
+                    match renderer {
+                        Ok(mut renderer) => {
+                            if let Err(e) =
+                                EffectsFramebuffers::update_for_output(&output, &mut renderer)
+                            {
+                                warn!("failed to update fx buffers after output resize: {e:?}");
+                            } else {
+                                EffectsFramebuffers::set_dirty(&output);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("failed to get renderer after output resize: {e:?}");
+                        }
+                    }
                 }
             }
 
