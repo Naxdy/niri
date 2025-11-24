@@ -33,7 +33,7 @@ pub enum BlurRenderElement {
     },
     /// Use true blur.
     ///
-    /// When using this technique, the compositor will blur the current framebuffer ccontents that
+    /// When using this technique, the compositor will blur the current framebuffer contents that
     /// are below the [`BlurElement`] in order to display them. This adds an additional render step
     /// but provides true results with the blurred contents.
     TrueBlur {
