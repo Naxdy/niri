@@ -73,12 +73,23 @@ pub struct EffectsFramebuffers {
     current_buffer: CurrentBuffer,
     /// Size of the output that this object runs on.
     output_size: Size<i32, Physical>,
+    /// The transform to be used for rendering the blur texture.
+    transform: Transform,
 }
 
 pub type EffectsFramebufffersUserData = Rc<RefCell<EffectsFramebuffers>>;
 
 fn get_rerender_at() -> Option<Instant> {
     Some(Instant::now() + Duration::from_millis(150))
+}
+
+fn transform_for_texture(t: Transform) -> Transform {
+    match t {
+        Transform::Normal | Transform::Flipped180 => Transform::Normal,
+        Transform::_90 | Transform::Flipped270 => Transform::_90,
+        Transform::_180 | Transform::Flipped => Transform::_180,
+        Transform::_270 | Transform::Flipped90 => Transform::_270,
+    }
 }
 
 impl EffectsFramebuffers {
@@ -130,6 +141,7 @@ impl EffectsFramebuffers {
             effects_swapped: create_buffer(renderer, output_size).unwrap(),
             current_buffer: CurrentBuffer::Normal,
             output_size: output.current_mode().unwrap().size,
+            transform: transform_for_texture(output.current_transform()),
         };
 
         let user_data = output.user_data();
@@ -143,11 +155,11 @@ impl EffectsFramebuffers {
     ///
     /// You should call this if the output's scale/size changes
     pub fn update_for_output(
-        output: Output,
+        output: &Output,
         renderer: &mut impl NiriRenderer,
     ) -> Result<(), GlesError> {
         let renderer = renderer.as_gles_renderer();
-        let Some(mut fx_buffers) = Self::get(&output) else {
+        let Some(mut fx_buffers) = Self::get(output) else {
             warn!("attempting to update fx buffer on output that has none: {output:?}");
             return Ok(()); // TODO: error?
         };
@@ -170,6 +182,7 @@ impl EffectsFramebuffers {
             effects_swapped: create_buffer(renderer, output_size)?,
             current_buffer: CurrentBuffer::Normal,
             output_size: output.current_mode().unwrap().size,
+            transform: transform_for_texture(output.current_transform()),
         };
 
         Ok(())
@@ -217,7 +230,7 @@ impl EffectsFramebuffers {
             &mut fb,
             self.output_size,
             scale,
-            Transform::Normal,
+            self.transform,
             elements.iter(),
         )
         .expect("failed to render for optimized blur buffer");

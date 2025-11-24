@@ -298,7 +298,7 @@ fn draw_true_blur(
         dst,
         damage,
         opaque_regions,
-        Transform::Normal,
+        fx_buffers.transform,
         alpha,
         program.as_ref(),
         &additional_uniforms,

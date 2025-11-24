@@ -126,7 +126,7 @@ impl Winit {
                     state.niri.output_resized(&winit.output);
 
                     if let Err(e) = EffectsFramebuffers::update_for_output(
-                        winit.output.clone(),
+                        &winit.output,
                         winit.backend.renderer(),
                     ) {
                         warn!("failed to update fx buffers on output resize: {e:?}");
