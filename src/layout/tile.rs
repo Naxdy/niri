@@ -1918,6 +1918,7 @@ impl<W: LayoutElement> Tile<W> {
 
         let mut open_anim_elem = None;
         let mut alpha_anim_elem = None;
+        let mut alpha_blur_elem = None;
         let mut window_elems = None;
 
         self.window.focused_window().set_offscreen_data(None);
@@ -1959,7 +1960,18 @@ impl<W: LayoutElement> Tile<W> {
                 target,
                 fx_buffers.clone(),
             );
-            let elements = elements.collect::<Vec<TileRenderElement<_>>>();
+            let mut elements = elements.collect::<Vec<TileRenderElement<_>>>();
+
+            // HACK: Blur is the last element in the chain, but if we let it be affected by alpha,
+            // it is essentially invisible.
+            alpha_blur_elem = match elements.pop() {
+                Some(TileRenderElement::Blur(b)) => Some(
+                    b.with_loc(location.to_physical(self.scale).to_i32_round())
+                        .into(),
+                ),
+                _ => None,
+            };
+
             match alpha.offscreen.render(renderer, scale, &elements) {
                 Ok((elem, _sync, data)) => {
                     let offset = elem.offset();
@@ -1983,6 +1995,7 @@ impl<W: LayoutElement> Tile<W> {
         open_anim_elem
             .into_iter()
             .chain(alpha_anim_elem)
+            .chain(alpha_blur_elem)
             .chain(window_elems.into_iter().flatten())
     }
 

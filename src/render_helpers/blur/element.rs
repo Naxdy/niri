@@ -30,6 +30,8 @@ pub enum BlurRenderElement {
         noise: f32,
         scale: f64,
         output_size: Size<i32, Physical>,
+        /// Optional location override used in certain situations like interactive moving.
+        loc: Option<Point<i32, Physical>>,
     },
     /// Use true blur.
     ///
@@ -100,6 +102,7 @@ impl BlurRenderElement {
             noise: config.noise.0 as f32,
             scale,
             output_size: fx_buffers.output_size,
+            loc: None,
         }
     }
 
@@ -122,6 +125,49 @@ impl BlurRenderElement {
             config,
             fx_buffers,
             commit_counter: CommitCounter::default(),
+        }
+    }
+
+    pub fn with_loc(self, loc: Point<i32, Physical>) -> Self {
+        match self {
+            BlurRenderElement::Optimized {
+                tex,
+                corner_radius,
+                noise,
+                scale,
+                output_size,
+                loc: _,
+            } => Self::Optimized {
+                tex,
+                corner_radius,
+                noise,
+                scale,
+                output_size,
+                loc: Some(loc),
+            },
+            BlurRenderElement::TrueBlur {
+                id,
+                scale,
+                transform,
+                src,
+                size,
+                corner_radius,
+                loc: _,
+                config,
+                commit_counter,
+                fx_buffers,
+            } => Self::TrueBlur {
+                id,
+                scale,
+                transform,
+                src,
+                size,
+                corner_radius,
+                loc,
+                config,
+                commit_counter,
+                fx_buffers,
+            },
         }
     }
 }
@@ -204,7 +250,10 @@ impl Element for BlurRenderElement {
 
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
         match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.geometry(scale),
+            BlurRenderElement::Optimized { tex, loc, .. } => {
+                let geo = tex.geometry(scale);
+                loc.map(|loc| Rectangle::new(loc, geo.size)).unwrap_or(geo)
+            }
             BlurRenderElement::TrueBlur { loc, size, .. } => {
                 Rectangle::new(*loc, size.to_physical_precise_round(scale))
             }
@@ -321,6 +370,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                 noise,
                 scale,
                 output_size,
+                ..
             } => {
                 let downscaled_dst = Rectangle::new(
                     dst.loc,
