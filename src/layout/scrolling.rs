@@ -1782,7 +1782,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         };
 
         let to_update = if tile.is_grouped_tile() {
-            let origin_point = tile.render_offset();
             let removed_tiles = tile.ungroup_all();
             let to_update = tile.focused_window().id().clone();
 
@@ -1799,9 +1798,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             if let Some((col_idx, tile_idx)) = removed_source {
                 for tile in removed_tiles {
                     self.add_tile_to_column(col_idx, Some(tile_idx), tile, false);
-
-                    let inserted_tile = &mut self.columns[col_idx].tiles[tile_idx];
-                    inserted_tile.animate_move_from(origin_point);
                 }
             } else {
                 for tile in removed_tiles {
@@ -1989,7 +1985,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                                 .expect("should have first tile");
                             inserted_tile.animate_move_from(Point::new(
                                 inserted_tile.tile_bounding_box().w + self.options.layout.gaps,
-                                source_position.y + extra_offset.y,
+                                extra_offset.y,
                             ));
                             inserted_tile.focused_window().id().clone()
                         }
@@ -2011,7 +2007,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                                 .expect("should have first tile");
                             inserted_tile.animate_move_from(Point::new(
                                 -(inserted_tile.tile_bounding_box().w + self.options.layout.gaps),
-                                source_position.y + extra_offset.y,
+                                extra_offset.y,
                             ));
 
                             inserted_tile.focused_window().id().clone()
