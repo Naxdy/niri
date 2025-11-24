@@ -24,4 +24,18 @@ in
       "*.frag"
     ];
   };
+
+  programs.prettier = {
+    enable = true;
+    settings = {
+      singleQuote = true;
+      trailingComma = "all";
+      semi = true;
+      printWidth = 120;
+      proseWrap = "always";
+    };
+    includes = [
+      "*README.md"
+    ];
+  };
 }
