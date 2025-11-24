@@ -1541,6 +1541,7 @@ impl<W: LayoutElement> Tile<W> {
         &'a self,
         renderer: &mut R,
         location: Point<f64, Logical>,
+        real_location: Point<f64, Logical>,
         focus_ring: bool,
         target: RenderTarget,
         fx_buffers: Option<EffectsFramebufffersUserData>,
@@ -1603,6 +1604,11 @@ impl<W: LayoutElement> Tile<W> {
         let animated_window_size = self.animated_window_size();
         let window_render_loc = location + window_loc;
         let area = Rectangle::new(window_render_loc, animated_window_size);
+
+        // In certain passes, `location` is set to (0, 0), e.g. to "anchor" the tile to the cursor
+        // during interactive move. However, this messes with our blur texture, so we need the
+        // _actual_ render location to know where to sample the blur from.
+        let blur_sample_area = Rectangle::new(real_location + window_loc, animated_window_size);
 
         self.window_size_override.increment();
 
@@ -1871,7 +1877,7 @@ impl<W: LayoutElement> Tile<W> {
                     Some(
                         BlurRenderElement::new_true(
                             fx_buffers,
-                            area.to_i32_round(),
+                            blur_sample_area.to_i32_round(),
                             window_render_loc.to_physical(self.scale).to_i32_round(),
                             radius.top_left,
                             self.scale,
@@ -1884,7 +1890,7 @@ impl<W: LayoutElement> Tile<W> {
                         BlurRenderElement::new_optimized(
                             renderer,
                             &fx_buffers.borrow_mut(),
-                            area.to_i32_round(),
+                            blur_sample_area.to_i32_round(),
                             window_render_loc.to_physical(self.scale).to_i32_round(),
                             radius.top_left,
                             self.scale,
@@ -1932,6 +1938,7 @@ impl<W: LayoutElement> Tile<W> {
             let elements = self.render_inner(
                 renderer,
                 Point::from((0., 0.)),
+                location,
                 focus_ring,
                 target,
                 fx_buffers.clone(),
@@ -1958,6 +1965,7 @@ impl<W: LayoutElement> Tile<W> {
             let elements = self.render_inner(
                 renderer,
                 Point::from((0., 0.)),
+                location,
                 focus_ring,
                 target,
                 fx_buffers.clone(),
@@ -1978,8 +1986,9 @@ impl<W: LayoutElement> Tile<W> {
         }
 
         if open_anim_elem.is_none() && alpha_anim_elem.is_none() {
-            window_elems =
-                Some(self.render_inner(renderer, location, focus_ring, target, fx_buffers));
+            window_elems = Some(
+                self.render_inner(renderer, location, location, focus_ring, target, fx_buffers),
+            );
         }
 
         open_anim_elem
