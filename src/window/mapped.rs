@@ -1368,4 +1368,8 @@ impl LayoutElement for Mapped {
             }
         });
     }
+
+    fn title(&self) -> Option<String> {
+        with_toplevel_role(self.toplevel(), |role| role.title.clone())
+    }
 }

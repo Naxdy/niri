@@ -286,6 +286,11 @@ pub trait LayoutElement {
     fn interactive_resize_data(&self) -> Option<InteractiveResizeData>;
 
     fn on_commit(&mut self, serial: Serial);
+
+    /// The name / title of this layout element
+    fn title(&self) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Debug)]

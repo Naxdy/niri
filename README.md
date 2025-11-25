@@ -1,4 +1,8 @@
-# niri
+# niri (fork)
+
+<p align="center">
+  <img height="600px" src="assets/screenshots/groups-blur.png" />
+</p>
 
 This repo houses a fork of [niri](https://github/com/YaLTeR/niri), a scrollable tiling Wayland compositor.
 
@@ -110,6 +114,21 @@ binds {
 When using `move-window-into-or-out-of-group` on a non-grouped tile, but there is no suitable grouped tile in the
 direction you're attempting to move to, the behavior will instead be similar to `consume-or-expel-window`, `-left` or
 `-right` respectively, or `move-window`, `-up` or `-down` respectively.
+
+By default, tab titles will be rendered above tab bars. Their appearance can be adjusted under the `tab-indicator`
+setting:
+
+```kdl
+layout {
+  tab-indicator {
+    // default is 12
+    title-font-size 18
+
+    // optional, if you don't want titles to show at all
+    hide-titles
+  }
+}
+```
 
 #### Caveats
 

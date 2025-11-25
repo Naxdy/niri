@@ -850,35 +850,36 @@ impl<W: LayoutElement> Tile<W> {
         match &self.window {
             WindowInner::Single(_) => {
                 self.tab_indicator.update_render_elements(
+                    vec![],
                     false,
-                    Rectangle::new(Point::default(), self.tile_bounding_box()),
+                    Rectangle::new(Point::default(), self.animated_bounding_box()),
                     view_rect,
-                    1,
-                    std::iter::empty(),
                     is_active,
                     self.scale,
                 );
             }
             WindowInner::Multiple { windows, focus_idx } => {
+                let tabs = windows
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, w)| {
+                        TabInfo::new(
+                            w,
+                            self.focus_ring().config(),
+                            self.border().config(),
+                            idx == *focus_idx,
+                            w.is_urgent(),
+                            &self.tab_indicator.config(),
+                            self.animated_tile_size(),
+                        )
+                    })
+                    .collect();
+
                 self.tab_indicator.update_render_elements(
+                    tabs,
                     true,
-                    Rectangle::new(Point::default(), self.tile_bounding_box()),
+                    Rectangle::new(Point::default(), self.animated_bounding_box()),
                     view_rect,
-                    windows.len(),
-                    windows
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, w)| {
-                            TabInfo::from_tile(
-                                self,
-                                Point::default(),
-                                idx == *focus_idx,
-                                w.is_urgent(),
-                                &self.tab_indicator.config(),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .into_iter(),
                     is_active,
                     self.scale,
                 );
@@ -1082,7 +1083,7 @@ impl<W: LayoutElement> Tile<W> {
         let out = self.window.ungroup_single(id);
 
         if matches!(&self.window, WindowInner::Single(_)) && extra_size.h > 0. {
-            self.animate_move_from(Point::new(0., extra_size.h));
+            self.animate_move_from(self.tab_indicator_content_offset());
         }
 
         self.focused_window_mut()
@@ -1096,7 +1097,7 @@ impl<W: LayoutElement> Tile<W> {
         self.window.group();
 
         if will_group {
-            self.animate_move_from(Point::new(0., -self.tab_indicator_extra_size().h));
+            self.animate_move_from(Point::new(0., 0.) - self.tab_indicator_content_offset());
         }
     }
 
@@ -1139,7 +1140,7 @@ impl<W: LayoutElement> Tile<W> {
         let extra_size = self.tab_indicator_extra_size();
 
         if extra_size.h > 0. {
-            self.animate_move_from(Point::new(0., extra_size.h));
+            self.animate_move_from(self.tab_indicator_content_offset());
         }
 
         self.window.ungroup_all(
@@ -1292,11 +1293,11 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn tile_bounding_box(&self) -> Size<f64, Logical> {
-        let mut size = self.tile_size();
+        self.tile_size() + self.tab_indicator_extra_size()
+    }
 
-        size += self.tab_indicator_extra_size();
-
-        size
+    pub fn animated_bounding_box(&self) -> Size<f64, Logical> {
+        self.animated_tile_size() + self.tab_indicator_extra_size()
     }
 
     pub fn tile_expected_or_current_size(&self) -> Size<f64, Logical> {
@@ -1953,7 +1954,7 @@ impl<W: LayoutElement> Tile<W> {
             match open.render(
                 renderer,
                 &elements,
-                self.animated_tile_size(),
+                self.animated_bounding_box(),
                 location,
                 scale,
                 tile_alpha,
@@ -2035,7 +2036,7 @@ impl<W: LayoutElement> Tile<W> {
             contents: contents.collect(),
             blocked_out_contents: blocked_out_contents.collect(),
             block_out_from: self.window.focused_window().rules().block_out_from,
-            size: self.animated_tile_size(),
+            size: self.animated_bounding_box(),
             texture: Default::default(),
             blocked_out_texture: Default::default(),
         }

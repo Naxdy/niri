@@ -1,24 +1,40 @@
+use std::cell::RefCell;
+use std::cmp::min;
 use std::iter::zip;
 use std::mem;
 
+use anyhow::ensure;
+use itertools::izip;
 use niri_config::{CornerRadius, Gradient, GradientRelativeTo, TabIndicatorPosition};
-use smithay::utils::{Logical, Point, Rectangle, Size};
+use pango::glib::property::PropertySet;
+use pango::FontDescription;
+use pangocairo::cairo::{self, ImageSurface};
+use smithay::backend::allocator::Fourcc;
+use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::utils::{Logical, Physical, Point, Rectangle, Size, Transform};
 
-use super::tile::Tile;
 use super::LayoutElement;
 use crate::animation::{Animation, Clock};
 use crate::niri_render_elements;
 use crate::render_helpers::border::BorderRenderElement;
+use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
+use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::utils::{
     floor_logical_in_physical_max1, round_logical_in_physical, round_logical_in_physical_max1,
+    to_physical_precise_round,
 };
+
+const MIN_DIST_TO_EDGES: f64 = 20.;
 
 #[derive(Debug)]
 pub struct TabIndicator {
     shader_locs: Vec<Point<f64, Logical>>,
     shaders: Vec<BorderRenderElement>,
     open_anim: Option<Animation>,
+    tabs: Vec<TabInfo>,
+    title_textures: Vec<TitleTexture>,
     config: niri_config::TabIndicator,
 }
 
@@ -28,12 +44,27 @@ pub struct TabInfo {
     pub gradient: Gradient,
     /// Tab geometry in the same coordinate system as the area.
     pub geometry: Rectangle<f64, Logical>,
+    /// The title for this tab.
+    pub title: String,
 }
 
 niri_render_elements! {
     TabIndicatorRenderElement => {
         Gradient = BorderRenderElement,
+        Title = PrimaryGpuTextureRenderElement,
     }
+}
+
+#[derive(Debug, Default)]
+struct TitleTexture {
+    title: String,
+    scale: f64,
+    max_size: Size<f64, Logical>,
+    // cached result of the rendered title texture
+    texture: RefCell<Option<TextureBuffer<GlesTexture>>>,
+    // the maximum size wanted by the title texture if it had infinite space
+    wanted_size: RefCell<Option<Size<i32, Physical>>>,
+    font_size: u32,
 }
 
 impl TabIndicator {
@@ -41,6 +72,8 @@ impl TabIndicator {
         Self {
             shader_locs: Vec::new(),
             shaders: Vec::new(),
+            tabs: Vec::new(),
+            title_textures: Vec::new(),
             open_anim: None,
             config,
         }
@@ -108,7 +141,7 @@ impl TabIndicator {
             (count - 1) as f64 * (px_per_tab + gaps_between) + px_per_tab * progress;
         let mut ones_left = ((length - floored_length) / pixel).round() as usize;
 
-        let mut shader_loc = Point::from((-gap - width, round((side - length) / 2.)));
+        let mut shader_loc = Point::from((-width, round((side - length) / 2.)));
         match position {
             TabIndicatorPosition::Top => mem::swap(&mut shader_loc.x, &mut shader_loc.y),
             TabIndicatorPosition::Bottom => {
@@ -141,17 +174,18 @@ impl TabIndicator {
     #[allow(clippy::too_many_arguments)]
     pub fn update_render_elements(
         &mut self,
+        tabs: Vec<TabInfo>,
         enabled: bool,
         // Geometry of the tabs area.
         area: Rectangle<f64, Logical>,
         // View rect relative to the tabs area.
         area_view_rect: Rectangle<f64, Logical>,
-        // Tab count, should match the tabs iterator length.
-        tab_count: usize,
-        tabs: impl Iterator<Item = TabInfo>,
         is_active: bool,
         scale: f64,
     ) {
+        self.tabs = tabs;
+        let tab_count = self.tabs.len();
+
         if !enabled || self.config.off {
             self.shader_locs.clear();
             self.shaders.clear();
@@ -172,10 +206,40 @@ impl TabIndicator {
         let shared_rounded_corners = self.config.gaps_between_tabs == 0.;
         let mut tabs_left = tab_count;
 
-        let rects = self.tab_rects(area, count, scale);
-        for ((shader, loc), (tab, rect)) in zip(
-            zip(&mut self.shaders, &mut self.shader_locs),
-            zip(tabs, rects),
+        let rects = self.tab_rects(area, count, scale).collect::<Vec<_>>();
+
+        if self.title_textures.len() != self.tabs.len() {
+            self.title_textures = zip(self.tabs.iter(), rects.iter())
+                .map(|(t, rect)| {
+                    TitleTexture::new(
+                        t.title.clone(),
+                        scale,
+                        Size::new((rect.size.w - 20.).max(0.), 24.),
+                        self.config.title_font_size,
+                    )
+                })
+                .collect();
+        } else {
+            izip!(
+                self.title_textures.iter_mut(),
+                self.tabs.iter(),
+                rects.iter(),
+            )
+            .for_each(|(tex, t, rect)| {
+                tex.update_config(
+                    Some(t.title.clone()),
+                    Some(scale),
+                    Some(Size::new((rect.size.w - MIN_DIST_TO_EDGES).max(0.), 16384.)),
+                    Some(self.config.title_font_size),
+                );
+            });
+        }
+
+        for (shader, loc, tab, rect) in izip!(
+            &mut self.shaders,
+            &mut self.shader_locs,
+            &self.tabs,
+            rects.iter(),
         ) {
             *loc = rect.loc;
 
@@ -257,9 +321,9 @@ impl TabIndicator {
             .find_map(|(idx, rect)| rect.contains(point).then_some(idx))
     }
 
-    pub fn render(
+    pub fn render<R: NiriRenderer>(
         &self,
-        renderer: &mut impl NiriRenderer,
+        renderer: &mut R,
         pos: Point<f64, Logical>,
     ) -> impl Iterator<Item = TabIndicatorRenderElement> + '_ {
         let has_border_shader = BorderRenderElement::has_shader(renderer);
@@ -267,9 +331,58 @@ impl TabIndicator {
             return None.into_iter().flatten();
         }
 
-        let rv = zip(&self.shaders, &self.shader_locs)
-            .map(move |(shader, loc)| shader.clone().with_location(pos + *loc))
-            .map(TabIndicatorRenderElement::from);
+        let titles = (!self.config.hide_titles).then(|| {
+            zip(&self.title_textures, &self.shader_locs)
+                .filter_map(|(tex, loc)| match tex.get(renderer.as_gles_renderer()) {
+                    Ok(texture) => {
+                        let gap_to_bar = 5.;
+
+                        let pos_x = (tex.max_size.w + MIN_DIST_TO_EDGES) / 2.
+                            - texture.logical_size().w / 2.;
+
+                        let pos_y = match self.config.position {
+                            TabIndicatorPosition::Top => -gap_to_bar,
+                            TabIndicatorPosition::Bottom => gap_to_bar - texture.logical_size().h,
+                        };
+
+                        Some(
+                            PrimaryGpuTextureRenderElement(
+                                TextureRenderElement::from_texture_buffer(
+                                    texture,
+                                    pos + *loc + Point::new(pos_x, pos_y),
+                                    1.,
+                                    None,
+                                    None,
+                                    Kind::Unspecified,
+                                ),
+                            )
+                            .into(),
+                        )
+                    }
+                    Err(_) => {
+                        // silent fail is ok, we just won't show the title
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+        });
+
+        let rv = izip!(&self.shaders, &self.title_textures, &self.shader_locs)
+            .map(move |(shader, tex, loc)| {
+                let offset = if !self.config.hide_titles {
+                    match self.config.position {
+                        TabIndicatorPosition::Top => Point::new(0., tex.size().h),
+                        TabIndicatorPosition::Bottom => Point::new(0., -tex.size().h),
+                    }
+                } else {
+                    Point::default()
+                };
+
+                shader.clone().with_location(pos + *loc + offset)
+            })
+            .map(TabIndicatorRenderElement::from)
+            .chain(titles.into_iter().flatten());
 
         Some(rv).into_iter().flatten()
     }
@@ -283,10 +396,26 @@ impl TabIndicator {
         let round = |logical: f64| round_logical_in_physical(scale, logical);
         let width = round(self.config.width);
         let gap = round(self.config.gap);
+        let font_height = if !self.config.hide_titles {
+            // we need an initial approximate value here, because when we first spawn the tab
+            // indicator, the textures are not yet rendered, but the tile resize animation plays
+            // immediately.
+            self.title_textures
+                .iter()
+                .fold(self.config.title_font_size as f64, |acc, curr| {
+                    if let Some(texture) = curr.texture.borrow().as_ref() {
+                        texture.logical_size().h.max(acc)
+                    } else {
+                        acc
+                    }
+                })
+        } else {
+            0.
+        };
 
         // No, I am *not* falling into the rabbit hole of "what if the tab indicator is wide enough
         // that it peeks from the other side of the window".
-        let size = f64::max(0., width + gap);
+        let size = f64::max(0., width + gap + font_height);
 
         Size::from((0., size))
     }
@@ -305,14 +434,17 @@ impl TabIndicator {
 }
 
 impl TabInfo {
-    pub fn from_tile<W: LayoutElement>(
-        tile: &Tile<W>,
-        position: Point<f64, Logical>,
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<W: LayoutElement>(
+        window: &W,
+        focus_ring_config: &niri_config::FocusRing,
+        border_config: &niri_config::FocusRing,
         is_active: bool,
         is_urgent: bool,
         config: &niri_config::TabIndicator,
+        tile_size: Size<f64, Logical>,
     ) -> Self {
-        let rules = tile.focused_window().rules();
+        let rules = window.rules();
         let rule = rules.tab_indicator;
 
         let gradient_from_rule = || {
@@ -342,8 +474,6 @@ impl TabInfo {
         let gradient_from_border = || {
             // Come up with tab indicator gradient matching the focus ring or the border, whichever
             // one is enabled.
-            let focus_ring_config = tile.focus_ring().config();
-            let border_config = tile.border().config();
             let config = if focus_ring_config.off {
                 border_config
             } else {
@@ -364,8 +494,174 @@ impl TabInfo {
             .or_else(gradient_from_config)
             .unwrap_or_else(gradient_from_border);
 
-        let geometry = Rectangle::new(position, tile.animated_tile_size());
+        let geometry = Rectangle::new(Point::default(), tile_size);
 
-        TabInfo { gradient, geometry }
+        TabInfo {
+            gradient,
+            geometry,
+            title: window.title().unwrap_or_default(),
+        }
     }
+}
+
+impl TitleTexture {
+    fn new(title: String, scale: f64, max_size: Size<f64, Logical>, font_size: u32) -> Self {
+        Self {
+            title,
+            scale,
+            texture: Default::default(),
+            max_size,
+            wanted_size: Default::default(),
+            font_size,
+        }
+    }
+
+    fn update_config(
+        &mut self,
+        new_title: Option<String>,
+        new_scale: Option<f64>,
+        new_max_size: Option<Size<f64, Logical>>,
+        new_font_size: Option<u32>,
+    ) {
+        if let Some(new_font_size) = new_font_size {
+            if new_font_size != self.font_size {
+                self.texture.set(None);
+                self.wanted_size.set(None);
+            }
+            self.font_size = new_font_size;
+        }
+        if let Some(new_title) = new_title {
+            if new_title != self.title {
+                self.texture.set(None);
+                self.wanted_size.set(None);
+            }
+            self.title = new_title;
+        }
+
+        if let Some(new_scale) = new_scale {
+            if new_scale != self.scale {
+                self.texture.set(None);
+                self.wanted_size.set(None);
+            }
+            self.scale = new_scale;
+        }
+
+        if let Some(new_max_size) = new_max_size {
+            if new_max_size != self.max_size {
+                // if we have a size adjustment, we only need to re-render if either:
+                //  a) the texture's wanted size is larger than the current max size _and_ the new
+                //  max size is larger
+                //  b) the new max size is smaller than the current texture
+                //
+                // otherwise the texture will still fully fit within the current allocated space
+                let should_dirty = if let (Some(texture), Some(wanted_size)) = (
+                    self.texture.borrow().as_ref(),
+                    self.wanted_size.borrow().as_ref(),
+                ) {
+                    let wanted_size = wanted_size.to_f64().to_logical(self.scale);
+                    let tex_size = texture.logical_size();
+                    (wanted_size.w >= self.max_size.w && new_max_size.w > self.max_size.w)
+                        || (wanted_size.h >= self.max_size.h && new_max_size.h > self.max_size.h)
+                        || (tex_size.w > new_max_size.w)
+                        || (tex_size.h > new_max_size.h)
+                } else {
+                    true
+                };
+
+                if should_dirty {
+                    self.texture.set(None);
+                    self.wanted_size.set(None);
+                }
+            }
+            self.max_size = new_max_size;
+        }
+    }
+
+    fn get(&self, renderer: &mut GlesRenderer) -> anyhow::Result<TextureBuffer<GlesTexture>> {
+        let mut tex = self.texture.borrow_mut();
+
+        if self.title.is_empty() {
+            return Err(anyhow::anyhow!(
+                "cannot render title texture if title is empty"
+            ));
+        }
+
+        match &*tex {
+            Some(texture) => Ok(texture.clone()),
+            None => {
+                let (new_tex, wanted_size) = render_title_texture(
+                    renderer,
+                    &self.title,
+                    self.scale,
+                    self.max_size,
+                    self.font_size,
+                )?;
+                *tex = Some(new_tex.clone());
+                self.wanted_size.set(Some(wanted_size));
+                Ok(new_tex)
+            }
+        }
+    }
+
+    fn size(&self) -> Size<f64, Logical> {
+        self.texture
+            .borrow()
+            .as_ref()
+            .map(|tex| tex.logical_size())
+            .unwrap_or_default()
+    }
+}
+
+fn render_title_texture(
+    renderer: &mut GlesRenderer,
+    title: &str,
+    scale: f64,
+    max_size: Size<f64, Logical>,
+    font_size: u32,
+) -> anyhow::Result<(TextureBuffer<GlesTexture>, Size<i32, Physical>)> {
+    let _span = tracy_client::span!("tab_indicator::render_title_texture");
+
+    // TODO: expose in config
+    let mut font = FontDescription::from_string(&format!("sans {font_size}px"));
+    font.set_absolute_size(to_physical_precise_round(scale, font.size()));
+
+    let surface = ImageSurface::create(cairo::Format::ARgb32, 0, 0)?;
+    let cr = cairo::Context::new(&surface)?;
+    let layout = pangocairo::functions::create_layout(&cr);
+    layout.context().set_round_glyph_positions(false);
+
+    layout.set_single_paragraph_mode(true);
+    layout.set_font_description(Some(&font));
+    layout.set_text(title);
+
+    let (width, height) = layout.pixel_size();
+    let wanted_size = Size::new(width, height);
+
+    // Guard against overly long window titles.
+    let max_size = max_size.to_physical_precise_round(scale);
+    let width = min(width, max_size.w);
+    let height = min(height, max_size.h);
+
+    ensure!(width > 0 && height > 0);
+
+    let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
+    let cr = cairo::Context::new(&surface)?;
+    cr.set_source_rgb(1., 1., 1.);
+    pangocairo::functions::show_layout(&cr, &layout);
+
+    drop(cr);
+
+    let data = surface.take_data().unwrap();
+    let buffer = TextureBuffer::from_memory(
+        renderer,
+        &data,
+        Fourcc::Argb8888,
+        (width, height),
+        false,
+        scale,
+        Transform::Normal,
+        Vec::new(),
+    )?;
+
+    Ok((buffer, wanted_size))
 }

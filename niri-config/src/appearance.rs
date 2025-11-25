@@ -489,6 +489,8 @@ impl MergeWith<WorkspaceShadowPart> for WorkspaceShadow {
 pub struct TabIndicator {
     pub off: bool,
     pub hide_when_single_tab: bool,
+    pub hide_titles: bool,
+    pub title_font_size: u32,
     pub gap: f64,
     pub width: f64,
     pub length: TabIndicatorLength,
@@ -508,6 +510,8 @@ impl Default for TabIndicator {
         Self {
             off: false,
             hide_when_single_tab: false,
+            hide_titles: false,
+            title_font_size: 12,
             gap: 5.,
             width: 4.,
             length: TabIndicatorLength {
@@ -535,6 +539,7 @@ impl MergeWith<TabIndicatorPart> for TabIndicator {
 
         merge!(
             (self, part),
+            hide_titles,
             hide_when_single_tab,
             gap,
             width,
@@ -542,7 +547,7 @@ impl MergeWith<TabIndicatorPart> for TabIndicator {
             corner_radius,
         );
 
-        merge_clone!((self, part), length, position);
+        merge_clone!((self, part), title_font_size, length, position);
 
         merge_color_gradient_opt!(
             (self, part),
@@ -559,6 +564,10 @@ pub struct TabIndicatorPart {
     pub off: bool,
     #[knuffel(child)]
     pub on: bool,
+    #[knuffel(child)]
+    pub hide_titles: Option<Flag>,
+    #[knuffel(child, unwrap(argument))]
+    pub title_font_size: Option<u32>,
     #[knuffel(child)]
     pub hide_when_single_tab: Option<Flag>,
     #[knuffel(child, unwrap(argument))]

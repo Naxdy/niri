@@ -1931,7 +1931,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 let source_tile = &mut self.columns[source_col_idx].tiles[source_tile_idx];
 
                 if let Some(window) = source_tile.ungroup_single(&id) {
-                    let extra_offset = Point::new(0., source_tile.tab_indicator_extra_size().h);
+                    let extra_offset = source_tile.tab_indicator_content_offset();
                     let to_update = source_tile.focused_window().id().clone();
 
                     // we need to refresh the window here to avoid triggering its resize animation
@@ -1979,14 +1979,21 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                                 Some(self.options.animations.window_movement.0),
                             );
 
+                            let source_position = self
+                                .tile_render_pos(source_col_idx + 1, source_tile_idx)
+                                .expect("should determine source tile render pos");
+
+                            let target_position = self
+                                .tile_render_pos(source_col_idx, 0)
+                                .expect("should determine source tile render pos");
+
                             let inserted_tile = self.columns[source_col_idx]
                                 .tiles
                                 .first_mut()
                                 .expect("should have first tile");
-                            inserted_tile.animate_move_from(Point::new(
-                                inserted_tile.tile_bounding_box().w + self.options.layout.gaps,
-                                extra_offset.y,
-                            ));
+                            inserted_tile.animate_move_from(
+                                source_position - target_position + extra_offset,
+                            );
                             inserted_tile.focused_window().id().clone()
                         }
                         WindowMoveDirection::Right => {
@@ -2001,14 +2008,17 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                                 Some(self.options.animations.window_movement.0),
                             );
 
+                            let target_position = self
+                                .tile_render_pos(source_col_idx + 1, 0)
+                                .expect("should determine source tile render pos");
+
                             let inserted_tile = self.columns[source_col_idx + 1]
                                 .tiles
                                 .first_mut()
                                 .expect("should have first tile");
-                            inserted_tile.animate_move_from(Point::new(
-                                -(inserted_tile.tile_bounding_box().w + self.options.layout.gaps),
-                                extra_offset.y,
-                            ));
+                            inserted_tile.animate_move_from(
+                                source_position - target_position + extra_offset,
+                            );
 
                             inserted_tile.focused_window().id().clone()
                         }
@@ -2059,7 +2069,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
             if let Some(ungrouped) = source_tile.ungroup_single(&id) {
                 let to_update = source_tile.focused_window().id().clone();
-                let extra_offset = Point::new(0., source_tile.tab_indicator_extra_size().h);
+                let extra_offset = source_tile.tab_indicator_content_offset();
                 // we need to refresh the window here to avoid triggering its resize animation
                 source_tile.focused_window().refresh();
                 self.update_window(&to_update, None);

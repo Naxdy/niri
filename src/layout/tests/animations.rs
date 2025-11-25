@@ -842,7 +842,7 @@ fn appear_group_indicator() {
 
     // when initiating the tab spawn animation, the tile should have a slight offset in the
     // beginning
-    assert_snapshot!(format_tiles(&layout), @"100 × 100 at x:  0 y: -9");
+    assert_snapshot!(format_tiles(&layout), @"100 × 100 at x:  0 y:-20");
 
     let ops = [Op::AdvanceAnimations { msec_delta: 1000 }];
 
@@ -901,7 +901,7 @@ fn move_window_into_and_out_of_group_down() {
     // y on the ejected window should be slightly positive due to the tab indicator offset
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    100 × 100 at x:  0 y: 14
+    100 × 100 at x:  0 y: 26
     ");
 
     let ops = [Op::CompleteAnimations];
@@ -913,7 +913,7 @@ fn move_window_into_and_out_of_group_down() {
     // grouped tiles have a larger bounding box)
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    100 × 100 at x:  0 y:109
+    100 × 100 at x:  0 y:121
     ");
 
     let ops = [Op::FocusWindowUp, Op::ToggleGroup, Op::CompleteAnimations];
@@ -976,7 +976,7 @@ fn move_window_into_and_out_of_group_up() {
     // y on the ejected window should be slightly positive due to the tab indicator offset
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  5
-    100 × 100 at x:  0 y:  9
+    100 × 100 at x:  0 y: 20
     ");
 
     let ops = [Op::CompleteAnimations];
@@ -1041,7 +1041,7 @@ fn move_window_into_and_out_of_group_right() {
     // important: the x difference here should be the same as in the "left" variant of this test.
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x:  0 y:  0
-    100 × 100 at x:  5 y:  9
+    100 × 100 at x:  5 y: 20
     ");
 
     let ops = [Op::CompleteAnimations];
@@ -1106,7 +1106,7 @@ fn move_window_into_and_out_of_group_left() {
     // important: the x difference here should be the same as in the "right" variant of this test.
     assert_snapshot!(format_tiles(&layout), @r"
     100 × 100 at x: 41 y:  0
-    100 × 100 at x: 36 y:  9
+    100 × 100 at x: 36 y: 20
     ");
 
     let ops = [Op::CompleteAnimations];
