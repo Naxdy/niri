@@ -1931,6 +1931,7 @@ impl<W: LayoutElement> Tile<W> {
                             self.scale,
                             self.blur_config,
                             overview_zoom.unwrap_or(1.),
+                            None,
                         )
                         .into(),
                     )

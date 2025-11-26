@@ -65,6 +65,14 @@ layer-rule {
 
   blur {
     on
+
+    // instead of using `geometry-corner-radius`, you can also
+    // define an alpha value here; anything that is more transparent than this
+    // value will not be blurred.
+    //
+    // note that this will require rendering the blurred surface twice, so if possible,
+    // prefer using `geometry-corner-radius` instead, for performance reasons.
+    ignore-alpha 0.45
   }
 }
 ```
@@ -72,12 +80,6 @@ layer-rule {
 #### Caveats
 
 - Floating windows currently blur incorrectly in the overview (the blur texture is zoomed-out twice).
-- As of right now, it is only possible to produce blur in rectangular shapes depending on the target surface size, with
-  or without rounded corners (though all corners have to be rounded equally).
-
-  In the future, the plan is to introduce a setting that allows masking blur pixel-by-pixel, similar to Hyprland's
-  `ignorealpha` setting, though this will require careful GPU profiling.
-
 - Blur is currently only possible to be enabled through the config. Implementing both
   [KDE blur](https://wayland.app/protocols/kde-blur) and
   [background effect](https://wayland.app/protocols/ext-background-effect-v1) is planned though.

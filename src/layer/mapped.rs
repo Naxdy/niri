@@ -1,11 +1,13 @@
 use niri_config::utils::MergeWith as _;
 use niri_config::{Blur, Config, LayerRule};
+use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::surface::{
     render_elements_from_surface_tree, WaylandSurfaceRenderElement,
 };
 use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{LayerSurface, PopupManager};
-use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
+use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, Layer};
 
 use super::ResolvedLayerRules;
@@ -17,7 +19,7 @@ use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
-use crate::render_helpers::{RenderTarget, SplitElements};
+use crate::render_helpers::{render_to_texture, RenderTarget, SplitElements};
 use crate::utils::{baba_is_float_offset, round_logical_in_physical};
 
 #[derive(Debug)]
@@ -192,6 +194,8 @@ impl MappedLayer {
         let alpha = self.rules.opacity.unwrap_or(1.).clamp(0., 1.);
         let location = location + self.bob_offset();
 
+        let mut gles_elems: Option<Vec<LayerSurfaceRenderElement<GlesRenderer>>> = None;
+
         if target.should_block_out(self.rules.block_out_from) {
             // Round to physical pixels.
             let location = location.to_physical_precise_round(scale).to_logical(scale);
@@ -231,12 +235,38 @@ impl MappedLayer {
                 alpha,
                 Kind::ScanoutCandidate,
             );
-        }
+
+            gles_elems = Some(render_elements_from_surface_tree(
+                renderer.as_gles_renderer(),
+                surface,
+                buf_pos.to_physical_precise_round(scale),
+                scale,
+                alpha,
+                Kind::ScanoutCandidate,
+            ));
+        };
 
         let blur_elem = (self.blur_config.on
             && matches!(self.surface.layer(), Layer::Top | Layer::Overlay))
         .then(|| {
             let fx_buffers = fx_buffers?;
+            // TODO: respect sync point?
+            let alpha_tex = gles_elems
+                .and_then(|gles_elems| {
+                    let transform = fx_buffers.borrow().transform();
+
+                    render_to_texture(
+                        renderer.as_gles_renderer(),
+                        transform.transform_size(fx_buffers.borrow().output_size()),
+                        self.scale.into(),
+                        Transform::Normal,
+                        Fourcc::Abgr8888,
+                        gles_elems.into_iter(),
+                    )
+                    .map_err(|e| warn!("failed to render alpha tex: {e:?}"))
+                    .ok()
+                })
+                .map(|r| r.0);
 
             Some(
                 BlurRenderElement::new_true(
@@ -250,6 +280,7 @@ impl MappedLayer {
                     self.scale,
                     self.blur_config,
                     1.,
+                    alpha_tex,
                 )
                 .into(),
             )

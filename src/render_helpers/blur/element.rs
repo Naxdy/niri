@@ -50,6 +50,7 @@ pub enum BlurRenderElement {
         // FIXME: Use DamageBag and expand it as needed?
         commit_counter: CommitCounter,
         fx_buffers: EffectsFramebufffersUserData,
+        alpha_tex: Option<GlesTexture>,
     },
 }
 
@@ -105,6 +106,7 @@ impl BlurRenderElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_true(
         fx_buffers: EffectsFramebufffersUserData,
         sample_area: Rectangle<i32, Logical>,
@@ -113,6 +115,7 @@ impl BlurRenderElement {
         scale: f64,
         config: Blur,
         zoom: f64,
+        alpha_tex: Option<GlesTexture>,
     ) -> Self {
         let mut final_sample_area = sample_area.to_f64().upscale(zoom);
         let center = (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.).to_point();
@@ -130,6 +133,7 @@ impl BlurRenderElement {
             config,
             fx_buffers,
             commit_counter: CommitCounter::default(),
+            alpha_tex,
         }
     }
 }
@@ -241,6 +245,7 @@ fn draw_true_blur(
     opaque_regions: &[Rectangle<i32, Physical>],
     alpha: f32,
     is_tty: bool,
+    alpha_tex: Option<&GlesTexture>,
 ) -> Result<(), GlesError> {
     fx_buffers.current_buffer = CurrentBuffer::Normal;
 
@@ -267,38 +272,42 @@ fn draw_true_blur(
             supports_instancing,
             dst,
             is_tty,
+            alpha_tex,
         )
     })??;
 
-    let (program, additional_uniforms) = if corner_radius == 0.0 {
-        (None, vec![])
-    } else {
-        let program = Shaders::get_from_frame(gles_frame).blur_finish.clone();
-        (
-            program,
-            vec![
-                Uniform::new(
-                    "geo",
-                    [
-                        dst.loc.x as f32,
-                        dst.loc.y as f32,
-                        dst.size.w as f32,
-                        dst.size.h as f32,
-                    ],
-                ),
-                Uniform::new("alpha", alpha),
-                Uniform::new("noise", config.noise.0 as f32),
-                Uniform::new("corner_radius", corner_radius),
-                Uniform::new(
-                    "output_size",
-                    [
-                        fx_buffers.output_size.w as f32,
-                        fx_buffers.output_size.h as f32,
-                    ],
-                ),
+    let program = Shaders::get_from_frame(gles_frame).blur_finish.clone();
+
+    let additional_uniforms = vec![
+        Uniform::new(
+            "geo",
+            [
+                dst.loc.x as f32,
+                dst.loc.y as f32,
+                dst.size.w as f32,
+                dst.size.h as f32,
             ],
-        )
-    };
+        ),
+        Uniform::new("alpha", alpha),
+        Uniform::new("noise", config.noise.0 as f32),
+        Uniform::new("corner_radius", corner_radius),
+        Uniform::new(
+            "output_size",
+            [
+                fx_buffers.output_size.w as f32,
+                fx_buffers.output_size.h as f32,
+            ],
+        ),
+        Uniform::new(
+            "ignore_alpha",
+            if alpha_tex.is_some() {
+                config.ignore_alpha.0 as f32
+            } else {
+                0.
+            },
+        ),
+        Uniform::new("alpha_tex", 1),
+    ];
 
     gles_frame.render_texture_from_to(
         &blurred_texture,
@@ -394,6 +403,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                 scale,
                 corner_radius,
                 config,
+                alpha_tex,
                 ..
             } => draw_true_blur(
                 &mut fx_buffers.borrow_mut(),
@@ -407,6 +417,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                 opaque_regions,
                 self.alpha(),
                 false,
+                alpha_tex.as_ref(),
             ),
         }
     }
@@ -442,6 +453,7 @@ impl<'render> RenderElement<TtyRenderer<'render>> for BlurRenderElement {
                 scale,
                 corner_radius,
                 config,
+                alpha_tex,
                 ..
             } => {
                 draw_true_blur(
@@ -456,6 +468,7 @@ impl<'render> RenderElement<TtyRenderer<'render>> for BlurRenderElement {
                     opaque_regions,
                     self.alpha(),
                     true,
+                    alpha_tex.as_ref(),
                 )?;
             }
         }

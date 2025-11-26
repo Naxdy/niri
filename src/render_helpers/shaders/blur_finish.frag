@@ -17,17 +17,20 @@ uniform samplerExternalOES tex;
 uniform sampler2D tex;
 #endif
 
+#if defined(EXTERNAL)
+uniform samplerExternalOES alpha_tex;
+#else
+uniform sampler2D alpha_tex;
+#endif
+
 uniform float alpha;
 varying vec2 v_coords;
-
-#if defined(DEBUG_FLAGS)
-uniform float tint;
-#endif
 
 uniform vec4 geo;
 uniform vec2 output_size;
 uniform float corner_radius;
 uniform float noise;
+uniform float ignore_alpha;
 
 float rounding_alpha(vec2 coords, vec2 size, float radius) {
     vec2 center;
@@ -66,6 +69,15 @@ void main() {
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0);
 #endif
+    float alphaMask = 1.0;
+
+    if (ignore_alpha > 0.0) {
+      vec4 alpha_color = texture2D(alpha_tex, v_coords);
+      if (alpha_color.a < ignore_alpha) {
+        alphaMask = 0.0;
+      }
+    }
+
     // This shader exists to make blur rounding correct.
     // 
     // Since we are scr-ing a texture that is the size of the output, the v_coords are always
@@ -79,17 +91,17 @@ void main() {
     // This can be used to achieve a glass look
     float noiseHash   = hash(loc / size);
     float noiseAmount = (mod(noiseHash, 1.0) - 0.5);
-    color.rgb += noiseAmount * noise;
+
+    if (alphaMask > 0.0) {
+      color.rgb += noiseAmount * noise;
+    }
 
     // Apply corner rounding inside geometry.
-    color *= rounding_alpha(loc, size, corner_radius);
-
-    // Apply final alpha and tint.
+    if (corner_radius > 0.0) {
+      color *= rounding_alpha(loc, size, corner_radius);
+    }
     color *= alpha;
-#if defined(DEBUG_FLAGS)
-    if (tint == 1.0)
-        color = vec4(0.0, 0.2, 0.0, 0.2) + color * 0.8;
-#endif
+    color *= alphaMask;
 
     gl_FragColor = color;
 }

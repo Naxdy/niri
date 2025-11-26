@@ -298,6 +298,10 @@ impl EffectsFramebuffers {
     pub fn output_size(&self) -> Size<i32, Physical> {
         self.output_size
     }
+
+    pub fn transform(&self) -> Transform {
+        self.transform
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -314,6 +318,7 @@ pub(super) unsafe fn get_main_buffer_blur(
     // dst is the region that we want blur on
     dst: Rectangle<i32, Physical>,
     is_tty: bool,
+    alpha_tex: Option<&GlesTexture>,
 ) -> Result<GlesTexture, GlesError> {
     let tex_size = fx_buffers
         .effects
@@ -353,6 +358,13 @@ pub(super) unsafe fn get_main_buffer_blur(
             gl.DeleteFramebuffers(1, &mut sample_fbo as *mut _);
             return Err(GlesError::FramebufferBindingError);
         }
+    }
+
+    if let Some(alpha_tex) = alpha_tex {
+        gl.ActiveTexture(ffi::TEXTURE1);
+        gl.BindTexture(ffi::TEXTURE_2D, alpha_tex.tex_id());
+        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
+        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
     }
 
     {
@@ -570,6 +582,7 @@ fn render_blur_pass_with_frame(
         gl.UseProgram(program.program);
 
         gl.Uniform1i(program.uniform_tex, 0);
+
         gl.UniformMatrix3fv(
             program.uniform_matrix,
             1,
@@ -743,9 +756,11 @@ unsafe fn render_blur_pass_with_gl(
         gl.BindTexture(ffi::TEXTURE_2D, sample_buffer.tex_id());
         gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
         gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
+
         gl.UseProgram(program.program);
 
         gl.Uniform1i(program.uniform_tex, 0);
+
         gl.UniformMatrix3fv(
             program.uniform_matrix,
             1,

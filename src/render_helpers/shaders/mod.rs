@@ -110,6 +110,8 @@ impl Shaders {
                     UniformName::new("alpha", UniformType::_1f),
                     UniformName::new("noise", UniformType::_1f),
                     UniformName::new("geo", UniformType::_4f),
+                    UniformName::new("ignore_alpha", UniformType::_1f),
+                    UniformName::new("alpha_tex", UniformType::_1i),
                 ],
             )
             .map_err(|e| warn!("error compiling clipped surface shader: {e:?}"))
