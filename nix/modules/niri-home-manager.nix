@@ -162,7 +162,7 @@ in
   options.wayland.windowManager.niri = {
     enable = lib.mkEnableOption "Niri, a scrollable tiling Wayland compositor";
 
-    package = lib.mkPackageOption pkgs "niri" {
+    package = lib.mkPackageOption pkgs.niriPackages "niri" {
       nullable = true;
       extraDescription = "Set this to null if you use the NixOS module to install niri.";
     };
