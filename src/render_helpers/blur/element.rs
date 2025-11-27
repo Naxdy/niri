@@ -339,6 +339,8 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), GlesError> {
+        let _span = trace_span!("blur_draw_gles").entered();
+
         match self {
             Self::Optimized {
                 tex,
@@ -457,6 +459,8 @@ impl<'render> RenderElement<TtyRenderer<'render>> for BlurRenderElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), TtyRendererError<'render>> {
+        let _span = trace_span!("blur_draw_tty").entered();
+
         match self {
             Self::Optimized { .. } => {
                 <BlurRenderElement as RenderElement<GlesRenderer>>::draw(

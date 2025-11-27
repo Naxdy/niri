@@ -332,7 +332,14 @@ fn default_config_path() -> Option<PathBuf> {
     };
 
     let mut path = dirs.config_dir().to_owned();
-    path.push("config.kdl");
+    #[cfg(debug_assertions)]
+    {
+        path.push("config-debug.kdl");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        path.push("config.kdl");
+    }
     Some(path)
 }
 

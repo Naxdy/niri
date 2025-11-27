@@ -498,6 +498,7 @@ fn render_blur_pass_with_frame(
     half_pixel: [f32; 2],
     config: Blur,
 ) -> anyhow::Result<()> {
+    trace!("rendering blur pass with frame");
     // We use a texture render element with a custom GlesTexProgram in order todo the blurring
     // At least this is what swayfx/scenefx do, but they just use gl calls directly.
     let size = sample_buffer.size().to_logical(1, Transform::Flipped);
@@ -676,6 +677,8 @@ unsafe fn render_blur_pass_with_gl(
     // it gets up/downscaled with passes
     _damage: Rectangle<i32, Physical>,
 ) -> Result<(), GlesError> {
+    trace!("rendering blur pass with GL");
+
     let tex_size = sample_buffer.size();
     let src = Rectangle::from_size(tex_size.to_f64());
     let dest = src

@@ -265,7 +265,7 @@ impl MappedLayer {
                         Fourcc::Abgr8888,
                         gles_elems.into_iter(),
                     )
-                    .map_err(|e| warn!("failed to render alpha tex: {e:?}"))
+                    .inspect_err(|e| warn!("failed to render alpha tex: {e:?}"))
                     .ok()
                 })
                 .map(|r| r.0);
