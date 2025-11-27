@@ -61,7 +61,16 @@ float hash(vec2 p) {
 }
 
 void main() {
-    vec2 texCoords;
+    if (alpha <= 0.0) {
+      discard;
+    }
+
+    if (ignore_alpha > 0.0) {
+      vec4 alpha_color = texture2D(alpha_tex, v_coords);
+      if (alpha_color.a < ignore_alpha) {
+        discard;
+      }
+    }
 
     // Sample the texture.
     vec4 color = texture2D(tex, v_coords);
@@ -69,14 +78,6 @@ void main() {
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0);
 #endif
-    float alphaMask = 1.0;
-
-    if (ignore_alpha > 0.0) {
-      vec4 alpha_color = texture2D(alpha_tex, v_coords);
-      if (alpha_color.a < ignore_alpha) {
-        alphaMask = 0.0;
-      }
-    }
 
     // This shader exists to make blur rounding correct.
     // 
@@ -87,7 +88,7 @@ void main() {
     // but on tty produces the correct result, which is all that matters
     vec2 loc = gl_FragCoord.xy - geo.xy;
 
-    if (alphaMask > 0.0 && noise > 0.0) {
+    if (noise > 0.0) {
       // Add noise fx
       // This can be used to achieve a glass look
       float noiseHash   = hash(loc / size);
@@ -95,12 +96,16 @@ void main() {
       color.rgb += noiseAmount * noise;
     }
 
+    color *= alpha;
+
+    if (color.a <= 0.0) {
+      discard;
+    }
+
     // Apply corner rounding inside geometry.
     if (corner_radius > 0.0) {
       color *= rounding_alpha(loc, size, corner_radius);
     }
-    color *= alpha;
-    color *= alphaMask;
 
     gl_FragColor = color;
 }
