@@ -87,12 +87,11 @@ void main() {
     // but on tty produces the correct result, which is all that matters
     vec2 loc = gl_FragCoord.xy - geo.xy;
 
-    // Add noise fx
-    // This can be used to achieve a glass look
-    float noiseHash   = hash(loc / size);
-    float noiseAmount = (mod(noiseHash, 1.0) - 0.5);
-
-    if (alphaMask > 0.0) {
+    if (alphaMask > 0.0 && noise > 0.0) {
+      // Add noise fx
+      // This can be used to achieve a glass look
+      float noiseHash   = hash(loc / size);
+      float noiseAmount = (mod(noiseHash, 1.0) - 0.5);
       color.rgb += noiseAmount * noise;
     }
 
