@@ -13,12 +13,6 @@ uniform samplerExternalOES tex;
 uniform sampler2D tex;
 #endif
 
-#if defined(EXTERNAL)
-uniform samplerExternalOES alpha_tex;
-#else
-uniform sampler2D alpha_tex;
-#endif
-
 uniform float alpha;
 varying vec2 v_coords;
 
@@ -31,7 +25,6 @@ uniform float niri_scale;
 uniform vec2 geo_size;
 uniform vec4 corner_radius;
 uniform mat3 input_to_geo;
-uniform float ignore_alpha;
 
 float rounding_alpha(vec2 coords, vec2 size) {
     vec2 center;
@@ -59,17 +52,6 @@ float rounding_alpha(vec2 coords, vec2 size) {
 }
 
 void main() {
-    if (alpha <= 0.0) {
-      discard;
-    }
-
-    if (ignore_alpha > 0.0) {
-      vec4 alpha_color = texture2D(alpha_tex, v_coords);
-      if (alpha_color.a < ignore_alpha) {
-        discard;
-      }
-    }
-
     vec3 coords_geo = input_to_geo * vec3(v_coords, 1.0);
 
     // Sample the texture.

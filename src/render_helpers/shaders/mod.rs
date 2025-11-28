@@ -88,8 +88,6 @@ impl Shaders {
                     UniformName::new("geo_size", UniformType::_2f),
                     UniformName::new("corner_radius", UniformType::_4f),
                     UniformName::new("input_to_geo", UniformType::Matrix3x3),
-                    UniformName::new("alpha_tex", UniformType::_1i),
-                    UniformName::new("ignore_alpha", UniformType::_1f),
                 ],
             )
             .map_err(|err| {
@@ -109,6 +107,12 @@ impl Shaders {
                 &[
                     UniformName::new("alpha", UniformType::_1f),
                     UniformName::new("noise", UniformType::_1f),
+                    UniformName::new("niri_scale", UniformType::_1f),
+                    UniformName::new("geo_size", UniformType::_2f),
+                    UniformName::new("corner_radius", UniformType::_4f),
+                    UniformName::new("input_to_geo", UniformType::Matrix3x3),
+                    UniformName::new("alpha_tex", UniformType::_1i),
+                    UniformName::new("ignore_alpha", UniformType::_1f),
                 ],
             )
             .map_err(|e| warn!("error compiling clipped surface shader: {e:?}"))
