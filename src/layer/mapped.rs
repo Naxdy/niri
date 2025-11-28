@@ -1,5 +1,5 @@
 use niri_config::utils::MergeWith as _;
-use niri_config::{Blur, Config, LayerRule};
+use niri_config::{Config, LayerRule};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::surface::{
     render_elements_from_surface_tree, WaylandSurfaceRenderElement,
@@ -14,11 +14,10 @@ use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
-use crate::render_helpers::blur::element::BlurRenderElement;
+use crate::render_helpers::blur::element::{Blur, BlurRenderElement, CommitTracker};
 use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::clipped_surface::ClippedSurfaceRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
-use crate::render_helpers::shaders::Shaders;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::{render_to_texture, RenderTarget, SplitElements};
@@ -39,7 +38,7 @@ pub struct MappedLayer {
     shadow: Shadow,
 
     /// Configuration for this layer's blur.
-    blur_config: Blur,
+    blur: Blur,
 
     /// Size (used for blur).
     // TODO: move to standalone blur struct
@@ -91,7 +90,7 @@ impl MappedLayer {
             scale,
             shadow: Shadow::new(shadow_config),
             clock,
-            blur_config,
+            blur: Blur::new(blur_config),
             size: Size::default(),
         }
     }
@@ -106,7 +105,7 @@ impl MappedLayer {
         let mut blur_config = config.layout.blur;
         blur_config.on = false;
         blur_config.merge_with(&self.rules.blur);
-        self.blur_config = blur_config;
+        self.blur.update_config(blur_config);
     }
 
     pub fn update_shaders(&mut self) {
@@ -197,8 +196,11 @@ impl MappedLayer {
         let alpha = self.rules.opacity.unwrap_or(1.).clamp(0., 1.);
         let location = location + self.bob_offset();
 
+        // Normal surface elements used to render a texture for the ignore alpha pass inside the
+        // blur shader.
         let mut gles_elems: Option<Vec<LayerSurfaceRenderElement<GlesRenderer>>> = None;
         let ignore_alpha = self.rules.blur.ignore_alpha.unwrap_or_default().0;
+        let mut update_alpha_tex = ignore_alpha > 0.;
 
         if target.should_block_out(self.rules.block_out_from) {
             // Round to physical pixels.
@@ -240,97 +242,75 @@ impl MappedLayer {
                 Kind::ScanoutCandidate,
             );
 
-            gles_elems = (ignore_alpha > 0.).then(|| {
-                render_elements_from_surface_tree(
+            // If there's been an update to our render elements, we need to render them again for
+            // our blur ignore alpha pass.
+            if ignore_alpha > 0.
+                && self
+                    .blur
+                    .maybe_update_commit_tracker(CommitTracker::from_elements(rv.normal.iter()))
+            {
+                gles_elems = Some(render_elements_from_surface_tree(
                     renderer.as_gles_renderer(),
                     surface,
                     buf_pos.to_physical_precise_round(scale),
                     scale,
                     alpha,
                     Kind::ScanoutCandidate,
-                )
-            });
+                ));
+            } else {
+                update_alpha_tex = false;
+            }
         };
 
-        let blur_elem = (self.blur_config.on
-            && matches!(self.surface.layer(), Layer::Top | Layer::Overlay))
+        let blur_elem = (matches!(self.surface.layer(), Layer::Top | Layer::Overlay)
+            && !target.should_block_out(self.rules.block_out_from))
         .then(|| {
             let fx_buffers = fx_buffers?;
             let fx_buffers = fx_buffers.borrow();
 
             // TODO: respect sync point?
-            let alpha_tex = (ignore_alpha > 0.)
-                .then(|| {
-                    gles_elems.and_then(|gles_elems| {
-                        let transform = fx_buffers.transform();
+            let alpha_tex = gles_elems
+                .and_then(|gles_elems| {
+                    let transform = fx_buffers.transform();
 
-                        render_to_texture(
-                            renderer.as_gles_renderer(),
-                            transform.transform_size(fx_buffers.output_size()),
-                            self.scale.into(),
-                            Transform::Normal,
-                            Fourcc::Abgr8888,
-                            gles_elems.into_iter(),
-                        )
-                        .inspect_err(|e| warn!("failed to render alpha tex: {e:?}"))
-                        .ok()
-                    })
+                    render_to_texture(
+                        renderer.as_gles_renderer(),
+                        transform.transform_size(fx_buffers.output_size()),
+                        self.scale.into(),
+                        Transform::Normal,
+                        Fourcc::Abgr8888,
+                        gles_elems.into_iter(),
+                    )
+                    .inspect_err(|e| warn!("failed to render alpha tex for layer surface: {e:?}"))
+                    .ok()
                 })
-                .flatten()
                 .map(|r| r.0);
 
-            let radius = self.rules.geometry_corner_radius.unwrap_or_default();
+            if update_alpha_tex {
+                if let Some(alpha_tex) = alpha_tex {
+                    self.blur.set_alpha_tex(alpha_tex);
+                } else {
+                    self.blur.clear_alpha_tex();
+                }
+            }
 
             let blur_sample_area = Rectangle::new(location, self.size).to_i32_round();
 
-            let elem = BlurRenderElement::new_optimized(
-                renderer,
-                &fx_buffers,
-                blur_sample_area,
-                location.to_physical_precise_round(self.scale),
-                self.rules
-                    .geometry_corner_radius
-                    .unwrap_or_default()
-                    .top_left,
-                self.scale,
-                self.blur_config,
-            );
-
             let geo = Rectangle::new(location, blur_sample_area.size.to_f64());
 
-            let clip_to_geometry =
-                ClippedSurfaceRenderElement::will_clip(&elem, scale, geo, radius);
-
-            let clip_shader = (alpha_tex.is_some() || clip_to_geometry)
-                .then(|| Shaders::get(renderer).clipped_surface.clone())
-                .flatten();
-
-            let elem = if let Some(clip_shader) = clip_shader {
-                let view_src = blur_sample_area.to_f64();
-                let buf_size = fx_buffers
-                    .output_size()
-                    .to_f64()
-                    .to_logical(self.scale)
-                    .to_i32_round();
-
-                ClippedSurfaceRenderElement::new(
-                    elem,
-                    view_src,
-                    buf_size,
-                    self.scale.into(),
-                    geo,
-                    clip_shader,
-                    radius,
-                    alpha_tex,
-                    ignore_alpha,
-                )
-                .into()
-            } else {
-                elem.into()
-            };
-
-            Some(elem)
+            Some(
+                self.blur
+                    .render(
+                        &fx_buffers,
+                        blur_sample_area,
+                        self.rules.geometry_corner_radius.unwrap_or_default(),
+                        self.scale,
+                        geo,
+                    )
+                    .map(Into::into),
+            )
         })
+        .flatten()
         .flatten()
         .into_iter();
 

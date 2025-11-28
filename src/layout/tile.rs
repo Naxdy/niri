@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
 use niri_config::utils::MergeWith as _;
-use niri_config::{Blur, Color, CornerRadius, GradientInterpolation};
+use niri_config::{Color, CornerRadius, GradientInterpolation};
 use niri_ipc::WindowLayout;
 use portable_atomic::AtomicU8;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
@@ -22,7 +22,7 @@ use crate::animation::{Animation, Clock};
 use crate::layout::tab_indicator::{TabIndicator, TabIndicatorRenderElement, TabInfo};
 use crate::layout::SizingMode;
 use crate::niri_render_elements;
-use crate::render_helpers::blur::element::BlurRenderElement;
+use crate::render_helpers::blur::element::{Blur, BlurRenderElement};
 use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::clipped_surface::{ClippedSurfaceRenderElement, RoundedCornerDamage};
@@ -408,8 +408,7 @@ pub struct Tile<W: LayoutElement> {
     window_size_override: WindowSizeOverride,
 
     /// This tile's blur settings.
-    // TODO: create a proper struct for this, like e.g. Shadow
-    blur_config: Blur,
+    blur: Blur,
 
     /// Clock for driving animations.
     pub(super) clock: Clock,
@@ -499,7 +498,7 @@ impl<W: LayoutElement> Tile<W> {
             border: FocusRing::new(border_config.into()),
             focus_ring: FocusRing::new(focus_ring_config),
             shadow: Shadow::new(shadow_config),
-            blur_config,
+            blur: Blur::new(blur_config),
             sizing_mode,
             fullscreen_backdrop: SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.]),
             restore_to_floating: false,
@@ -568,7 +567,7 @@ impl<W: LayoutElement> Tile<W> {
         let mut blur_config = self.options.layout.blur;
         blur_config.on = false;
         blur_config.merge_with(&rules.blur);
-        self.blur_config = blur_config;
+        self.blur.update_config(blur_config);
     }
 
     pub fn update_shaders(&mut self) {
@@ -1768,6 +1767,7 @@ impl<W: LayoutElement> Tile<W> {
         let mut rounded_corner_damage = None;
         let has_border_shader = BorderRenderElement::has_shader(renderer);
         let geo = Rectangle::new(window_render_loc, window_size);
+        let animated_geo = Rectangle::new(window_render_loc, animated_window_size);
         let clip_shader = clip_to_geometry
             .then(|| Shaders::get(renderer).clipped_surface.clone())
             .flatten();
@@ -1927,49 +1927,18 @@ impl<W: LayoutElement> Tile<W> {
             .then(|| self.focus_ring.render(renderer, location).map(Into::into));
         let rv = rv.chain(elem.into_iter().flatten());
 
-        let blur_elem = self
-            .blur_config
-            .on
-            .then(|| {
-                let fx_buffers = fx_buffers?;
-                let fx_buffers = fx_buffers.borrow();
-
-                let elem = BlurRenderElement::new_optimized(
-                    renderer,
-                    &fx_buffers,
-                    blur_sample_area.to_i32_round(),
-                    window_render_loc.to_physical(self.scale).to_i32_round(),
-                    radius.top_left,
-                    self.scale,
-                    self.blur_config,
-                );
-
-                let elem = if clip_to_geometry {
-                    let view_src = blur_sample_area;
-                    let buf_size = fx_buffers
-                        .output_size()
-                        .to_f64()
-                        .to_logical(self.scale)
-                        .to_i32_round();
-                    ClippedSurfaceRenderElement::new(
-                        elem,
-                        view_src,
-                        buf_size,
-                        scale,
-                        geo,
-                        clip_shader?.clone(),
+        let blur_elem = fx_buffers
+            .and_then(|fx_buffers| {
+                self.blur
+                    .render(
+                        &fx_buffers.borrow(),
+                        blur_sample_area.to_i32_round(),
                         radius,
-                        None,
-                        0.,
+                        self.scale,
+                        animated_geo,
                     )
-                    .into()
-                } else {
-                    elem.into()
-                };
-
-                Some(elem)
+                    .map(Into::into)
             })
-            .flatten()
             .into_iter();
 
         let elem = (expanded_progress < 1.)

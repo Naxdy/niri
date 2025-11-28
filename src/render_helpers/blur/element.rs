@@ -1,58 +1,163 @@
 // Originally ported from https://github.com/nferhat/fht-compositor/blob/main/src/renderer/blur/element.rs
 
-use niri_config::Blur;
+use std::cell::RefCell;
+use std::collections::HashMap;
 
-use smithay::backend::renderer::element::texture::TextureRenderElement;
+use glam::{Mat3, Vec2};
+use niri_config::CornerRadius;
+
+use pango::glib::property::PropertySet;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
-use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform};
-use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
-use smithay::backend::renderer::Renderer;
+use smithay::backend::renderer::gles::{
+    ffi, GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform,
+};
+use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
+use smithay::backend::renderer::Texture;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
-use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::render_data::RendererData;
-use crate::render_helpers::renderer::{AsGlesFrame, NiriRenderer};
-use crate::render_helpers::shaders::Shaders;
+use crate::render_helpers::renderer::AsGlesFrame;
+use crate::render_helpers::shaders::{mat3_uniform, Shaders};
 
-use super::optimized_blur_texture_element::OptimizedBlurTextureElement;
 use super::{CurrentBuffer, EffectsFramebuffers};
 
+/// Used for tracking commit counters of a collection of elements.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct CommitTracker(HashMap<Id, CommitCounter>);
+
+impl CommitTracker {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
+    pub fn from_elements<'a, E: Element + 'a>(elems: impl Iterator<Item = &'a E>) -> Self {
+        Self(
+            elems
+                .map(|e| (e.id().clone(), e.current_commit()))
+                .collect(),
+        )
+    }
+
+    pub fn update<'a, E: Element + 'a>(&mut self, elems: impl Iterator<Item = &'a E>) {
+        *self = Self::from_elements(elems);
+    }
+}
+
 #[derive(Debug)]
-pub enum BlurRenderElement {
-    /// Use optimized blur, aka X-ray blur.
-    ///
-    /// This technique relies on [`EffectsFramebuffers::optimized_blur`] to be populated. It will
-    /// render this texture no matter what is below the blur render element.
-    Optimized {
-        tex: OptimizedBlurTextureElement,
-        corner_radius: f32,
-        noise: f32,
+pub struct Blur {
+    config: niri_config::Blur,
+    inner: RefCell<Option<BlurRenderElement>>,
+    alpha_tex: RefCell<Option<GlesTexture>>,
+    commit_tracker: RefCell<CommitTracker>,
+}
+
+impl Blur {
+    pub fn new(config: niri_config::Blur) -> Self {
+        Self {
+            config,
+            inner: Default::default(),
+            alpha_tex: Default::default(),
+            commit_tracker: Default::default(),
+        }
+    }
+
+    pub fn maybe_update_commit_tracker(&self, other: CommitTracker) -> bool {
+        if self.commit_tracker.borrow().eq(&other) {
+            false
+        } else {
+            self.commit_tracker.set(other);
+            true
+        }
+    }
+
+    pub fn update_config(&mut self, config: niri_config::Blur) {
+        if self.config != config {
+            self.inner.set(None);
+        }
+
+        self.config = config;
+    }
+
+    pub fn clear_alpha_tex(&self) {
+        if let Some(inner) = self.inner.borrow_mut().as_mut() {
+            if self.alpha_tex.borrow().is_some() {
+                inner.damage_all();
+            }
+        }
+
+        self.alpha_tex.set(None);
+    }
+
+    pub fn set_alpha_tex(&self, alpha_tex: GlesTexture) {
+        self.alpha_tex.set(Some(alpha_tex));
+        self.inner.set(None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &self,
+        fx_buffers: &EffectsFramebuffers,
+        sample_area: Rectangle<i32, Logical>,
+        corner_radius: CornerRadius,
         scale: f64,
-        output_size: Size<i32, Physical>,
-        config: Blur,
-        output_transform: Transform,
-    },
-    /// Use true blur.
-    ///
-    /// When using this technique, the compositor will blur the current framebuffer contents that
-    /// are below the [`BlurElement`] in order to display them. This adds an additional render step
-    /// but provides true results with the blurred contents.
-    TrueBlur {
-        // we are just a funny texture element that generates the texture on RenderElement::draw
-        id: Id,
-        scale: f64,
-        transform: Transform,
-        src: Rectangle<f64, Logical>,
-        size: Size<i32, Logical>,
-        corner_radius: f32,
-        loc: Point<i32, Physical>,
-        config: Blur,
-        // FIXME: Use DamageBag and expand it as needed?
-        commit_counter: CommitCounter,
-        fx_buffers: EffectsFramebufffersUserData,
-        alpha_tex: Option<GlesTexture>,
-    },
+        geometry: Rectangle<f64, Logical>,
+    ) -> Option<BlurRenderElement> {
+        if !self.config.on {
+            return None;
+        }
+
+        let mut inner = self.inner.borrow_mut();
+
+        let Some(inner) = inner.as_mut() else {
+            let elem = BlurRenderElement::new(
+                fx_buffers,
+                sample_area,
+                corner_radius,
+                scale,
+                self.config,
+                geometry,
+                self.alpha_tex.borrow().clone(),
+            );
+
+            *inner = Some(elem.clone());
+
+            return Some(elem);
+        };
+
+        if inner.sample_area == sample_area
+            && inner.geometry == geometry
+            && inner.scale == scale
+            && inner.corner_radius == corner_radius
+            && fx_buffers.output_size().w == inner.texture.size().w
+            && fx_buffers.output_size().h == inner.texture.size().h
+        {
+            return Some(inner.clone());
+        }
+
+        inner.texture = fx_buffers.optimized_blur.clone();
+        inner.sample_area = sample_area;
+        inner.alpha_tex = self.alpha_tex.borrow().clone();
+        inner.scale = scale;
+        inner.geometry = geometry;
+        inner.damage_all();
+        inner.update_uniforms(fx_buffers, &self.config);
+
+        Some(inner.clone())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BlurRenderElement {
+    id: Id,
+    texture: GlesTexture,
+    uniforms: Vec<Uniform<'static>>,
+    sample_area: Rectangle<i32, Logical>,
+    alpha_tex: Option<GlesTexture>,
+    scale: f64,
+    commit: CommitCounter,
+    corner_radius: CornerRadius,
+    geometry: Rectangle<f64, Logical>,
 }
 
 impl BlurRenderElement {
@@ -65,165 +170,133 @@ impl BlurRenderElement {
     /// - Display outdated/wrong contents
     /// - Not display anything since the buffer will be empty.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_optimized(
-        renderer: &mut impl NiriRenderer,
+    pub fn new(
         fx_buffers: &EffectsFramebuffers,
         sample_area: Rectangle<i32, Logical>,
-        loc: Point<i32, Physical>,
-        corner_radius: f32,
+        corner_radius: CornerRadius,
         scale: f64,
-        config: Blur,
-    ) -> Self {
-        let texture = fx_buffers.optimized_blur.clone();
-
-        let scaled = sample_area.to_f64().upscale(scale);
-
-        let texture = TextureRenderElement::from_static_texture(
-            Id::new(),
-            renderer.as_gles_renderer().context_id(),
-            loc.to_f64(),
-            texture,
-            1,
-            Transform::Normal,
-            Some(1.0),
-            Some(scaled),
-            Some(scaled.size.to_i32_ceil()),
-            // NOTE: Since this is "optimized" blur, anything below the window will not be
-            // rendered
-            Some(vec![Rectangle::new(
-                scaled.loc.to_i32_ceil(),
-                scaled.size.to_i32_ceil(),
-            )
-            .to_buffer(1, Transform::Normal, &sample_area.size)]),
-            Kind::Unspecified,
-        );
-
-        Self::Optimized {
-            tex: texture.into(),
-            corner_radius,
-            noise: config.noise.0 as f32,
-            scale,
-            output_size: fx_buffers.output_size,
-            output_transform: fx_buffers.transform,
-            config,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_true(
-        fx_buffers: EffectsFramebufffersUserData,
-        sample_area: Rectangle<i32, Logical>,
-        loc: Point<i32, Physical>,
-        corner_radius: f32,
-        scale: f64,
-        config: Blur,
-        zoom: f64,
+        config: niri_config::Blur,
+        geometry: Rectangle<f64, Logical>,
         alpha_tex: Option<GlesTexture>,
     ) -> Self {
-        let mut final_sample_area = sample_area.to_f64().upscale(zoom);
-        let center = (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.).to_point();
-        final_sample_area.loc.x = center.x - (center.x - sample_area.loc.x as f64) * zoom;
-        final_sample_area.loc.y = center.y - (center.y - sample_area.loc.y as f64) * zoom;
-
-        Self::TrueBlur {
+        let mut this = Self {
             id: Id::new(),
-            scale,
-            src: final_sample_area,
-            transform: Transform::Normal,
-            size: sample_area.size,
-            corner_radius,
-            loc,
-            config,
-            fx_buffers,
-            commit_counter: CommitCounter::default(),
+            texture: fx_buffers.optimized_blur.clone(),
+            uniforms: Vec::with_capacity(7),
             alpha_tex,
-        }
+            sample_area,
+            scale,
+            corner_radius,
+            geometry,
+            commit: CommitCounter::default(),
+        };
+
+        this.update_uniforms(fx_buffers, &config);
+
+        this
+    }
+
+    fn update_uniforms(&mut self, fx_buffers: &EffectsFramebuffers, config: &niri_config::Blur) {
+        let transform = Transform::Normal;
+
+        let elem_geo: Rectangle<i32, _> = self.sample_area.to_physical_precise_round(self.scale);
+        let elem_geo_loc = Vec2::new(elem_geo.loc.x as f32, elem_geo.loc.y as f32);
+        let elem_geo_size = Vec2::new(elem_geo.size.w as f32, elem_geo.size.h as f32);
+
+        let view_src = self.sample_area; // CORRECT
+        let buf_size = fx_buffers.output_size().to_f64().to_logical(self.scale); // CORRECT
+        let buf_size = Vec2::new(buf_size.w as f32, buf_size.h as f32);
+
+        let geo = self.geometry.to_physical_precise_round(self.scale);
+        let geo_loc = Vec2::new(geo.loc.x, geo.loc.y);
+        let geo_size = Vec2::new(geo.size.w, geo.size.h);
+
+        let src_loc = Vec2::new(view_src.loc.x as f32, view_src.loc.y as f32);
+        let src_size = Vec2::new(view_src.size.w as f32, view_src.size.h as f32);
+
+        let transform_matrix = Mat3::from_translation(Vec2::new(0.5, 0.5))
+            * Mat3::from_cols_array(transform.matrix().as_ref())
+            * Mat3::from_translation(-Vec2::new(0.5, 0.5));
+
+        // FIXME: y_inverted
+        let input_to_geo = transform_matrix * Mat3::from_scale(elem_geo_size / geo_size)
+            * Mat3::from_translation((elem_geo_loc - geo_loc) / elem_geo_size)
+            // Apply viewporter src.
+            * Mat3::from_scale(buf_size / src_size)
+            * Mat3::from_translation(-src_loc / buf_size);
+
+        self.uniforms = vec![
+            Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
+            Uniform::new("geo_size", geo_size.to_array()),
+            Uniform::new("niri_scale", self.scale as f32),
+            Uniform::new("noise", config.noise.0 as f32),
+            mat3_uniform("input_to_geo", input_to_geo),
+            Uniform::new(
+                "ignore_alpha",
+                if self.alpha_tex.is_some() {
+                    config.ignore_alpha.0 as f32
+                } else {
+                    0.
+                },
+            ),
+            Uniform::new("alpha_tex", if self.alpha_tex.is_some() { 1 } else { 0 }),
+        ];
+    }
+
+    fn damage_all(&mut self) {
+        self.commit.increment()
     }
 }
 
 impl Element for BlurRenderElement {
     fn id(&self) -> &Id {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.id(),
-            BlurRenderElement::TrueBlur { id, .. } => id,
-        }
+        &self.id
     }
 
     fn current_commit(&self) -> CommitCounter {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.current_commit(),
-            BlurRenderElement::TrueBlur { commit_counter, .. } => *commit_counter,
-        }
-    }
-
-    fn location(&self, scale: Scale<f64>) -> Point<i32, Physical> {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.location(scale),
-            BlurRenderElement::TrueBlur { loc, .. } => *loc,
-        }
+        self.commit
     }
 
     fn src(&self) -> Rectangle<f64, Buffer> {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.src(),
-            BlurRenderElement::TrueBlur {
-                src,
-                transform,
-                size,
-                scale,
-                ..
-            } => src.to_buffer(*scale, *transform, &size.to_f64()),
-        }
+        self.sample_area.to_f64().to_buffer(
+            self.scale,
+            Transform::Normal,
+            &self.sample_area.size.to_f64(),
+        )
     }
 
     fn transform(&self) -> Transform {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.transform(),
-            BlurRenderElement::TrueBlur { transform, .. } => *transform,
-        }
-    }
-
-    fn damage_since(
-        &self,
-        scale: Scale<f64>,
-        commit: Option<CommitCounter>,
-    ) -> DamageSet<i32, Physical> {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.damage_since(scale, commit),
-            BlurRenderElement::TrueBlur { config, .. } => {
-                let passes = config.passes;
-                let radius = config.radius.0 as f32;
-
-                // Since the blur element samples from around itself, we must expand the damage it
-                // induces to include any potential changes.
-                let mut geometry = Rectangle::from_size(self.geometry(scale).size);
-                let size = (2f32.powi(passes as i32 + 1) * radius).ceil() as i32;
-                geometry.loc -= Point::from((size, size));
-                geometry.size += Size::from((size, size)).upscale(2);
-
-                // FIXME: Damage tracking?
-                DamageSet::from_slice(&[geometry])
-            }
-        }
+        Transform::Normal
     }
 
     fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.opaque_regions(scale),
-            BlurRenderElement::TrueBlur { .. } => {
-                // Since we are rendering as true blur, we will draw whatever is behind the window
-                OpaqueRegions::default()
-            }
+        if self.alpha_tex.is_some() {
+            return OpaqueRegions::default();
         }
+
+        let geometry = self.geometry(scale);
+
+        let CornerRadius {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        } = self.corner_radius.scaled_by(scale.x as f32);
+
+        let largest_radius = top_left.max(top_right).max(bottom_right).max(bottom_left);
+
+        let rect = Rectangle::new(
+            Point::new(top_left.ceil() as i32, top_left.ceil() as i32),
+            (geometry.size.to_f64()
+                - Size::new(largest_radius.ceil() as f64, largest_radius.ceil() as f64) * 2.)
+                .to_i32_ceil(),
+        );
+
+        OpaqueRegions::from_slice(&[rect])
     }
 
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
-        match self {
-            BlurRenderElement::Optimized { tex, .. } => tex.geometry(scale),
-            BlurRenderElement::TrueBlur { loc, size, .. } => {
-                Rectangle::new(*loc, size.to_physical_precise_round(scale))
-            }
-        }
+        self.sample_area.to_f64().to_physical_precise_round(scale)
     }
 
     fn alpha(&self) -> f32 {
@@ -235,11 +308,12 @@ impl Element for BlurRenderElement {
     }
 }
 
+#[allow(unused)]
 #[allow(clippy::too_many_arguments)]
 fn draw_true_blur(
     fx_buffers: &mut EffectsFramebuffers,
     gles_frame: &mut GlesFrame,
-    config: &Blur,
+    config: &niri_config::Blur,
     scale: f64,
     dst: Rectangle<i32, Physical>,
     corner_radius: f32,
@@ -336,47 +410,39 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
     ) -> Result<(), GlesError> {
         let _span = trace_span!("blur_draw_gles").entered();
 
-        match self {
-            Self::Optimized { tex, scale, .. } => {
-                let downscaled_dst = Rectangle::new(
-                    dst.loc,
-                    Size::from((
-                        (dst.size.w as f64 / *scale) as i32,
-                        (dst.size.h as f64 / *scale) as i32,
-                    )),
-                );
+        let downscaled_dst = Rectangle::new(
+            dst.loc,
+            Size::from((
+                (dst.size.w as f64 / self.scale) as i32,
+                (dst.size.h as f64 / self.scale) as i32,
+            )),
+        );
 
-                <TextureRenderElement<GlesTexture> as RenderElement<GlesRenderer>>::draw(
-                    &tex.0,
-                    gles_frame,
-                    src,
-                    downscaled_dst,
-                    damage,
-                    opaque_regions,
-                )
-            }
-            Self::TrueBlur {
-                fx_buffers,
-                scale,
-                corner_radius,
-                config,
-                alpha_tex,
-                ..
-            } => draw_true_blur(
-                &mut fx_buffers.borrow_mut(),
-                gles_frame,
-                config,
-                *scale,
-                dst,
-                *corner_radius,
-                src,
-                damage,
-                opaque_regions,
-                self.alpha(),
-                false,
-                alpha_tex.as_ref(),
-            ),
+        let program = Shaders::get_from_frame(gles_frame)
+            .blur_finish
+            .clone()
+            .expect("should be compiled");
+
+        if let Some(alpha_tex) = &self.alpha_tex {
+            gles_frame.with_context(|gl| unsafe {
+                gl.ActiveTexture(ffi::TEXTURE1);
+                gl.BindTexture(ffi::TEXTURE_2D, alpha_tex.tex_id());
+                gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
+                gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
+            })?;
         }
+
+        gles_frame.render_texture_from_to(
+            &self.texture,
+            src,
+            downscaled_dst,
+            damage,
+            opaque_regions,
+            Transform::Normal,
+            1.0,
+            Some(&program),
+            &self.uniforms,
+        )
     }
 
     fn underlying_storage(&self, _: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
@@ -395,42 +461,14 @@ impl<'render> RenderElement<TtyRenderer<'render>> for BlurRenderElement {
     ) -> Result<(), TtyRendererError<'render>> {
         let _span = trace_span!("blur_draw_tty").entered();
 
-        match self {
-            Self::Optimized { .. } => {
-                <BlurRenderElement as RenderElement<GlesRenderer>>::draw(
-                    self,
-                    frame.as_gles_frame(),
-                    src,
-                    dst,
-                    damage,
-                    opaque_regions,
-                )?;
-            }
-
-            Self::TrueBlur {
-                fx_buffers,
-                scale,
-                corner_radius,
-                config,
-                alpha_tex,
-                ..
-            } => {
-                draw_true_blur(
-                    &mut fx_buffers.borrow_mut(),
-                    frame.as_gles_frame(),
-                    config,
-                    *scale,
-                    dst,
-                    *corner_radius,
-                    src,
-                    damage,
-                    opaque_regions,
-                    self.alpha(),
-                    true,
-                    alpha_tex.as_ref(),
-                )?;
-            }
-        }
+        <BlurRenderElement as RenderElement<GlesRenderer>>::draw(
+            self,
+            frame.as_gles_frame(),
+            src,
+            dst,
+            damage,
+            opaque_regions,
+        )?;
 
         Ok(())
     }
