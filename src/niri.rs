@@ -1072,21 +1072,8 @@ impl State {
     }
 
     pub fn refresh_popup_grab(&mut self) {
-        let keyboard_grabbed = self.niri.seat.input_method().keyboard_grabbed();
-
         if let Some(grab) = &mut self.niri.popup_grab {
             if grab.grab.has_ended() {
-                self.niri.popup_grab = None;
-            } else if keyboard_grabbed {
-                // HACK: remove popup grab if IME grabbed the keyboard, because we can't yet do
-                // popup grabs together with an IME grab.
-                // FIXME: do this properly.
-                grab.grab.ungrab(PopupUngrabStrategy::All);
-                self.niri.seat.get_pointer().unwrap().unset_grab(
-                    self,
-                    SERIAL_COUNTER.next_serial(),
-                    get_monotonic_time().as_millis() as u32,
-                );
                 self.niri.popup_grab = None;
             }
         }
