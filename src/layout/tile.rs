@@ -1931,11 +1931,14 @@ impl<W: LayoutElement> Tile<W> {
             .and_then(|fx_buffers| {
                 self.blur
                     .render(
-                        &fx_buffers.borrow(),
+                        fx_buffers,
                         blur_sample_area.to_i32_round(),
                         radius,
                         self.scale,
                         animated_geo,
+                        self.focused_window().is_floating()
+                            && !self.focused_window().rules().blur.x_ray.unwrap_or_default(),
+                        window_render_loc,
                     )
                     .map(Into::into)
             })

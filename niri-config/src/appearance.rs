@@ -345,6 +345,7 @@ pub struct Blur {
     pub radius: FloatOrInt<0, 1024>,
     pub noise: FloatOrInt<0, 1024>,
     pub ignore_alpha: FloatOrInt<0, 1>,
+    pub x_ray: bool,
 }
 
 impl Default for Blur {
@@ -355,6 +356,7 @@ impl Default for Blur {
             radius: FloatOrInt(0.0),
             noise: FloatOrInt(0.0),
             ignore_alpha: FloatOrInt(0.0),
+            x_ray: false,
         }
     }
 }
@@ -366,7 +368,7 @@ impl MergeWith<BlurRule> for Blur {
             self.on = false;
         }
 
-        merge_clone!((self, part), passes, radius, noise, ignore_alpha);
+        merge_clone!((self, part), passes, radius, noise, ignore_alpha, x_ray);
     }
 }
 
@@ -692,6 +694,8 @@ pub struct BlurRule {
     pub noise: Option<FloatOrInt<0, 1024>>,
     #[knuffel(child, unwrap(argument))]
     pub ignore_alpha: Option<FloatOrInt<0, 1>>,
+    #[knuffel(child, unwrap(argument))]
+    pub x_ray: Option<bool>,
 }
 
 #[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
@@ -749,7 +753,7 @@ impl MergeWith<Self> for BlurRule {
     fn merge_with(&mut self, part: &Self) {
         merge_on_off!((self, part));
 
-        merge_clone_opt!((self, part), passes, radius, noise, ignore_alpha);
+        merge_clone_opt!((self, part), passes, radius, noise, ignore_alpha, x_ray);
     }
 }
 

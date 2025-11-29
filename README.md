@@ -21,8 +21,13 @@ the [original readme](./README_orig.md).
 Windows (both floating and tiling), as well as layer surfaces can have blur enabled on them. Blur needs to be enabled
 for each window / layer surface explicitly.
 
-Currently, all windows will draw "optimized" or "x-ray" blur, which is rendered separately using only the `bottom` and
-`background` layer surfaces.
+Tiled windows will always draw "optimized" or "x-ray" blur, which is rendered from a shared texture using only the
+`bottom` and `background` layer surfaces, and is updated at a slower rate. Floating windows, as well as `top` or
+`overlay` layer surfaces will draw "true" blur by default instead, which is rendered using all available screen
+contents.
+
+Note that true blur is rather expensive in terms of GPU load however, so an option exists to also have these surfaces
+draw `x-ray` blur instead.
 
 To set global defaults for blur:
 
@@ -72,17 +77,20 @@ layer-rule {
     // note that this will require rendering the blurred surface twice, so if possible,
     // prefer using `geometry-corner-radius` instead, for performance reasons.
     ignore-alpha 0.45
+
+    // will render "x-ray" blur that is only based on `bottom` and `background` layer surfaces,
+    // even if the window is floating. good for minimal GPU load.
+    x-ray true
   }
 }
 ```
 
 #### Caveats
 
-- Enabling blur currently incurs a noticeable increase in GPU utilization on high frame rates (tested with 240hz)
-  compared to other compositors with similar functionality (e.g. Hyprland). Investigating this will require some sort of
-  [GPU profiling](https://github.com/Smithay/smithay/pull/1134).
-- There is currently no way to enable "true" blur for floating windows or top / overlay layer surfaces. The
-  functionality exists in code, but is very slow / buggy at the moment.
+- True blur currently only works for horizontal monitor configurations. When using any sort of 90 or 270 degree
+  transformations, only x-ray blur will be available.
+- True blur is rather performance intensive as of right now, since it renders itself on every frame. It is recommended
+  to only enable it for surfaces that don't take up a lot of screen time (e.g. notifications, dialogs).
 - Blur is currently only possible to be enabled through the config. Implementing both
   [KDE blur](https://wayland.app/protocols/kde-blur) and
   [background effect](https://wayland.app/protocols/ext-background-effect-v1) is planned though.
@@ -152,7 +160,7 @@ Since windows can be grouped on a per-tile basis, column-level tabbing is obsole
 options have been removed to improve maintainability. If you have any tabbed-column related options in your niri config,
 this fork will fail to parse it.
 
-## Plans
+## Future Plans
 
 As of right now, I am trying to keep this fork "as close to upstream as is reasonable", to allow for frequent rebasing
 without too many conflicts to solve.
@@ -240,8 +248,6 @@ To use it, simply import the module it provides into your config:
 
           # optional, if using home-manager
           home-manager = {
-            # recommended, as the niri module from this fork overrides the upstream niri package
-            useGlobalPkgs = true;
             users.my-username = {
               imports = [
                 niri.homeManagerModules.default
@@ -249,6 +255,8 @@ To use it, simply import the module it provides into your config:
 
               wayland.windowManager.niri = {
                 enable = true;
+                # use the package from `programs.niri.package`, which is set by `niri.nixosModules.default`
+                package = null;
                 # fully declarative niri configuration; converted to kdl during rebuild
                 #
                 # - simple entries without arguments are declared as `name = [];`

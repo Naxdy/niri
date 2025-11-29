@@ -317,7 +317,6 @@ pub(super) unsafe fn get_main_buffer_blur(
     supports_instancing: bool,
     // dst is the region that we want blur on
     dst: Rectangle<i32, Physical>,
-    is_tty: bool,
     alpha_tex: Option<&GlesTexture>,
 ) -> Result<GlesTexture, GlesError> {
     let tex_size = fx_buffers
@@ -334,6 +333,10 @@ pub(super) unsafe fn get_main_buffer_blur(
         dst.size += Size::from((size, size)).upscale(16);
         dst
     };
+
+    // let dst_expanded = fx_buffers
+    //     .transform()
+    //     .transform_rect_in(dst_expanded, &tex_size);
 
     let mut prev_fbo = 0;
     gl.GetIntegerv(ffi::FRAMEBUFFER_BINDING, &mut prev_fbo as *mut _);
@@ -374,52 +377,33 @@ pub(super) unsafe fn get_main_buffer_blur(
         // as the bound fbo size, so blitting uses dst immediately
         gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, sample_fbo);
 
-        if is_tty {
-            let src_x0 = dst_expanded.loc.x;
-            let src_y0 = dst_expanded.loc.y;
-            let src_x1 = dst_expanded.loc.x + dst_expanded.size.w;
-            let src_y1 = dst_expanded.loc.y + dst_expanded.size.h;
-            let dst_x0 = src_x0;
-            let dst_y0 = src_y0;
-            let dst_x1 = src_x1;
-            let dst_y1 = src_y1;
+        let dst_x0 = dst_expanded.loc.x;
+        let dst_y0 = dst_expanded.loc.y;
+        let dst_x1 = dst_expanded.loc.x + dst_expanded.size.w;
+        let dst_y1 = dst_expanded.loc.y + dst_expanded.size.h;
 
-            gl.BlitFramebuffer(
-                src_x0,
-                src_y0,
-                src_x1,
-                src_y1,
-                dst_x0,
-                dst_y0,
-                dst_x1,
-                dst_y1,
-                ffi::COLOR_BUFFER_BIT,
-                ffi::LINEAR,
-            );
-        } else {
-            let fb_height = tex_size.h;
+        let src_expanded = fx_buffers
+            .transform()
+            .invert()
+            .transform_rect_in(dst_expanded, &tex_size);
 
-            let dst_y0 = dst_expanded.loc.y + dst_expanded.size.h;
-            let dst_y1 = dst_expanded.loc.y;
+        let src_x0 = src_expanded.loc.x;
+        let src_y0 = src_expanded.loc.y;
+        let src_x1 = src_expanded.loc.x + src_expanded.size.w;
+        let src_y1 = src_expanded.loc.y + src_expanded.size.h;
 
-            let src_x0 = dst_expanded.loc.x;
-            let src_x1 = dst_expanded.loc.x + dst_expanded.size.w;
-            let src_y0 = fb_height - dst_y0;
-            let src_y1 = fb_height - dst_y1;
-
-            gl.BlitFramebuffer(
-                src_x0,
-                src_y0,
-                src_x1,
-                src_y1,
-                src_x0,
-                dst_y0,
-                src_x1,
-                dst_y1,
-                ffi::COLOR_BUFFER_BIT,
-                ffi::LINEAR,
-            );
-        }
+        gl.BlitFramebuffer(
+            src_x0,
+            src_y0,
+            src_x1,
+            src_y1,
+            dst_x0,
+            dst_y0,
+            dst_x1,
+            dst_y1,
+            ffi::COLOR_BUFFER_BIT,
+            ffi::LINEAR,
+        );
 
         if gl.GetError() == ffi::INVALID_OPERATION {
             error!("TrueBlur needs GLES3.0 for blitting");

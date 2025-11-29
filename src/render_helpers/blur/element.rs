@@ -16,11 +16,23 @@ use smithay::backend::renderer::Texture;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
+use crate::render_helpers::blur::EffectsFramebufffersUserData;
 use crate::render_helpers::render_data::RendererData;
 use crate::render_helpers::renderer::AsGlesFrame;
 use crate::render_helpers::shaders::{mat3_uniform, Shaders};
 
 use super::{CurrentBuffer, EffectsFramebuffers};
+
+#[derive(Debug, Clone)]
+enum BlurVariant {
+    Optimized {
+        texture: GlesTexture,
+    },
+    True {
+        fx_buffers: EffectsFramebufffersUserData,
+        config: niri_config::Blur,
+    },
+}
 
 /// Used for tracking commit counters of a collection of elements.
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -97,27 +109,48 @@ impl Blur {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
-        fx_buffers: &EffectsFramebuffers,
+        fx_buffers: EffectsFramebufffersUserData,
         sample_area: Rectangle<i32, Logical>,
         corner_radius: CornerRadius,
         scale: f64,
         geometry: Rectangle<f64, Logical>,
+        mut true_blur: bool,
+        render_loc: Point<f64, Logical>,
     ) -> Option<BlurRenderElement> {
         if !self.config.on {
             return None;
+        }
+
+        // FIXME: true blur is broken on 90/270 transformed monitors
+        if !matches!(
+            fx_buffers.borrow().transform(),
+            Transform::Normal | Transform::Flipped180,
+        ) {
+            true_blur = false;
         }
 
         let mut inner = self.inner.borrow_mut();
 
         let Some(inner) = inner.as_mut() else {
             let elem = BlurRenderElement::new(
-                fx_buffers,
+                &fx_buffers.borrow(),
                 sample_area,
                 corner_radius,
                 scale,
                 self.config,
                 geometry,
                 self.alpha_tex.borrow().clone(),
+                if true_blur {
+                    BlurVariant::True {
+                        fx_buffers: fx_buffers.clone(),
+                        config: self.config,
+                    }
+                } else {
+                    BlurVariant::Optimized {
+                        texture: fx_buffers.borrow().optimized_blur.clone(),
+                    }
+                },
+                render_loc,
             );
 
             *inner = Some(elem.clone());
@@ -125,23 +158,48 @@ impl Blur {
             return Some(elem);
         };
 
+        if true_blur != matches!(&inner.variant, BlurVariant::True { .. }) {
+            inner.variant = if true_blur {
+                BlurVariant::True {
+                    fx_buffers: fx_buffers.clone(),
+                    config: self.config,
+                }
+            } else {
+                BlurVariant::Optimized {
+                    texture: fx_buffers.borrow().optimized_blur.clone(),
+                }
+            };
+
+            inner.damage_all();
+        }
+
+        let fx_buffers = fx_buffers.borrow();
+
         if inner.sample_area == sample_area
             && inner.geometry == geometry
             && inner.scale == scale
             && inner.corner_radius == corner_radius
-            && fx_buffers.output_size().w == inner.texture.size().w
-            && fx_buffers.output_size().h == inner.texture.size().h
+            && inner.render_loc == render_loc
         {
+            if !matches!(&inner.variant, BlurVariant::Optimized { texture }
+                    if texture.size().w == fx_buffers.output_size().w
+                        && texture.size().h == fx_buffers.output_size().h)
+            {
+                // If we are true blur, or if our output size changed, we need to re-render.
+                // PERF: is there a better solution for true blur?
+                inner.damage_all();
+            }
+
             return Some(inner.clone());
         }
 
-        inner.texture = fx_buffers.optimized_blur.clone();
+        inner.render_loc = render_loc;
         inner.sample_area = sample_area;
         inner.alpha_tex = self.alpha_tex.borrow().clone();
         inner.scale = scale;
         inner.geometry = geometry;
         inner.damage_all();
-        inner.update_uniforms(fx_buffers, &self.config);
+        inner.update_uniforms(&fx_buffers, &self.config);
 
         Some(inner.clone())
     }
@@ -150,7 +208,6 @@ impl Blur {
 #[derive(Clone, Debug)]
 pub struct BlurRenderElement {
     id: Id,
-    texture: GlesTexture,
     uniforms: Vec<Uniform<'static>>,
     sample_area: Rectangle<i32, Logical>,
     alpha_tex: Option<GlesTexture>,
@@ -158,6 +215,8 @@ pub struct BlurRenderElement {
     commit: CommitCounter,
     corner_radius: CornerRadius,
     geometry: Rectangle<f64, Logical>,
+    variant: BlurVariant,
+    render_loc: Point<f64, Logical>,
 }
 
 impl BlurRenderElement {
@@ -170,7 +229,7 @@ impl BlurRenderElement {
     /// - Display outdated/wrong contents
     /// - Not display anything since the buffer will be empty.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    fn new(
         fx_buffers: &EffectsFramebuffers,
         sample_area: Rectangle<i32, Logical>,
         corner_radius: CornerRadius,
@@ -178,10 +237,11 @@ impl BlurRenderElement {
         config: niri_config::Blur,
         geometry: Rectangle<f64, Logical>,
         alpha_tex: Option<GlesTexture>,
+        variant: BlurVariant,
+        render_loc: Point<f64, Logical>,
     ) -> Self {
         let mut this = Self {
             id: Id::new(),
-            texture: fx_buffers.optimized_blur.clone(),
             uniforms: Vec::with_capacity(7),
             alpha_tex,
             sample_area,
@@ -189,6 +249,8 @@ impl BlurRenderElement {
             corner_radius,
             geometry,
             commit: CommitCounter::default(),
+            variant,
+            render_loc,
         };
 
         this.update_uniforms(fx_buffers, &config);
@@ -270,7 +332,7 @@ impl Element for BlurRenderElement {
     }
 
     fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
-        if self.alpha_tex.is_some() {
+        if self.alpha_tex.is_some() || matches!(&self.variant, BlurVariant::True { .. }) {
             return OpaqueRegions::default();
         }
 
@@ -296,7 +358,13 @@ impl Element for BlurRenderElement {
     }
 
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
-        self.sample_area.to_f64().to_physical_precise_round(scale)
+        Rectangle::new(
+            self.render_loc.to_physical_precise_round(scale),
+            self.sample_area
+                .to_f64()
+                .to_physical_precise_round(scale)
+                .size,
+        )
     }
 
     fn alpha(&self) -> f32 {
@@ -306,97 +374,6 @@ impl Element for BlurRenderElement {
     fn kind(&self) -> Kind {
         Kind::Unspecified
     }
-}
-
-#[allow(unused)]
-#[allow(clippy::too_many_arguments)]
-fn draw_true_blur(
-    fx_buffers: &mut EffectsFramebuffers,
-    gles_frame: &mut GlesFrame,
-    config: &niri_config::Blur,
-    scale: f64,
-    dst: Rectangle<i32, Physical>,
-    corner_radius: f32,
-    src: Rectangle<f64, Buffer>,
-    damage: &[Rectangle<i32, Physical>],
-    opaque_regions: &[Rectangle<i32, Physical>],
-    alpha: f32,
-    is_tty: bool,
-    alpha_tex: Option<&GlesTexture>,
-) -> Result<(), GlesError> {
-    fx_buffers.current_buffer = CurrentBuffer::Normal;
-
-    let shaders = Shaders::get_from_frame(gles_frame).blur.clone();
-    let vbos = RendererData::get_from_frame(gles_frame).vbos;
-    let supports_instancing = gles_frame
-        .capabilities()
-        .contains(&smithay::backend::renderer::gles::Capability::Instancing);
-    let debug = !gles_frame.debug_flags().is_empty();
-    let projection_matrix = glam::Mat3::from_cols_array(gles_frame.projection());
-
-    // Update the blur buffers.
-    // We use gl ffi directly to circumvent some stuff done by smithay
-    let blurred_texture = gles_frame.with_context(|gl| unsafe {
-        super::get_main_buffer_blur(
-            gl,
-            &mut *fx_buffers,
-            &shaders,
-            *config,
-            projection_matrix,
-            scale as i32,
-            &vbos,
-            debug,
-            supports_instancing,
-            dst,
-            is_tty,
-            alpha_tex,
-        )
-    })??;
-
-    let program = Shaders::get_from_frame(gles_frame).blur_finish.clone();
-
-    let additional_uniforms = vec![
-        Uniform::new(
-            "geo",
-            [
-                dst.loc.x as f32,
-                dst.loc.y as f32,
-                dst.size.w as f32,
-                dst.size.h as f32,
-            ],
-        ),
-        Uniform::new("alpha", alpha),
-        Uniform::new("noise", config.noise.0 as f32),
-        Uniform::new("corner_radius", corner_radius),
-        Uniform::new(
-            "output_size",
-            [
-                fx_buffers.output_size.w as f32,
-                fx_buffers.output_size.h as f32,
-            ],
-        ),
-        Uniform::new(
-            "ignore_alpha",
-            if alpha_tex.is_some() {
-                config.ignore_alpha.0 as f32
-            } else {
-                0.
-            },
-        ),
-        Uniform::new("alpha_tex", 1),
-    ];
-
-    gles_frame.render_texture_from_to(
-        &blurred_texture,
-        src,
-        dst,
-        damage,
-        opaque_regions,
-        Transform::Normal,
-        alpha,
-        program.as_ref(),
-        &additional_uniforms,
-    )
 }
 
 impl RenderElement<GlesRenderer> for BlurRenderElement {
@@ -432,17 +409,62 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
             })?;
         }
 
-        gles_frame.render_texture_from_to(
-            &self.texture,
-            src,
-            downscaled_dst,
-            damage,
-            opaque_regions,
-            Transform::Normal,
-            1.0,
-            Some(&program),
-            &self.uniforms,
-        )
+        match &self.variant {
+            BlurVariant::Optimized { texture } => gles_frame.render_texture_from_to(
+                texture,
+                src,
+                downscaled_dst,
+                damage,
+                opaque_regions,
+                Transform::Normal,
+                1.,
+                Some(&program),
+                &self.uniforms,
+            ),
+            BlurVariant::True { fx_buffers, config } => {
+                let mut fx_buffers = fx_buffers.borrow_mut();
+
+                fx_buffers.current_buffer = CurrentBuffer::Normal;
+
+                let shaders = Shaders::get_from_frame(gles_frame).blur.clone();
+                let vbos = RendererData::get_from_frame(gles_frame).vbos;
+                let supports_instancing = gles_frame
+                    .capabilities()
+                    .contains(&smithay::backend::renderer::gles::Capability::Instancing);
+                let debug = !gles_frame.debug_flags().is_empty();
+                let projection_matrix = glam::Mat3::from_cols_array(gles_frame.projection());
+
+                // Update the blur buffers.
+                // We use gl ffi directly to circumvent some stuff done by smithay
+                let blurred_texture = gles_frame.with_context(|gl| unsafe {
+                    super::get_main_buffer_blur(
+                        gl,
+                        &mut fx_buffers,
+                        &shaders,
+                        *config,
+                        projection_matrix,
+                        self.scale as i32,
+                        &vbos,
+                        debug,
+                        supports_instancing,
+                        downscaled_dst,
+                        self.alpha_tex.as_ref(),
+                    )
+                })??;
+
+                gles_frame.render_texture_from_to(
+                    &blurred_texture,
+                    src,
+                    downscaled_dst,
+                    damage,
+                    opaque_regions,
+                    fx_buffers.transform(),
+                    1.,
+                    Some(&program),
+                    &self.uniforms,
+                )
+            }
+        }
     }
 
     fn underlying_storage(&self, _: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {

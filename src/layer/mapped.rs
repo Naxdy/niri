@@ -266,11 +266,12 @@ impl MappedLayer {
             && !target.should_block_out(self.rules.block_out_from))
         .then(|| {
             let fx_buffers = fx_buffers?;
-            let fx_buffers = fx_buffers.borrow();
 
             // TODO: respect sync point?
             let alpha_tex = gles_elems
                 .and_then(|gles_elems| {
+                    let fx_buffers = fx_buffers.borrow();
+
                     let transform = fx_buffers.transform();
 
                     render_to_texture(
@@ -301,11 +302,13 @@ impl MappedLayer {
             Some(
                 self.blur
                     .render(
-                        &fx_buffers,
+                        fx_buffers,
                         blur_sample_area,
                         self.rules.geometry_corner_radius.unwrap_or_default(),
                         self.scale,
                         geo,
+                        !self.rules.blur.x_ray.unwrap_or_default(),
+                        blur_sample_area.loc.to_f64(),
                     )
                     .map(Into::into),
             )

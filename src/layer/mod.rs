@@ -43,6 +43,7 @@ impl ResolvedLayerRules {
                 radius: None,
                 noise: None,
                 ignore_alpha: None,
+                x_ray: None,
             },
             shadow: ShadowRule {
                 off: false,
