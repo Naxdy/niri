@@ -2,6 +2,8 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::time::Instant;
 
 use glam::{Mat3, Vec2};
 use niri_config::CornerRadius;
@@ -12,11 +14,12 @@ use smithay::backend::renderer::gles::{
     ffi, GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform,
 };
 use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
-use smithay::backend::renderer::Texture;
+use smithay::backend::renderer::{Offscreen, Texture};
+use smithay::reexports::gbm::Format;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
-use crate::render_helpers::blur::EffectsFramebufffersUserData;
+use crate::render_helpers::blur::{get_rerender_at, EffectsFramebufffersUserData};
 use crate::render_helpers::render_data::RendererData;
 use crate::render_helpers::renderer::AsGlesFrame;
 use crate::render_helpers::shaders::{mat3_uniform, Shaders};
@@ -26,11 +29,16 @@ use super::{CurrentBuffer, EffectsFramebuffers};
 #[derive(Debug, Clone)]
 enum BlurVariant {
     Optimized {
+        /// Reference to the globally cached optimized blur texture.
         texture: GlesTexture,
     },
     True {
+        /// Individual cache of true blur texture.
+        texture: GlesTexture,
         fx_buffers: EffectsFramebufffersUserData,
         config: niri_config::Blur,
+        /// Timer to limit redraw rate of true blur. Currently set at 150ms fixed (~6.6 fps).
+        rerender_at: Rc<RefCell<Option<Instant>>>,
     },
 }
 
@@ -109,6 +117,7 @@ impl Blur {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
+        renderer: &mut GlesRenderer,
         fx_buffers: EffectsFramebufffersUserData,
         sample_area: Rectangle<i32, Logical>,
         corner_radius: CornerRadius,
@@ -129,6 +138,15 @@ impl Blur {
             true_blur = false;
         }
 
+        let mut tex_buffer = || {
+            renderer
+                .create_buffer(Format::Argb8888, fx_buffers.borrow().effects.size())
+                .inspect_err(|e| {
+                    warn!("failed to allocate buffer for cached true blur texture: {e:?}")
+                })
+                .ok()
+        };
+
         let mut inner = self.inner.borrow_mut();
 
         let Some(inner) = inner.as_mut() else {
@@ -144,6 +162,8 @@ impl Blur {
                     BlurVariant::True {
                         fx_buffers: fx_buffers.clone(),
                         config: self.config,
+                        texture: tex_buffer()?,
+                        rerender_at: Default::default(),
                     }
                 } else {
                     BlurVariant::Optimized {
@@ -163,6 +183,8 @@ impl Blur {
                 BlurVariant::True {
                     fx_buffers: fx_buffers.clone(),
                     config: self.config,
+                    texture: tex_buffer()?,
+                    rerender_at: Default::default(),
                 }
             } else {
                 BlurVariant::Optimized {
@@ -175,23 +197,33 @@ impl Blur {
 
         let fx_buffers = fx_buffers.borrow();
 
+        let variant_needs_rerender = match &inner.variant {
+            BlurVariant::Optimized { texture } => {
+                texture.size().w != fx_buffers.output_size().w
+                    || texture.size().h != fx_buffers.output_size().h
+            }
+            _ => true,
+        };
+
+        // if nothing about our geometry changed, we don't need to re-render blur
         if inner.sample_area == sample_area
             && inner.geometry == geometry
             && inner.scale == scale
             && inner.corner_radius == corner_radius
             && inner.render_loc == render_loc
         {
-            if !matches!(&inner.variant, BlurVariant::Optimized { texture }
-                    if texture.size().w == fx_buffers.output_size().w
-                        && texture.size().h == fx_buffers.output_size().h)
-            {
-                // If we are true blur, or if our output size changed, we need to re-render.
-                // PERF: is there a better solution for true blur?
+            if variant_needs_rerender {
+                // If we are true blur, or if our output size changed, we need to always be
+                // damaged. True blur has a separate internal timer to regulate frame rate.
                 inner.damage_all();
             }
 
             return Some(inner.clone());
         }
+
+        if let BlurVariant::True { rerender_at, .. } = &inner.variant {
+            rerender_at.set(None);
+        };
 
         inner.render_loc = render_loc;
         inner.sample_area = sample_area;
@@ -421,7 +453,12 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                 Some(&program),
                 &self.uniforms,
             ),
-            BlurVariant::True { fx_buffers, config } => {
+            BlurVariant::True {
+                fx_buffers,
+                config,
+                texture,
+                rerender_at,
+            } => {
                 let mut fx_buffers = fx_buffers.borrow_mut();
 
                 fx_buffers.current_buffer = CurrentBuffer::Normal;
@@ -436,24 +473,33 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
 
                 // Update the blur buffers.
                 // We use gl ffi directly to circumvent some stuff done by smithay
-                let blurred_texture = gles_frame.with_context(|gl| unsafe {
-                    super::get_main_buffer_blur(
-                        gl,
-                        &mut fx_buffers,
-                        &shaders,
-                        *config,
-                        projection_matrix,
-                        self.scale as i32,
-                        &vbos,
-                        debug,
-                        supports_instancing,
-                        downscaled_dst,
-                        self.alpha_tex.as_ref(),
-                    )
-                })??;
+                if rerender_at
+                    .borrow()
+                    .map(|r| r < Instant::now())
+                    .unwrap_or(true)
+                {
+                    gles_frame.with_context(|gl| unsafe {
+                        super::get_main_buffer_blur(
+                            gl,
+                            &mut fx_buffers,
+                            &shaders,
+                            *config,
+                            projection_matrix,
+                            self.scale as i32,
+                            &vbos,
+                            debug,
+                            supports_instancing,
+                            downscaled_dst,
+                            texture,
+                            self.alpha_tex.as_ref(),
+                        )
+                    })??;
+
+                    rerender_at.set(get_rerender_at());
+                };
 
                 gles_frame.render_texture_from_to(
-                    &blurred_texture,
+                    texture,
                     src,
                     downscaled_dst,
                     damage,

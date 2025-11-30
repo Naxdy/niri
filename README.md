@@ -26,8 +26,9 @@ Tiled windows will always draw "optimized" or "x-ray" blur, which is rendered fr
 `overlay` layer surfaces will draw "true" blur by default instead, which is rendered using all available screen
 contents.
 
-Note that true blur is rather expensive in terms of GPU load however, so an option exists to also have these surfaces
-draw `x-ray` blur instead.
+Note that true blur is rather expensive in terms of GPU load however (even though its frame rate is limited as long as
+the window isn't being resized / the layer surface doesn't update), so an option exists to also have these surfaces draw
+`x-ray` blur instead.
 
 To set global defaults for blur:
 

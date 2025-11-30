@@ -1931,6 +1931,7 @@ impl<W: LayoutElement> Tile<W> {
             .and_then(|fx_buffers| {
                 self.blur
                     .render(
+                        renderer.as_gles_renderer(),
                         fx_buffers,
                         blur_sample_area.to_i32_round(),
                         radius,

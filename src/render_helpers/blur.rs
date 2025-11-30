@@ -55,9 +55,9 @@ impl CurrentBuffer {
 #[derive(Debug)]
 pub struct EffectsFramebuffers {
     /// Contains the main buffer blurred contents
-    pub optimized_blur: GlesTexture,
+    optimized_blur: GlesTexture,
     /// Whether the optimizer blur buffer is dirty
-    pub optimized_blur_rerender_at: Option<Instant>,
+    optimized_blur_rerender_at: Option<Instant>,
     // /// Contains the original pixels before blurring to draw with in case of artifacts.
     // blur_saved_pixels: GlesTexture,
     // The blur algorithms (dual-kawase) swaps between these two whenever scaling the image
@@ -317,6 +317,7 @@ pub(super) unsafe fn get_main_buffer_blur(
     supports_instancing: bool,
     // dst is the region that we want blur on
     dst: Rectangle<i32, Physical>,
+    texture_cache: &GlesTexture,
     alpha_tex: Option<&GlesTexture>,
 ) -> Result<GlesTexture, GlesError> {
     let tex_size = fx_buffers
@@ -461,6 +462,78 @@ pub(super) unsafe fn get_main_buffer_blur(
             )?;
             fx_buffers.current_buffer.swap();
         }
+    }
+
+    // Copy over cached texture
+    {
+        let mut tex_cache_fbo = 0;
+
+        gl.GenFramebuffers(1, &mut tex_cache_fbo as *mut _);
+        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, tex_cache_fbo);
+        gl.FramebufferTexture2D(
+            ffi::DRAW_FRAMEBUFFER,
+            ffi::COLOR_ATTACHMENT0,
+            ffi::TEXTURE_2D,
+            texture_cache.tex_id(),
+            0,
+        );
+        gl.Clear(ffi::COLOR_BUFFER_BIT);
+        let status = gl.CheckFramebufferStatus(ffi::DRAW_FRAMEBUFFER);
+        if status != ffi::FRAMEBUFFER_COMPLETE {
+            gl.DeleteFramebuffers(1, &mut tex_cache_fbo as *mut _);
+            return Err(GlesError::FramebufferBindingError);
+        }
+        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, tex_cache_fbo);
+
+        let mut render_buffer_fbo = 0;
+
+        gl.GenFramebuffers(1, &mut render_buffer_fbo as *mut _);
+        gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, render_buffer_fbo);
+        gl.FramebufferTexture2D(
+            ffi::READ_FRAMEBUFFER,
+            ffi::COLOR_ATTACHMENT0,
+            ffi::TEXTURE_2D,
+            fx_buffers.effects.tex_id(),
+            0,
+        );
+        gl.Clear(ffi::COLOR_BUFFER_BIT);
+        let status = gl.CheckFramebufferStatus(ffi::READ_FRAMEBUFFER);
+        if status != ffi::FRAMEBUFFER_COMPLETE {
+            gl.DeleteFramebuffers(1, &mut render_buffer_fbo as *mut _);
+            return Err(GlesError::FramebufferBindingError);
+        }
+        gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, render_buffer_fbo);
+
+        let dst_x0 = dst_expanded.loc.x;
+        let dst_y0 = dst_expanded.loc.y;
+        let dst_x1 = dst_expanded.loc.x + dst_expanded.size.w;
+        let dst_y1 = dst_expanded.loc.y + dst_expanded.size.h;
+
+        let src_x0 = dst_x0;
+        let src_y0 = dst_y0;
+        let src_x1 = dst_x1;
+        let src_y1 = dst_y1;
+
+        gl.BlitFramebuffer(
+            src_x0,
+            src_y0,
+            src_x1,
+            src_y1,
+            dst_x0,
+            dst_y0,
+            dst_x1,
+            dst_y1,
+            ffi::COLOR_BUFFER_BIT,
+            ffi::LINEAR,
+        );
+
+        if gl.GetError() == ffi::INVALID_OPERATION {
+            error!("TrueBlur needs GLES3.0 for blitting");
+            return Err(GlesError::BlitError);
+        }
+
+        gl.DeleteFramebuffers(1, &mut tex_cache_fbo as *mut _);
+        gl.DeleteFramebuffers(1, &mut render_buffer_fbo as *mut _);
     }
 
     // Cleanup

@@ -302,6 +302,7 @@ impl MappedLayer {
             Some(
                 self.blur
                     .render(
+                        renderer.as_gles_renderer(),
                         fx_buffers,
                         blur_sample_area,
                         self.rules.geometry_corner_radius.unwrap_or_default(),
