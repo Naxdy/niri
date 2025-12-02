@@ -849,6 +849,8 @@ impl<W: LayoutElement> Tile<W> {
 
         self.fullscreen_backdrop.resize(animated_tile_size);
 
+        self.blur.update_render_elements(true);
+
         match &self.window {
             WindowInner::Single(_) => {
                 self.tab_indicator.update_render_elements(

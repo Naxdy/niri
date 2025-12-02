@@ -573,6 +573,13 @@ impl Mapped {
     pub fn is_urgent(&self) -> bool {
         self.is_urgent
     }
+
+    /// Set the preferred blurred state of this window.
+    pub fn set_blurred(&mut self, new_blurred: bool) {
+        if !self.rules.blur.off {
+            self.rules.blur.on = new_blurred;
+        }
+    }
 }
 
 impl Drop for Mapped {
