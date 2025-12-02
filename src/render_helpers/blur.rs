@@ -77,7 +77,7 @@ pub struct EffectsFramebuffers {
     transform: Transform,
 }
 
-pub type EffectsFramebufffersUserData = Rc<RefCell<EffectsFramebuffers>>;
+pub type EffectsFramebuffersUserData = Rc<RefCell<EffectsFramebuffers>>;
 
 fn get_rerender_at() -> Option<Instant> {
     Some(Instant::now() + Duration::from_millis(150))
@@ -88,11 +88,11 @@ impl EffectsFramebuffers {
     pub fn get<'a>(output: &'a Output) -> Option<RefMut<'a, Self>> {
         output
             .user_data()
-            .get::<EffectsFramebufffersUserData>()
+            .get::<EffectsFramebuffersUserData>()
             .map(|e| e.borrow_mut())
     }
 
-    pub fn get_user_data(output: &Output) -> Option<EffectsFramebufffersUserData> {
+    pub fn get_user_data(output: &Output) -> Option<EffectsFramebuffersUserData> {
         output.user_data().get().cloned()
     }
 

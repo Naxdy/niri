@@ -23,7 +23,7 @@ use crate::layout::tab_indicator::{TabIndicator, TabIndicatorRenderElement, TabI
 use crate::layout::SizingMode;
 use crate::niri_render_elements;
 use crate::render_helpers::blur::element::{Blur, BlurRenderElement};
-use crate::render_helpers::blur::EffectsFramebufffersUserData;
+use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::clipped_surface::{ClippedSurfaceRenderElement, RoundedCornerDamage};
 use crate::render_helpers::damage::ExtraDamage;
@@ -1605,7 +1605,7 @@ impl<W: LayoutElement> Tile<W> {
         real_location: Point<f64, Logical>,
         focus_ring: bool,
         target: RenderTarget,
-        fx_buffers: Option<EffectsFramebufffersUserData>,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
         #[allow(unused)] overview_zoom: Option<f64>, // TODO: needed for true blur
     ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
         let _span = tracy_client::span!("Tile::render_inner");
@@ -1960,7 +1960,7 @@ impl<W: LayoutElement> Tile<W> {
         location: Point<f64, Logical>,
         focus_ring: bool,
         target: RenderTarget,
-        fx_buffers: Option<EffectsFramebufffersUserData>,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
         overview_zoom: Option<f64>,
     ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
         let _span = tracy_client::span!("Tile::render");

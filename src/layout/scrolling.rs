@@ -19,7 +19,7 @@ use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::layout::SizingMode;
 use crate::niri_render_elements;
-use crate::render_helpers::blur::EffectsFramebufffersUserData;
+use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::RenderTarget;
 use crate::utils::transaction::{Transaction, TransactionBlocker};
@@ -3247,7 +3247,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         renderer: &mut R,
         target: RenderTarget,
         focus_ring: bool,
-        fx_buffers: Option<EffectsFramebufffersUserData>,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
         overview_zoom: f64,
     ) -> Vec<ScrollingSpaceRenderElement<R>> {
         let mut rv = vec![];
