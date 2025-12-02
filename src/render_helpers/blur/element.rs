@@ -19,7 +19,7 @@ use smithay::reexports::gbm::Format;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
-use crate::render_helpers::blur::{get_rerender_at, EffectsFramebufffersUserData};
+use crate::render_helpers::blur::{get_rerender_at, EffectsFramebuffersUserData};
 use crate::render_helpers::render_data::RendererData;
 use crate::render_helpers::renderer::AsGlesFrame;
 use crate::render_helpers::shaders::{mat3_uniform, Shaders};
@@ -35,7 +35,7 @@ enum BlurVariant {
     True {
         /// Individual cache of true blur texture.
         texture: GlesTexture,
-        fx_buffers: EffectsFramebufffersUserData,
+        fx_buffers: EffectsFramebuffersUserData,
         config: niri_config::Blur,
         /// Timer to limit redraw rate of true blur. Currently set at 150ms fixed (~6.6 fps).
         rerender_at: Rc<RefCell<Option<Instant>>>,
@@ -125,7 +125,7 @@ impl Blur {
     pub fn render(
         &self,
         renderer: &mut GlesRenderer,
-        fx_buffers: EffectsFramebufffersUserData,
+        fx_buffers: EffectsFramebuffersUserData,
         sample_area: Rectangle<i32, Logical>,
         corner_radius: CornerRadius,
         scale: f64,

@@ -17,7 +17,7 @@ use super::{
 };
 use crate::animation::{Animation, Clock};
 use crate::niri_render_elements;
-use crate::render_helpers::blur::EffectsFramebufffersUserData;
+use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::RenderTarget;
 use crate::utils::transaction::TransactionBlocker;
@@ -1141,7 +1141,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         view_rect: Rectangle<f64, Logical>,
         target: RenderTarget,
         focus_ring: bool,
-        fx_buffers: Option<EffectsFramebufffersUserData>,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
         overview_zoom: f64,
     ) -> Vec<FloatingSpaceRenderElement<R>> {
         let mut rv = Vec::new();

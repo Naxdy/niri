@@ -154,7 +154,7 @@ use crate::protocols::virtual_pointer::VirtualPointerManagerState;
 use crate::pw_utils::{Cast, PipeWire};
 #[cfg(feature = "xdp-gnome-screencast")]
 use crate::pw_utils::{CastSizeChange, PwToNiri};
-use crate::render_helpers::blur::{EffectsFramebuffers, EffectsFramebufffersUserData};
+use crate::render_helpers::blur::{EffectsFramebuffers, EffectsFramebuffersUserData};
 use crate::render_helpers::debug::draw_opaque_regions;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -4593,7 +4593,7 @@ impl Niri {
         layer: Layer,
         elements: &mut SplitElements<LayerSurfaceRenderElement<R>>,
         for_backdrop: bool,
-        fx_buffers: Option<EffectsFramebufffersUserData>,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
     ) {
         // LayerMap returns layers in reverse stacking order.
         let iter = layer_map.layers_on(layer).rev().filter_map(|surface| {

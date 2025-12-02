@@ -15,7 +15,7 @@ use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
 use crate::render_helpers::blur::element::{Blur, BlurRenderElement, CommitTracker};
-use crate::render_helpers::blur::EffectsFramebufffersUserData;
+use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::clipped_surface::ClippedSurfaceRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
@@ -190,7 +190,7 @@ impl MappedLayer {
         renderer: &mut R,
         location: Point<f64, Logical>,
         target: RenderTarget,
-        fx_buffers: Option<EffectsFramebufffersUserData>,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
     ) -> SplitElements<LayerSurfaceRenderElement<R>> {
         let mut rv = SplitElements::default();
 
