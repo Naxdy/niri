@@ -131,6 +131,8 @@ impl MappedLayer {
         // FIXME: is_active based on keyboard focus?
         self.shadow
             .update_render_elements(size, true, radius, self.scale, 1.);
+
+        self.blur.update_render_elements(self.rules.blur.on);
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
@@ -325,5 +327,11 @@ impl MappedLayer {
         rv.normal.extend(blur_elem);
 
         rv
+    }
+
+    pub fn set_blurred(&mut self, new_blurred: bool) {
+        if !self.rules.blur.off {
+            self.rules.blur.on = new_blurred;
+        }
     }
 }

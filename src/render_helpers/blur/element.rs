@@ -116,6 +116,11 @@ impl Blur {
         self.inner.set(None);
     }
 
+    pub fn update_render_elements(&mut self, is_active: bool) {
+        self.config.on = is_active;
+    }
+
+    // TODO: separate some of this logic out to [`Blur::update_render_elements`]
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
@@ -128,7 +133,7 @@ impl Blur {
         mut true_blur: bool,
         render_loc: Point<f64, Logical>,
     ) -> Option<BlurRenderElement> {
-        if !self.config.on {
+        if !self.config.on || self.config.passes == 0 || self.config.noise.0 == 0. {
             return None;
         }
 
