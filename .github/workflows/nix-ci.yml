@@ -1,0 +1,28 @@
+name: Nix CI
+
+on: ["pull_request"]
+
+concurrency:
+  group: nix-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Run flake checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - uses: cachix/install-nix-action@v27
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: "extra-experimental-features = nix-command flakes ca-derivations"
+
+      - uses: cachix/cachix-action@v14
+        with:
+          name: naxdy-foss
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Run `nix flake check`
+        run: |
+          nix flake check . --print-build-logs --max-jobs auto
