@@ -125,6 +125,10 @@
                   ++ [
                     pkgs.glib
                     pkgs.pixman
+
+                    # for `niri-visual-tests`
+                    pkgs.libadwaita
+                    pkgs.gtk4
                   ]
                 )
               );
