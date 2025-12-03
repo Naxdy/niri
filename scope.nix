@@ -1,4 +1,5 @@
 {
+  advisory-db,
   crane,
   fenix,
   generateSplicesForMkScope,
@@ -35,7 +36,10 @@ makeScopeWithSplicing' {
         ];
     in
     {
-      inherit self;
+      inherit
+        advisory-db
+        self
+        ;
 
       craneLib = (crane.mkLib final).overrideToolchain mkToolchain;
       rustToolchain = mkToolchain final;

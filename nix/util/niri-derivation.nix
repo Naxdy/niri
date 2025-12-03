@@ -1,25 +1,26 @@
 {
-  craneLib,
-  lib,
+  advisory-db,
   autoPatchelfHook,
-  installShellFiles,
-  pkg-config,
-  rustPlatform,
-  libGL,
-  wayland,
-  glib,
-  pixman,
   cairo,
+  craneLib,
   dbus,
+  glib,
+  installShellFiles,
+  lib,
+  libGL,
   libdisplay-info,
-  libinput,
-  seatd,
-  libxkbcommon,
   libgbm,
+  libinput,
+  libxkbcommon,
   pango,
   pipewire,
-  systemd,
+  pixman,
+  pkg-config,
+  rustPlatform,
+  seatd,
   stdenv,
+  systemd,
+  wayland,
 
   self,
 }:
@@ -163,6 +164,12 @@ craneLib.buildPackage (
       tests = (args.passthru.tests or { }) // {
         cargo-test = craneLib.cargoTest craneBuildArgs;
         cargo-clippy = craneLib.cargoClippy craneBuildArgs;
+        cargo-audit = craneLib.cargoAudit (
+          craneBuildArgs
+          // {
+            inherit advisory-db;
+          }
+        );
       };
     };
 

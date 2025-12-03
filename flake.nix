@@ -9,6 +9,11 @@
     treefmt-nix.url = "github:numtide/treefmt-nix";
 
     crane.url = "github:ipetkov/crane";
+
+    advisory-db = {
+      url = "github:rustsec/advisory-db";
+      flake = false;
+    };
   };
 
   outputs =
@@ -18,6 +23,7 @@
       treefmt-nix,
       fenix,
       crane,
+      advisory-db,
     }:
     let
       supportedSystems = [
@@ -150,6 +156,7 @@
       overlays.default = final: _: {
         niriPackages = final.callPackage ./scope.nix {
           inherit
+            advisory-db
             crane
             fenix
             self
