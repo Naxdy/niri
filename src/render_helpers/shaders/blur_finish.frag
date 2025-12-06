@@ -31,6 +31,9 @@ uniform mat3 input_to_geo;
 uniform vec2 geo_size;
 uniform float niri_scale;
 uniform float noise;
+uniform float brightness;
+uniform float contrast;
+uniform float saturation;
 uniform float ignore_alpha;
 
 float rounding_alpha(vec2 coords, vec2 size) {
@@ -66,6 +69,35 @@ float hash(vec2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+// Taken from https://github.com/wlrfx/scenefx/blob/main/render/fx_renderer/gles3/shaders/blur_effects.frag
+mat4 brightnessMatrix() {
+    float b = brightness - 1.0;
+    return mat4(1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                b, b, b, 1);
+}
+mat4 contrastMatrix() {
+    float t = (1.0 - contrast) / 2.0;
+    return mat4(contrast, 0, 0, 0,
+                0, contrast, 0, 0,
+                0, 0, contrast, 0,
+                t, t, t, 1);
+}
+mat4 saturationMatrix() {
+    vec3 luminance = vec3(0.3086, 0.6094, 0.0820) * (1.0 - saturation);
+    vec3 red = vec3(luminance.x);
+    red.x += saturation;
+    vec3 green = vec3(luminance.y);
+    green.y += saturation;
+    vec3 blue = vec3(luminance.z);
+    blue.z += saturation;
+    return mat4(red, 0,
+                green, 0,
+                blue, 0,
+                0, 0, 0, 1);
+}
+
 void main() {
     if (alpha <= 0.0) {
       discard;
@@ -82,6 +114,7 @@ void main() {
 
     // Sample the texture.
     vec4 color = texture2D(tex, v_coords);
+    color = brightnessMatrix() * contrastMatrix() * saturationMatrix() * color;
 
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0);

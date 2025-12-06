@@ -107,6 +107,9 @@ impl Shaders {
                 &[
                     UniformName::new("alpha", UniformType::_1f),
                     UniformName::new("noise", UniformType::_1f),
+                    UniformName::new("brightness", UniformType::_1f),
+                    UniformName::new("contrast", UniformType::_1f),
+                    UniformName::new("saturation", UniformType::_1f),
                     UniformName::new("niri_scale", UniformType::_1f),
                     UniformName::new("geo_size", UniformType::_2f),
                     UniformName::new("corner_radius", UniformType::_4f),
@@ -115,7 +118,7 @@ impl Shaders {
                     UniformName::new("ignore_alpha", UniformType::_1f),
                 ],
             )
-            .map_err(|e| warn!("error compiling clipped surface shader: {e:?}"))
+            .map_err(|e| warn!("error compiling blur shader: {e:?}"))
             .ok();
 
         let blur = BlurShaders::compile(renderer).expect("blur shaders should always compile");
