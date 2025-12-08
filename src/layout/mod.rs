@@ -2336,6 +2336,24 @@ impl<W: LayoutElement> Layout<W> {
         self.focus_with_output().map(|(win, _out)| win)
     }
 
+    pub fn is_focus_floating(&self) -> bool {
+        if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
+            return move_.tile.focused_window().is_floating();
+        }
+
+        let MonitorSet::Normal {
+            monitors,
+            active_monitor_idx,
+            ..
+        } = &self.monitor_set
+        else {
+            return false;
+        };
+
+        let mon = &monitors[*active_monitor_idx];
+        mon.floating_is_active()
+    }
+
     pub fn focus_with_output(&self) -> Option<(&W, &Output)> {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             return Some((move_.tile.focused_window(), &move_.output));

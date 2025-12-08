@@ -1047,6 +1047,10 @@ impl<W: LayoutElement> Monitor<W> {
         self.active_workspace_ref().active_window()
     }
 
+    pub fn floating_is_active(&self) -> bool {
+        self.active_workspace_ref().floating_is_active()
+    }
+
     pub fn advance_animations(&mut self) {
         match &mut self.workspace_switch {
             Some(WorkspaceSwitch::Animation(anim)) => {
