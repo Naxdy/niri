@@ -849,7 +849,8 @@ impl<W: LayoutElement> Tile<W> {
 
         self.fullscreen_backdrop.resize(animated_tile_size);
 
-        self.blur.update_render_elements(true);
+        self.blur
+            .update_render_elements(self.focused_window().rules().blur.on);
 
         match &self.window {
             WindowInner::Single(_) => {

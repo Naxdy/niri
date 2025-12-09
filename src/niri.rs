@@ -4569,7 +4569,7 @@ impl Niri {
 
         if let Some(mut fx_buffers) = EffectsFramebuffers::get(output) {
             let blur_config = self.config.borrow().layout.blur;
-            if blur_config.on && blur_config.passes > 0 {
+            if blur_config.radius.0 > 0. && blur_config.passes > 0 {
                 if let Err(e) = fx_buffers.update_optimized_blur_buffer(
                     renderer.as_gles_renderer(),
                     layer_map,

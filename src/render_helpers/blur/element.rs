@@ -116,8 +116,10 @@ impl Blur {
         self.inner.set(None);
     }
 
-    pub fn update_render_elements(&mut self, is_active: bool) {
-        self.config.on = is_active;
+    pub fn update_render_elements(&mut self, activate: bool) {
+        if activate {
+            self.config.on = true;
+        }
     }
 
     // TODO: separate some of this logic out to [`Blur::update_render_elements`]
@@ -133,7 +135,7 @@ impl Blur {
         mut true_blur: bool,
         render_loc: Point<f64, Logical>,
     ) -> Option<BlurRenderElement> {
-        if !self.config.on || self.config.passes == 0 || self.config.noise.0 == 0. {
+        if !self.config.on || self.config.passes == 0 || self.config.radius.0 == 0. {
             return None;
         }
 
@@ -210,6 +212,7 @@ impl Blur {
                     || texture.size().h != fx_buffers.output_size().h
             }
             BlurVariant::True { rerender_at, .. } => {
+                // TODO: damage tracking of other render elements should happen here
                 rerender_at.borrow().is_none_or(|r| r < Instant::now())
             }
         };
