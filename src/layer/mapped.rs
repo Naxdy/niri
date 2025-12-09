@@ -312,6 +312,7 @@ impl MappedLayer {
                         geo,
                         !self.rules.blur.x_ray.unwrap_or_default(),
                         blur_sample_area.loc.to_f64(),
+                        None,
                     )
                     .map(Into::into),
             )

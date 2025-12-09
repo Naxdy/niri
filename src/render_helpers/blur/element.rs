@@ -126,12 +126,13 @@ impl Blur {
         &self,
         renderer: &mut GlesRenderer,
         fx_buffers: EffectsFramebuffersUserData,
-        sample_area: Rectangle<i32, Logical>,
+        destination_area: Rectangle<i32, Logical>,
         corner_radius: CornerRadius,
         scale: f64,
         geometry: Rectangle<f64, Logical>,
         mut true_blur: bool,
         render_loc: Point<f64, Logical>,
+        overview_zoom: Option<f64>,
     ) -> Option<BlurRenderElement> {
         if !self.config.on || self.config.passes == 0 || self.config.radius.0 == 0. {
             return None;
@@ -144,6 +145,17 @@ impl Blur {
         ) {
             true_blur = false;
         }
+
+        let sample_area = if let (Some(zoom), true) = (overview_zoom, true_blur) {
+            let mut sample_area = destination_area.to_f64().upscale(zoom);
+            let center =
+                (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.).to_point();
+            sample_area.loc.x = center.x - (center.x - destination_area.loc.x as f64) * zoom;
+            sample_area.loc.y = center.y - (center.y - destination_area.loc.y as f64) * zoom;
+            sample_area.to_i32_round()
+        } else {
+            destination_area
+        };
 
         let mut tex_buffer = || {
             renderer
@@ -160,6 +172,7 @@ impl Blur {
             let elem = BlurRenderElement::new(
                 &fx_buffers.borrow(),
                 sample_area,
+                destination_area,
                 corner_radius,
                 scale,
                 self.config,
@@ -224,6 +237,7 @@ impl Blur {
 
         // if nothing about our geometry changed, we don't need to re-render blur
         if inner.sample_area == sample_area
+            && inner.destination_area == destination_area
             && inner.geometry == geometry
             && inner.scale == scale
             && inner.corner_radius == corner_radius
@@ -253,6 +267,7 @@ impl Blur {
 
         inner.render_loc = render_loc;
         inner.sample_area = sample_area;
+        inner.destination_area = destination_area;
         inner.alpha_tex = self.alpha_tex.borrow().clone();
         inner.scale = scale;
         inner.geometry = geometry;
@@ -268,6 +283,7 @@ pub struct BlurRenderElement {
     id: Id,
     uniforms: Vec<Uniform<'static>>,
     sample_area: Rectangle<i32, Logical>,
+    destination_area: Rectangle<i32, Logical>,
     alpha_tex: Option<GlesTexture>,
     scale: f64,
     commit: CommitCounter,
@@ -290,6 +306,7 @@ impl BlurRenderElement {
     fn new(
         fx_buffers: &EffectsFramebuffers,
         sample_area: Rectangle<i32, Logical>,
+        destination_area: Rectangle<i32, Logical>,
         corner_radius: CornerRadius,
         scale: f64,
         config: niri_config::Blur,
@@ -303,6 +320,7 @@ impl BlurRenderElement {
             uniforms: Vec::with_capacity(7),
             alpha_tex,
             sample_area,
+            destination_area,
             scale,
             corner_radius,
             geometry,
@@ -319,12 +337,13 @@ impl BlurRenderElement {
     fn update_uniforms(&mut self, fx_buffers: &EffectsFramebuffers, config: &niri_config::Blur) {
         let transform = Transform::Normal;
 
-        let elem_geo: Rectangle<i32, _> = self.sample_area.to_physical_precise_round(self.scale);
+        let elem_geo: Rectangle<i32, _> =
+            self.destination_area.to_physical_precise_round(self.scale);
         let elem_geo_loc = Vec2::new(elem_geo.loc.x as f32, elem_geo.loc.y as f32);
         let elem_geo_size = Vec2::new(elem_geo.size.w as f32, elem_geo.size.h as f32);
 
-        let view_src = self.sample_area; // CORRECT
-        let buf_size = fx_buffers.output_size().to_f64().to_logical(self.scale); // CORRECT
+        let view_src = self.sample_area;
+        let buf_size = fx_buffers.output_size().to_f64().to_logical(self.scale);
         let buf_size = Vec2::new(buf_size.w as f32, buf_size.h as f32);
 
         let geo = self.geometry.to_physical_precise_round(self.scale);
@@ -418,7 +437,7 @@ impl Element for BlurRenderElement {
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
         Rectangle::new(
             self.render_loc.to_physical_precise_round(scale),
-            self.sample_area
+            self.destination_area
                 .to_f64()
                 .to_physical_precise_round(scale)
                 .size,

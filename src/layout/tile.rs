@@ -1607,7 +1607,7 @@ impl<W: LayoutElement> Tile<W> {
         focus_ring: bool,
         target: RenderTarget,
         fx_buffers: Option<EffectsFramebuffersUserData>,
-        #[allow(unused)] overview_zoom: Option<f64>, // TODO: needed for true blur
+        overview_zoom: Option<f64>,
     ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
         let _span = tracy_client::span!("Tile::render_inner");
 
@@ -1946,6 +1946,7 @@ impl<W: LayoutElement> Tile<W> {
                         self.focused_window().is_floating()
                             && !self.focused_window().rules().blur.x_ray.unwrap_or_default(),
                         window_render_loc,
+                        overview_zoom,
                     )
                     .map(Into::into)
             })
