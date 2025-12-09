@@ -1661,7 +1661,10 @@ impl<W: LayoutElement> Tile<W> {
         // In certain passes, `location` is set to (0, 0), e.g. to "anchor" the tile to the cursor
         // during interactive move. However, this messes with our blur texture, so we need the
         // _actual_ render location to know where to sample the blur from.
-        let blur_sample_area = Rectangle::new(real_location + window_loc, animated_window_size);
+        let blur_sample_area = Rectangle::new(
+            real_location + window_loc + tab_indicator_offset,
+            animated_window_size,
+        );
 
         self.window_size_override.increment();
 
