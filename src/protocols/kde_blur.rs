@@ -87,9 +87,8 @@ where
         match request {
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur_manager::Request::Create { id, surface } => {
                 data_init.init(id, OrgKdeKwinBlurState {
-                    surface: surface.clone()
+                    surface
                 });
-
             },
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur_manager::Request::Unset { surface } => {
                 state.disable_blur(&surface);

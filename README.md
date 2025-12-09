@@ -90,10 +90,11 @@ layer-rule {
 >
 > Blur has to be enabled on a per-window or per-layer basis, i.e. setting `layout { blur { on } }` does nothing.
 
-This fork also partially implements the [KDE blur](https://wayland.app/protocols/kde-blur) protocol, meaning that
-certain KDE apps such as plasmashell or krunner are capable of blurring themselves natively, given that you've defined
-nonzero `radius` and `passes` for blur elsewhere in your config. This doesn't require you to set `blur { on }` in your
-window / layer rules, but having `blur { off }` will disable this behavior entirely.
+This fork also partially implements the [KDE blur](https://wayland.app/protocols/kde-blur) protocol as well as the
+[background effect](https://wayland.app/protocols/ext-background-effect-v1) protocol, meaning that certain apps such as
+KDE apps (e.g. plasmashell or krunner), or other compliant apps, are capable of blurring themselves natively, given that
+you've defined nonzero `radius` and `passes` for blur elsewhere in your config. This doesn't require you to set
+`blur { on }` in your window / layer rules, but having `blur { off }` will disable this behavior entirely.
 
 However, this fork lacks the ability to more granularly define blur region, which will likely result in oversized blur.
 To mitigate this, it is recommended to set `ignore-alpha` in your config. Below you'll find a config for sensible blur
@@ -118,6 +119,13 @@ layer-rule {
 }
 ```
 
+> [!NOTE]
+>
+> Config settings are prioritized over client requests, meaning if you have `blur { on }` for a given window, but it
+> requests to be un-blurred, your config setting will be prioritized and it will remain blurred.
+>
+> The same is true for `blur { off }`; such clients will never be able to blur themselves.
+
 #### Caveats
 
 - True blur currently only works for horizontal monitor configurations. When using any sort of 90 or 270 degree
@@ -126,8 +134,8 @@ layer-rule {
   the way its performance optimizations are handled. This will be addressed in the future.
 - True blur will incur a significant performance cost when rendered behind a window that updates frequently, e.g.
   because it's being moved / resized often.
-- Blur is currently only possible to be enabled through the config outside of KDE apps. Implementing the
-  [background effect](https://wayland.app/protocols/ext-background-effect-v1) protocol is planned though.
+- Although wayland protocols to enable blur are implemented, this fork currently lacks the ability for clients to more
+  granularly specify the desired blur region, meaning right now it's "all or nothing".
 
 ### Window Groups (Tabbed Tiles)
 

@@ -292,7 +292,7 @@ pub trait LayoutElement {
         None
     }
 
-    fn set_kde_wants_blur(&mut self, _new_blurred: bool) {}
+    fn set_proto_wants_blur(&mut self, _new_blurred: bool) {}
 
     fn wants_blur(&self) -> bool {
         false
