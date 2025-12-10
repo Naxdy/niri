@@ -369,6 +369,9 @@ impl BlurRenderElement {
             Uniform::new("geo_size", geo_size.to_array()),
             Uniform::new("niri_scale", self.scale as f32),
             Uniform::new("noise", config.noise.0 as f32),
+            Uniform::new("brightness", config.brightness.0 as f32),
+            Uniform::new("contrast", config.contrast.0 as f32),
+            Uniform::new("saturation", config.saturation.0 as f32),
             mat3_uniform("input_to_geo", input_to_geo),
             Uniform::new(
                 "ignore_alpha",

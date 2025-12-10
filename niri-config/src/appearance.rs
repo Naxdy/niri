@@ -344,6 +344,9 @@ pub struct Blur {
     pub passes: u32,
     pub radius: FloatOrInt<0, 1024>,
     pub noise: FloatOrInt<0, 1024>,
+    pub brightness: FloatOrInt<0, 2>,
+    pub contrast: FloatOrInt<0, 1024>,
+    pub saturation: FloatOrInt<0, 1024>,
     pub ignore_alpha: FloatOrInt<0, 1>,
     pub x_ray: bool,
 }
@@ -355,6 +358,9 @@ impl Default for Blur {
             passes: 0,
             radius: FloatOrInt(0.0),
             noise: FloatOrInt(0.0),
+            brightness: FloatOrInt(1.0),
+            contrast: FloatOrInt(1.0),
+            saturation: FloatOrInt(1.0),
             ignore_alpha: FloatOrInt(0.0),
             x_ray: false,
         }
@@ -368,7 +374,17 @@ impl MergeWith<BlurRule> for Blur {
             self.on = false;
         }
 
-        merge_clone!((self, part), passes, radius, noise, ignore_alpha, x_ray);
+        merge_clone!(
+            (self, part),
+            passes,
+            radius,
+            noise,
+            brightness,
+            contrast,
+            saturation,
+            ignore_alpha,
+            x_ray
+        );
     }
 }
 
@@ -693,6 +709,12 @@ pub struct BlurRule {
     #[knuffel(child, unwrap(argument))]
     pub noise: Option<FloatOrInt<0, 1024>>,
     #[knuffel(child, unwrap(argument))]
+    pub brightness: Option<FloatOrInt<0, 2>>,
+    #[knuffel(child, unwrap(argument))]
+    pub contrast: Option<FloatOrInt<0, 1024>>,
+    #[knuffel(child, unwrap(argument))]
+    pub saturation: Option<FloatOrInt<0, 1024>>,
+    #[knuffel(child, unwrap(argument))]
     pub ignore_alpha: Option<FloatOrInt<0, 1>>,
     #[knuffel(child, unwrap(argument))]
     pub x_ray: Option<bool>,
@@ -753,7 +775,17 @@ impl MergeWith<Self> for BlurRule {
     fn merge_with(&mut self, part: &Self) {
         merge_on_off!((self, part));
 
-        merge_clone_opt!((self, part), passes, radius, noise, ignore_alpha, x_ray);
+        merge_clone_opt!(
+            (self, part),
+            passes,
+            radius,
+            noise,
+            brightness,
+            contrast,
+            saturation,
+            ignore_alpha,
+            x_ray
+        );
     }
 }
 
