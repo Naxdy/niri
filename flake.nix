@@ -114,6 +114,7 @@
 
             packages =
               let
+                # we need to use `addr2line` from `llvmPackages` instead of `binutils`, hence the override
                 perf = pkgs.perf.override {
                   binutils-unwrapped = pkgs.llvmPackages.bintools-unwrapped;
                 };
