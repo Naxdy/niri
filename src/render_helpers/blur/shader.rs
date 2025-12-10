@@ -58,7 +58,7 @@ impl BlurShader {
         }
     }
 
-    pub(super) unsafe fn compile(gl: &ffi::Gles2, src: &str) -> Result<Self, GlesError> {
+    pub(super) unsafe fn compile(gl: &ffi::Gles2, src: &str) -> Result<Self, GlesError> { unsafe {
         let create_variant = |defines: &[&str]| -> Result<BlurShaderVariant, GlesError> {
             let shader = src.replace(
                 "//_DEFINES_",
@@ -158,7 +158,7 @@ impl BlurShader {
             create_variant(&[])?,
             create_variant(&["NO_ALPHA"])?,
         ])))
-    }
+    }}
 }
 
 #[derive(Clone, Debug)]

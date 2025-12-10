@@ -2067,49 +2067,54 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             // only the target is not grouped, in this case we expel the given window
             let source_tile = &mut self.columns[source_col_idx].tiles[source_tile_idx];
 
-            if let Some(ungrouped) = source_tile.ungroup_single(&id) {
-                let to_update = source_tile.focused_window().id().clone();
-                let extra_offset = source_tile.tab_indicator_content_offset();
-                // we need to refresh the window here to avoid triggering its resize animation
-                source_tile.focused_window().refresh();
-                self.update_window(&to_update, None);
+            match source_tile.ungroup_single(&id) {
+                Some(ungrouped) => {
+                    let to_update = source_tile.focused_window().id().clone();
+                    let extra_offset = source_tile.tab_indicator_content_offset();
+                    // we need to refresh the window here to avoid triggering its resize animation
+                    source_tile.focused_window().refresh();
+                    self.update_window(&to_update, None);
 
-                let new_tile = Tile::new(
-                    ungrouped,
-                    self.view_size,
-                    self.scale,
-                    self.clock.clone(),
-                    self.options.clone(),
-                );
+                    let new_tile = Tile::new(
+                        ungrouped,
+                        self.view_size,
+                        self.scale,
+                        self.clock.clone(),
+                        self.options.clone(),
+                    );
 
-                let final_target_tile_idx = target_tile_idx
-                    + if direction == WindowMoveDirection::Up {
-                        1
-                    } else {
-                        0
-                    };
+                    let final_target_tile_idx = target_tile_idx
+                        + if direction == WindowMoveDirection::Up {
+                            1
+                        } else {
+                            0
+                        };
 
-                self.add_tile_to_column(
-                    target_col_idx,
-                    Some(final_target_tile_idx),
-                    new_tile,
-                    true,
-                );
+                    self.add_tile_to_column(
+                        target_col_idx,
+                        Some(final_target_tile_idx),
+                        new_tile,
+                        true,
+                    );
 
-                let target_position = self
-                    .tile_render_pos(target_col_idx, final_target_tile_idx)
-                    .expect("should determine source tile render pos");
+                    let target_position = self
+                        .tile_render_pos(target_col_idx, final_target_tile_idx)
+                        .expect("should determine source tile render pos");
 
-                let inserted_tile = &mut self.columns[target_col_idx].tiles[final_target_tile_idx];
-                inserted_tile.animate_move_from(source_position - target_position + extra_offset);
+                    let inserted_tile =
+                        &mut self.columns[target_col_idx].tiles[final_target_tile_idx];
+                    inserted_tile
+                        .animate_move_from(source_position - target_position + extra_offset);
 
-                if source_col_idx != target_col_idx {
-                    self.columns[source_col_idx].update_tile_sizes(false);
+                    if source_col_idx != target_col_idx {
+                        self.columns[source_col_idx].update_tile_sizes(false);
+                    }
                 }
-            } else {
-                // in this case the tile turns from grouped to single, so all we should do is
-                // ensure it gets updated
-                self.update_window(&id, None);
+                _ => {
+                    // in this case the tile turns from grouped to single, so all we should do is
+                    // ensure it gets updated
+                    self.update_window(&id, None);
+                }
             }
         } else {
             // whether we will remove an entire column _if_ we remove a tile
@@ -2668,7 +2673,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     // HACK: pass a self.data iterator in manually as a workaround for the lack of method partial
     // borrowing. Note that this method's return value does not borrow the entire &Self!
-    fn column_xs(&self, data: impl Iterator<Item = ColumnData>) -> impl Iterator<Item = f64> {
+    fn column_xs<D: Iterator<Item = ColumnData>>(
+        &self,
+        data: D,
+    ) -> impl Iterator<Item = f64> + use<W, D> {
         let gaps = self.options.layout.gaps;
 
         // Chain with a dummy value to be able to get one past all columns' X.
@@ -2688,10 +2696,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             .unwrap()
     }
 
-    fn column_xs_in_render_order(
+    fn column_xs_in_render_order<D: Iterator<Item = ColumnData>>(
         &self,
-        data: impl Iterator<Item = ColumnData>,
-    ) -> impl Iterator<Item = f64> {
+        data: D,
+    ) -> impl Iterator<Item = f64> + use<W, D> {
         let active_idx = self.active_column_idx;
         let active_pos = self.column_x(active_idx);
         let offsets = self
@@ -5287,10 +5295,10 @@ impl<W: LayoutElement> Column<W> {
 
     // HACK: pass a self.data iterator in manually as a workaround for the lack of method partial
     // borrowing. Note that this method's return value does not borrow the entire &Self!
-    fn tile_offsets_iter(
+    fn tile_offsets_iter<D: Iterator<Item = TileData>>(
         &self,
-        data: impl Iterator<Item = TileData>,
-    ) -> impl Iterator<Item = Point<f64, Logical>> {
+        data: D,
+    ) -> impl Iterator<Item = Point<f64, Logical>> + use<W, D> {
         // FIXME: this should take into account always-center-single-column, which means that
         // Column should somehow know when it is being centered due to being the single column on
         // the workspace or some other reason.
@@ -5339,10 +5347,10 @@ impl<W: LayoutElement> Column<W> {
         self.tile_offsets().nth(tile_idx).unwrap()
     }
 
-    fn tile_offsets_in_render_order(
+    fn tile_offsets_in_render_order<D: Iterator<Item = TileData>>(
         &self,
-        data: impl Iterator<Item = TileData>,
-    ) -> impl Iterator<Item = Point<f64, Logical>> {
+        data: D,
+    ) -> impl Iterator<Item = Point<f64, Logical>> + use<W, D> {
         let active_idx = self.active_tile_idx;
         let active_pos = self.tile_offset(active_idx);
         let offsets = self

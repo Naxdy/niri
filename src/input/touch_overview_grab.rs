@@ -80,14 +80,13 @@ impl TouchOverviewGrab {
                         }
                     };
 
-                    let ws_idx = if let Some((Some(mon), ws_idx, _)) =
-                        layout.workspaces().find(|(_, _, ws)| ws_matches(ws))
-                    {
+                    let ws_idx = match layout.workspaces().find(|(_, _, ws)| ws_matches(ws))
+                    { Some((Some(mon), ws_idx, _)) => {
                         // The workspace could've moved to a different output in the meantime.
                         (*mon.output() == self.output).then_some(ws_idx)
-                    } else {
+                    } _ => {
                         None
-                    };
+                    }};
 
                     if let Some(ws_idx) = ws_idx {
                         layout.toggle_overview_to_workspace(ws_idx);

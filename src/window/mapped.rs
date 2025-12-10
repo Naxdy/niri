@@ -476,7 +476,7 @@ impl Mapped {
         &self,
         renderer: &mut R,
         scale: Scale<f64>,
-    ) -> impl DoubleEndedIterator<Item = WindowCastRenderElements<R>> {
+    ) -> impl DoubleEndedIterator<Item = WindowCastRenderElements<R>> + use<R> {
         let bbox = self.window.bbox_with_popups().to_physical_precise_up(scale);
 
         let has_border_shader = BorderRenderElement::has_shader(renderer);

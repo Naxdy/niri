@@ -891,10 +891,13 @@ impl<W: LayoutElement> Monitor<W> {
         let transaction = Transaction::new();
         let removed = if let Some(window) = window {
             workspace.remove_tile(window, transaction)
-        } else if let Some(removed) = workspace.remove_active_tile(transaction) {
-            removed
         } else {
-            return;
+            match workspace.remove_active_tile(transaction) {
+                Some(removed) => removed,
+                _ => {
+                    return;
+                }
+            }
         };
 
         self.add_tile(
@@ -1488,7 +1491,7 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
-    pub fn workspaces_render_geo(&self) -> impl Iterator<Item = Rectangle<f64, Logical>> {
+    pub fn workspaces_render_geo(&self) -> impl Iterator<Item = Rectangle<f64, Logical>> + use<W> {
         let scale = self.scale.fractional_scale();
         let zoom = self.overview_zoom();
 
@@ -1656,7 +1659,7 @@ impl<W: LayoutElement> Monitor<W> {
     pub fn render_insert_hint_between_workspaces<R: NiriRenderer>(
         &self,
         renderer: &mut R,
-    ) -> impl Iterator<Item = MonitorRenderElement<R>> {
+    ) -> impl Iterator<Item = MonitorRenderElement<R>> + use<R, W> {
         let mut rv = None;
 
         if !self.options.layout.insert_hint.off {

@@ -69,7 +69,7 @@ unsafe fn compile_program(
     additional_uniforms: &[UniformName<'_>],
     texture_uniforms: &[&str],
     // destruction_callback_sender: Sender<CleanupResource>,
-) -> Result<ShaderProgram, GlesError> {
+) -> Result<ShaderProgram, GlesError> { unsafe {
     let shader = format!("#version 100\n{src}");
     let program = unsafe { link_program(gl, include_str!("shaders/texture.vert"), &shader)? };
     let debug_shader = format!("#version 100\n#define DEBUG_FLAGS\n{src}");
@@ -154,7 +154,7 @@ unsafe fn compile_program(
         },
         uniform_tint: gl.GetUniformLocation(debug_program, tint.as_ptr()),
     })))
-}
+}}
 
 impl ShaderProgram {
     pub fn compile(

@@ -216,11 +216,11 @@ impl FocusRing {
         }
     }
 
-    pub fn render(
+    pub fn render<R: NiriRenderer>(
         &self,
-        renderer: &mut impl NiriRenderer,
+        renderer: &mut R,
         location: Point<f64, Logical>,
-    ) -> impl Iterator<Item = FocusRingRenderElement> {
+    ) -> impl Iterator<Item = FocusRingRenderElement> + use<R> {
         let mut rv = ArrayVec::<_, 8>::new();
 
         if self.config.off {

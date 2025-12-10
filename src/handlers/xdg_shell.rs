@@ -1244,13 +1244,13 @@ impl State {
         // Figure out if the root is a window or a layer surface.
         if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
             self.unconstrain_window_popup(popup, &mapped.window);
-        } else if let Some((layer_surface, output)) = self.niri.layout.outputs().find_map(|o| {
+        } else { match self.niri.layout.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer_surface = map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
             Some((layer_surface.clone(), o))
-        }) {
+        }) { Some((layer_surface, output)) => {
             self.unconstrain_layer_shell_popup(popup, &layer_surface, output);
-        }
+        } _ => {}}}
     }
 
     fn unconstrain_window_popup(&self, popup: &PopupKind, window: &Window) {

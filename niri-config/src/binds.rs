@@ -740,8 +740,8 @@ impl<S: knuffel::traits::ErrorSpan> knuffel::DecodeScalar<S> for WorkspaceRefere
         ctx: &mut knuffel::decode::Context<S>,
     ) -> Result<WorkspaceReference, DecodeError<S>> {
         match &**val {
-            knuffel::ast::Literal::String(ref s) => Ok(WorkspaceReference::Name(s.clone().into())),
-            knuffel::ast::Literal::Int(ref value) => match value.try_into() {
+            knuffel::ast::Literal::String(s) => Ok(WorkspaceReference::Name(s.clone().into())),
+            knuffel::ast::Literal::Int(value) => match value.try_into() {
                 Ok(v) => Ok(WorkspaceReference::Index(v)),
                 Err(e) => {
                     ctx.emit_error(DecodeError::conversion(val, e));

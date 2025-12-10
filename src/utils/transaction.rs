@@ -95,15 +95,15 @@ impl Transaction {
 
                     // FIXME: come up with some way to control the deadline timer from tests.
                     #[cfg(not(test))]
-                    if let Some(inner) = inner.upgrade() {
+                    match inner.upgrade() { Some(inner) => {
                         trace!("deadline reached, completing transaction");
                         inner.complete();
-                    } else {
+                    } _ => {
                         // We should remove the timer automatically. But this callback can still
                         // just happen to run while the ping callback is scheduled, leading to this
                         // branch being legitimately taken.
                         trace!("transaction completed without removing the timer");
-                    }
+                    }}
 
                     TimeoutAction::Drop
                 })

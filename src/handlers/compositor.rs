@@ -562,10 +562,10 @@ impl State {
     }
 
     pub fn remove_default_dmabuf_pre_commit_hook(&mut self, surface: &WlSurface) {
-        if let Some(hook) = self.niri.dmabuf_pre_commit_hook.remove(surface) {
+        match self.niri.dmabuf_pre_commit_hook.remove(surface) { Some(hook) => {
             remove_pre_commit_hook(surface, hook);
-        } else {
+        } _ => {
             error!("tried to remove dmabuf pre-commit hook but there was none");
-        }
+        }}
     }
 }

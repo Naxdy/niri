@@ -1584,12 +1584,12 @@ impl State {
             // It's fine to .take() the xkb file, as this is a
             // clone and the file field is not used in the XkbConfig.
             if let Some(xkb_file) = xkb.file.take() {
-                if let Err(err) = self.set_xkb_file(xkb_file) {
+                match self.set_xkb_file(xkb_file) { Err(err) => {
                     warn!("error reloading xkb_file: {err:?}");
-                } else {
+                } _ => {
                     // We successfully set xkb file so we don't need to fallback to XkbConfig.
                     set_xkb_config = false;
-                }
+                }}
             }
 
             if set_xkb_config {
@@ -3982,7 +3982,7 @@ impl Niri {
             .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
 
         match self.cursor_manager.cursor_image() {
-            CursorImageStatus::Surface(ref surface) => {
+            CursorImageStatus::Surface(surface) => {
                 let hotspot = with_states(surface, |states| {
                     states
                         .data_map

@@ -517,18 +517,18 @@ impl Tty {
 
         // Initialize the primary node first as later nodes might depend on the primary render node
         // being available.
-        if let Some((primary_device_id, primary_device_path)) = udev
+        match udev
             .device_list()
             .find(|&(device_id, _)| device_id == self.primary_node.dev_id())
-        {
+        { Some((primary_device_id, primary_device_path)) => {
             if let Err(err) = self.device_added(primary_device_id, primary_device_path, niri) {
                 warn!(
                     "error adding primary node device, display-only devices may not work: {err:?}"
                 );
             }
-        } else {
+        } _ => {
             warn!("primary node is missing, display-only devices may not work");
-        };
+        }};
 
         for (device_id, path) in udev.device_list() {
             if device_id == self.primary_node.dev_id() {
@@ -661,16 +661,15 @@ impl Tty {
                     // Apply pending gamma changes and restore our existing gamma.
                     let device = self.devices.get_mut(&node).unwrap();
                     for (crtc, surface) in device.surfaces.iter_mut() {
-                        if let Ok(props) =
-                            ConnectorProperties::try_new(&device.drm, surface.connector)
-                        {
+                        match ConnectorProperties::try_new(&device.drm, surface.connector)
+                        { Ok(props) => {
                             match reset_hdr(&props) {
                                 Ok(()) => (),
                                 Err(err) => debug!("couldn't reset HDR properties: {err:?}"),
                             }
-                        } else {
+                        } _ => {
                             warn!("failed to get connector properties");
-                        };
+                        }};
 
                         if let Some(ramp) = surface.pending_gamma_change.take() {
                             let ramp = ramp.as_deref();
@@ -1251,7 +1250,7 @@ impl Tty {
         debug!("picking mode: {mode:?}");
 
         let mut orientation = None;
-        if let Ok(props) = ConnectorProperties::try_new(&device.drm, connector.handle()) {
+        match ConnectorProperties::try_new(&device.drm, connector.handle()) { Ok(props) => {
             match reset_hdr(&props) {
                 Ok(()) => (),
                 Err(err) => debug!("couldn't reset HDR properties: {err:?}"),
@@ -1263,9 +1262,9 @@ impl Tty {
                     trace!("couldn't get panel orientation: {err:?}");
                 }
             }
-        } else {
+        } _ => {
             warn!("failed to get connector properties");
-        };
+        }};
 
         let mut gamma_props = GammaProps::new(&device.drm, crtc)
             .map_err(|err| debug!("couldn't get gamma properties: {err:?}"))

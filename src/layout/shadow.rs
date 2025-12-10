@@ -162,11 +162,11 @@ impl Shadow {
         }
     }
 
-    pub fn render(
+    pub fn render<R: NiriRenderer>(
         &self,
-        renderer: &mut impl NiriRenderer,
+        renderer: &mut R,
         location: Point<f64, Logical>,
-    ) -> impl Iterator<Item = ShadowRenderElement> + '_ {
+    ) -> impl Iterator<Item = ShadowRenderElement> + '_ + use<'_, R> {
         if !self.config.on {
             return None.into_iter().flatten();
         }

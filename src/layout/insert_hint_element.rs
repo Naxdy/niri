@@ -55,11 +55,11 @@ impl InsertHintElement {
             .update_render_elements(size, true, false, false, view_rect, radius, scale, 1.);
     }
 
-    pub fn render(
+    pub fn render<R: NiriRenderer>(
         &self,
-        renderer: &mut impl NiriRenderer,
+        renderer: &mut R,
         location: Point<f64, Logical>,
-    ) -> impl Iterator<Item = FocusRingRenderElement> {
+    ) -> impl Iterator<Item = FocusRingRenderElement> + use<R> {
         self.inner.render(renderer, location)
     }
 }

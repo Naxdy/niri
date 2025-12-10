@@ -319,7 +319,7 @@ pub(super) unsafe fn get_main_buffer_blur(
     dst: Rectangle<i32, Physical>,
     texture_cache: &GlesTexture,
     alpha_tex: Option<&GlesTexture>,
-) -> Result<GlesTexture, GlesError> {
+) -> Result<GlesTexture, GlesError> { unsafe {
     let tex_size = fx_buffers
         .effects
         .size()
@@ -543,7 +543,7 @@ pub(super) unsafe fn get_main_buffer_blur(
     }
 
     Ok(fx_buffers.effects.clone())
-}
+}}
 
 // Renders a blur pass using a GlesFrame with syncing and fencing provided by smithay. Used for
 // updating optimized blur buffer since we are not yet rendering.
@@ -733,7 +733,7 @@ unsafe fn render_blur_pass_with_gl(
     // dst is the region that should have blur
     // it gets up/downscaled with passes
     _damage: Rectangle<i32, Physical>,
-) -> Result<(), GlesError> {
+) -> Result<(), GlesError> { unsafe {
     trace!("rendering blur pass with GL");
 
     let tex_size = sample_buffer.size();
@@ -884,7 +884,7 @@ unsafe fn render_blur_pass_with_gl(
     }
 
     Ok(())
-}
+}}
 
 // Copied from smithay, adapted to use glam structs
 fn build_texture_mat(

@@ -348,7 +348,7 @@ impl Thumbnail {
         is_active: bool,
         bob_y: f64,
         target: RenderTarget,
-    ) -> impl Iterator<Item = WindowMruUiRenderElement<R>> {
+    ) -> impl Iterator<Item = WindowMruUiRenderElement<R>> + use<R> {
         let _span = tracy_client::span!("Thumbnail::render");
 
         let round = move |logical: f64| round_logical_in_physical(scale, logical);
@@ -495,12 +495,15 @@ impl Thumbnail {
             );
 
             let renderer = renderer.as_gles_renderer();
-            if let Some(program) = GradientFadeTextureRenderElement::shader(renderer) {
-                let elem = GradientFadeTextureRenderElement::new(texture, program);
-                WindowMruUiRenderElement::GradientFadeElem(elem)
-            } else {
-                let elem = PrimaryGpuTextureRenderElement(texture);
-                WindowMruUiRenderElement::TextureElement(elem)
+            match GradientFadeTextureRenderElement::shader(renderer) {
+                Some(program) => {
+                    let elem = GradientFadeTextureRenderElement::new(texture, program);
+                    WindowMruUiRenderElement::GradientFadeElem(elem)
+                }
+                _ => {
+                    let elem = PrimaryGpuTextureRenderElement(texture);
+                    WindowMruUiRenderElement::TextureElement(elem)
+                }
             }
         });
 
@@ -1106,7 +1109,7 @@ impl WindowMruUi {
         output: &Output,
         renderer: &'a mut R,
         target: RenderTarget,
-    ) -> Option<impl Iterator<Item = WindowMruUiRenderElement<R>> + 'a> {
+    ) -> Option<impl Iterator<Item = WindowMruUiRenderElement<R>> + 'a + use<'a, R>> {
         let (inner, progress) = match &self.state {
             UiState::Closed { .. } => return None,
             UiState::Closing { inner, anim } => (inner, anim.clamped_value()),

@@ -937,7 +937,7 @@ impl<W: LayoutElement> Layout<W> {
                         )
                     }
                     AddWindowTarget::NextTo(next_to) => {
-                        if let Some(output) = self
+                        match self
                             .interactive_move
                             .as_ref()
                             .and_then(|move_| {
@@ -949,7 +949,7 @@ impl<W: LayoutElement> Layout<W> {
                             })
                             .filter(|move_| move_.tile.has_window(next_to))
                             .map(|move_| move_.output.clone())
-                        {
+                        { Some(output) => {
                             // The next_to window is being interactively moved.
                             let mon_idx = monitors
                                 .iter()
@@ -957,7 +957,7 @@ impl<W: LayoutElement> Layout<W> {
                                 .unwrap_or(*active_monitor_idx);
 
                             (mon_idx, MonitorAddWindowTarget::Auto)
-                        } else {
+                        } _ => {
                             let mon_idx = monitors
                                 .iter()
                                 .position(|mon| {
@@ -965,7 +965,7 @@ impl<W: LayoutElement> Layout<W> {
                                 })
                                 .unwrap();
                             (mon_idx, MonitorAddWindowTarget::NextTo(next_to))
-                        }
+                        }}
                     }
                 };
                 let mon = &mut monitors[mon_idx];
@@ -1251,7 +1251,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn find_workspace_by_id(&self, id: WorkspaceId) -> Option<(usize, &Workspace<W>)> {
         match &self.monitor_set {
-            MonitorSet::Normal { ref monitors, .. } => {
+            MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
                     if let Some((index, workspace)) = mon
                         .workspaces
@@ -1277,7 +1277,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn find_workspace_by_name(&self, workspace_name: &str) -> Option<(usize, &Workspace<W>)> {
         match &self.monitor_set {
-            MonitorSet::Normal { ref monitors, .. } => {
+            MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
                     if let Some((index, workspace)) =
                         mon.workspaces.iter().enumerate().find(|(_, w)| {
@@ -1628,7 +1628,7 @@ impl<W: LayoutElement> Layout<W> {
         Some(&mut mon.workspaces[mon.active_workspace_idx])
     }
 
-    pub fn windows_for_output(&self, output: &Output) -> impl Iterator<Item = &W> + '_ {
+    pub fn windows_for_output(&self, output: &Output) -> impl Iterator<Item = &W> + '_ + use<'_, W> {
         let MonitorSet::Normal { monitors, .. } = &self.monitor_set else {
             panic!()
         };
@@ -1647,7 +1647,7 @@ impl<W: LayoutElement> Layout<W> {
         moving_window.chain(mon_windows)
     }
 
-    pub fn windows_for_output_mut(&mut self, output: &Output) -> impl Iterator<Item = &mut W> + '_ {
+    pub fn windows_for_output_mut(&mut self, output: &Output) -> impl Iterator<Item = &mut W> + '_ + use<'_, W> {
         let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
             panic!()
         };
@@ -3425,11 +3425,11 @@ impl<W: LayoutElement> Layout<W> {
             let transaction = Transaction::new();
             let mut removed = if let Some(window) = window {
                 ws.remove_tile(window, transaction)
-            } else if let Some(removed) = ws.remove_active_tile(transaction) {
+            } else { match ws.remove_active_tile(transaction) { Some(removed) => {
                 removed
-            } else {
+            } _ => {
                 return;
-            };
+            }}};
 
             removed.tile.stop_move_animations();
 
@@ -4868,7 +4868,7 @@ impl<W: LayoutElement> Layout<W> {
         renderer: &mut R,
         output: &Output,
         target: RenderTarget,
-    ) -> impl Iterator<Item = RescaleRenderElement<TileRenderElement<R>>> + 'a {
+    ) -> impl Iterator<Item = RescaleRenderElement<TileRenderElement<R>>> + 'a + use<'a, R, W> {
         if self.update_render_elements_time != self.clock.now() {
             error!("clock moved between updating render elements and rendering");
         }

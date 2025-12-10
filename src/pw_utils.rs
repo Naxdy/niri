@@ -133,7 +133,7 @@ pub enum CastSizeChange {
 }
 
 macro_rules! make_params {
-    ($params:ident, $formats:expr, $size:expr, $refresh:expr, $alpha:expr) => {
+    ($params:ident, $formats:expr_2021, $size:expr_2021, $refresh:expr_2021, $alpha:expr_2021) => {
         let mut b1 = Vec::new();
         let mut b2 = Vec::new();
 
@@ -1231,7 +1231,7 @@ fn allocate_dmabuf(
     Ok(dmabuf)
 }
 
-unsafe fn return_unused_buffer(stream: &Stream, pw_buffer: NonNull<pw_buffer>) {
+unsafe fn return_unused_buffer(stream: &Stream, pw_buffer: NonNull<pw_buffer>) { unsafe {
     // pw_stream_return_buffer() requires too new PipeWire (1.4.0). So, mark as
     // corrupted and queue.
     let pw_buffer = pw_buffer.as_ptr();
@@ -1247,9 +1247,9 @@ unsafe fn return_unused_buffer(stream: &Stream, pw_buffer: NonNull<pw_buffer>) {
     }
 
     pw_stream_queue_buffer(stream.as_raw_ptr(), pw_buffer);
-}
+}}
 
-unsafe fn mark_buffer_as_good(pw_buffer: NonNull<pw_buffer>, sequence: &mut u64) {
+unsafe fn mark_buffer_as_good(pw_buffer: NonNull<pw_buffer>, sequence: &mut u64) { unsafe {
     let pw_buffer = pw_buffer.as_ptr();
     let spa_buffer = (*pw_buffer).buffer;
     let chunk = (*(*spa_buffer).datas).chunk;
@@ -1272,9 +1272,9 @@ unsafe fn mark_buffer_as_good(pw_buffer: NonNull<pw_buffer>, sequence: &mut u64)
         (*header).flags = 0;
         (*header).seq = *sequence;
     }
-}
+}}
 
-unsafe fn find_meta_header(buffer: *mut spa_buffer) -> Option<NonNull<spa_meta_header>> {
+unsafe fn find_meta_header(buffer: *mut spa_buffer) -> Option<NonNull<spa_meta_header>> { unsafe {
     let p = spa_buffer_find_meta_data(buffer, SPA_META_Header, size_of::<spa_meta_header>()).cast();
     NonNull::new(p)
-}
+}}

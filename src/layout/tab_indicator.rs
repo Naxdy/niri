@@ -113,7 +113,7 @@ impl TabIndicator {
         area: Rectangle<f64, Logical>,
         count: usize,
         scale: f64,
-    ) -> impl Iterator<Item = Rectangle<f64, Logical>> {
+    ) -> impl Iterator<Item = Rectangle<f64, Logical>> + use<> {
         let round = |logical: f64| round_logical_in_physical(scale, logical);
         let round_max1 = |logical: f64| round_logical_in_physical_max1(scale, logical);
 
@@ -362,7 +362,7 @@ impl TabIndicator {
         &self,
         renderer: &mut R,
         pos: Point<f64, Logical>,
-    ) -> impl Iterator<Item = TabIndicatorRenderElement> + '_ {
+    ) -> impl Iterator<Item = TabIndicatorRenderElement> + '_ + use<'_, R> {
         let has_border_shader = BorderRenderElement::has_shader(renderer);
         if !has_border_shader {
             return None.into_iter().flatten();

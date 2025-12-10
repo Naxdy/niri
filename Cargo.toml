@@ -6,9 +6,8 @@ version = "25.8.0"
 description = "A scrollable-tiling Wayland compositor"
 authors = ["Ivan Molodetskikh <yalterz@gmail.com>"]
 license = "GPL-3.0-or-later"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/YaLTeR/niri"
-rust-version = "1.82.0"
 
 [workspace.dependencies]
 anyhow = "1.0.100"
@@ -46,7 +45,6 @@ authors.workspace = true
 license.workspace = true
 edition.workspace = true
 repository.workspace = true
-rust-version.workspace = true
 
 readme = "README.md"
 keywords = ["wayland", "compositor", "tiling", "smithay", "wm"]

@@ -581,7 +581,7 @@ impl<W: LayoutElement> Tile<W> {
         self.sizing_mode = self.window.focused_window().sizing_mode();
 
         if let Some(animate_from) = self.window.focused_window_mut().take_animation_snapshot() {
-            let params = if let Some(resize) = self.resize_animation.take() {
+            let params = match self.resize_animation.take() { Some(resize) => {
                 // Compute like in animated_window_size(), but using the snapshot geometry (since
                 // the current one is already overwritten).
                 let mut size = animate_from.size;
@@ -628,7 +628,7 @@ impl<W: LayoutElement> Tile<W> {
                     expanded_from,
                     resize.offscreen,
                 )
-            } else {
+            } _ => {
                 let size = animate_from.size;
 
                 // Compute like in tile_size().
@@ -657,7 +657,7 @@ impl<W: LayoutElement> Tile<W> {
                     expanded_from,
                     OffscreenBuffer::default(),
                 )
-            };
+            }};
             let (size_from, tile_size_from, fullscreen_from, expanded_from, offscreen) = params;
 
             let change =
@@ -988,11 +988,11 @@ impl<W: LayoutElement> Tile<W> {
         let from = from.clamp(0., 1.);
         let to = to.clamp(0., 1.);
 
-        let (current, offscreen) = if let Some(alpha) = self.alpha_animation.take() {
+        let (current, offscreen) = match self.alpha_animation.take() { Some(alpha) => {
             (alpha.anim.clamped_value(), alpha.offscreen)
-        } else {
+        } _ => {
             (from, OffscreenBuffer::default())
-        };
+        }};
 
         self.alpha_animation = Some(AlphaAnimation {
             anim: Animation::new(self.clock.clone(), current, to, 0., config),
@@ -1608,7 +1608,7 @@ impl<W: LayoutElement> Tile<W> {
         target: RenderTarget,
         fx_buffers: Option<EffectsFramebuffersUserData>,
         overview_zoom: Option<f64>,
-    ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
+    ) -> impl Iterator<Item = TileRenderElement<R>> + 'a + use<'a, R, W> {
         let _span = tracy_client::span!("Tile::render_inner");
 
         let scale = Scale::from(self.scale);
@@ -1967,7 +1967,7 @@ impl<W: LayoutElement> Tile<W> {
         target: RenderTarget,
         fx_buffers: Option<EffectsFramebuffersUserData>,
         overview_zoom: Option<f64>,
-    ) -> impl Iterator<Item = TileRenderElement<R>> + 'a {
+    ) -> impl Iterator<Item = TileRenderElement<R>> + 'a + use<'a, R, W> {
         let _span = tracy_client::span!("Tile::render");
 
         let scale = Scale::from(self.scale);

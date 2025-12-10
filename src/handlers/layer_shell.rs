@@ -55,15 +55,14 @@ impl WlrLayerShellHandler for State {
         let wl_surface = surface.wl_surface();
         self.niri.unmapped_layer_surfaces.remove(wl_surface);
 
-        let output = if let Some((output, mut map, layer)) =
-            self.niri.layout.outputs().find_map(|o| {
+        let output = match self.niri.layout.outputs().find_map(|o| {
                 let map = layer_map_for_output(o);
                 let layer = map
                     .layers()
                     .find(|&layer| layer.layer_surface() == &surface)
                     .cloned();
                 layer.map(|layer| (o.clone(), map, layer))
-            }) {
+            }) { Some((output, mut map, layer)) => {
             if matches!(layer.layer(), Layer::Background | Layer::Bottom) {
                 EffectsFramebuffers::set_dirty(&output);
             }
@@ -71,9 +70,9 @@ impl WlrLayerShellHandler for State {
             map.unmap_layer(&layer);
             self.niri.mapped_layer_surfaces.remove(&layer);
             Some(output)
-        } else {
+        } _ => {
             None
-        };
+        }};
         if let Some(output) = output {
             self.niri.output_resized(&output);
         }

@@ -768,17 +768,18 @@ impl<W: LayoutElement> Workspace<W> {
             .map(|w| &w == id)
             .unwrap_or(false);
 
-        let (tile, from_floating) =
-            if let Some(tile) = self.floating.tiles_mut().find(|t| t.has_window(id)) {
-                (tile, true)
-            } else if let Some(tile) = self.scrolling.tiles_mut().find(|t| t.has_window(id)) {
-                (tile, false)
-            } else {
-                error!(
-                "attempted to remove window {id:?}, but no matching window was found in any layout"
-            );
-                return None;
-            };
+        let (tile, from_floating) = match self.floating.tiles_mut().find(|t| t.has_window(id)) {
+            Some(tile) => (tile, true),
+            _ => match self.scrolling.tiles_mut().find(|t| t.has_window(id)) {
+                Some(tile) => (tile, false),
+                _ => {
+                    error!(
+                        "attempted to remove window {id:?}, but no matching window was found in any layout"
+                    );
+                    return None;
+                }
+            },
+        };
 
         if let Some(output) = &self.output {
             if let Some(w) = tile.windows().find(|w| w.id() == id) {
@@ -1730,8 +1731,8 @@ impl<W: LayoutElement> Workspace<W> {
         focus_ring: bool,
         overview_zoom: f64,
     ) -> (
-        impl Iterator<Item = WorkspaceRenderElement<R>>,
-        impl Iterator<Item = WorkspaceRenderElement<R>>,
+        impl Iterator<Item = WorkspaceRenderElement<R>> + use<R, W>,
+        impl Iterator<Item = WorkspaceRenderElement<R>> + use<R, W>,
     ) {
         let fx_buffers = self
             .current_output()
@@ -1768,7 +1769,7 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn render_shadow<R: NiriRenderer>(
         &self,
         renderer: &mut R,
-    ) -> impl Iterator<Item = ShadowRenderElement> + '_ {
+    ) -> impl Iterator<Item = ShadowRenderElement> + '_ + use<'_, R, W> {
         self.shadow.render(renderer, Point::from((0., 0.)))
     }
 
