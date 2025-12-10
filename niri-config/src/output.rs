@@ -1,10 +1,10 @@
 use std::str::FromStr;
 
+use knuffel::Decode;
 use knuffel::ast::SpannedNode;
 use knuffel::decode::Context;
 use knuffel::errors::DecodeError;
 use knuffel::traits::ErrorSpan;
-use knuffel::Decode;
 use niri_ipc::{ConfiguredMode, HSyncPolarity, Transform, VSyncPolarity};
 
 use crate::gestures::HotCorners;
@@ -87,7 +87,7 @@ impl Output {
         self.variable_refresh_rate == Some(Vrr { on_demand: true })
     }
 
-    pub fn is_vrr_always_off(&self) -> bool {
+    pub const fn is_vrr_always_off(&self) -> bool {
         self.variable_refresh_rate.is_none()
     }
 }
@@ -128,7 +128,7 @@ pub struct Position {
     pub y: i32,
 }
 
-#[derive(knuffel::Decode, Debug, Clone, PartialEq, Default)]
+#[derive(knuffel::Decode, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Vrr {
     #[knuffel(property, default = false)]
     pub on_demand: bool,
@@ -305,10 +305,10 @@ impl<S: ErrorSpan> knuffel::Decode<S> for Mode {
                 if custom {
                     if mode.refresh.is_none() {
                         return Err("no refresh rate found; required for custom mode");
-                    } else if let Some(refresh) = mode.refresh {
-                        if refresh <= 0. {
-                            return Err("custom mode refresh rate must be > 0");
-                        }
+                    } else if let Some(refresh) = mode.refresh
+                        && refresh <= 0.
+                    {
+                        return Err("custom mode refresh rate must be > 0");
                     }
                 }
                 Ok(mode)
@@ -326,7 +326,7 @@ impl<S: ErrorSpan> knuffel::Decode<S> for Mode {
             ))
         }
 
-        Ok(Mode { custom, mode })
+        Ok(Self { custom, mode })
     }
 }
 
@@ -477,7 +477,7 @@ impl<S: ErrorSpan> Decode<S> for Modeline {
             ))
         }
 
-        Ok(Modeline {
+        Ok(Self {
             clock,
             hdisplay,
             hsync_start,

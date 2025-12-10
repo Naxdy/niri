@@ -87,15 +87,15 @@ impl PartialEq for Clock {
 impl Eq for Clock {}
 
 impl LazyClock {
-    pub fn with_time(time: Duration) -> Self {
+    pub const fn with_time(time: Duration) -> Self {
         Self { time: Some(time) }
     }
 
-    pub fn clear(&mut self) {
+    pub const fn clear(&mut self) {
         self.time = None;
     }
 
-    pub fn set(&mut self, time: Duration) {
+    pub const fn set(&mut self, time: Duration) {
         self.time = Some(time);
     }
 
@@ -116,19 +116,19 @@ impl AdjustableClock {
         }
     }
 
-    pub fn rate(&self) -> f64 {
+    pub const fn rate(&self) -> f64 {
         self.rate
     }
 
-    pub fn set_rate(&mut self, rate: f64) {
+    pub const fn set_rate(&mut self, rate: f64) {
         self.rate = rate.clamp(0., 1000.);
     }
 
-    pub fn should_complete_instantly(&self) -> bool {
+    pub const fn should_complete_instantly(&self) -> bool {
         self.complete_instantly
     }
 
-    pub fn set_complete_instantly(&mut self, value: bool) {
+    pub const fn set_complete_instantly(&mut self, value: bool) {
         self.complete_instantly = value;
     }
 

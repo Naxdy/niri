@@ -6,7 +6,7 @@ use smithay::backend::renderer::element::{Kind, RenderElement};
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
-use super::{render_to_encompassing_texture, RenderTarget, ToRenderElement};
+use super::{RenderTarget, ToRenderElement, render_to_encompassing_texture};
 
 /// Snapshot of a render.
 #[derive(Debug)]

@@ -13,7 +13,7 @@ use calloop::futures::Scheduler;
 use calloop::io::Async;
 use directories::BaseDirs;
 use futures_util::io::{AsyncReadExt, BufReader};
-use futures_util::{select_biased, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, FutureExt as _};
+use futures_util::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, FutureExt as _, select_biased};
 use niri_config::OutputName;
 use niri_ipc::state::{EventStreamState, EventStreamStatePart as _};
 use niri_ipc::{
@@ -213,10 +213,10 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             Err(err) => Err(err),
         };
 
-        if let Err(err) = &reply {
-            if !requested_error {
-                warn!("error processing IPC request: {err:?}");
-            }
+        if let Err(err) = &reply
+            && !requested_error
+        {
+            warn!("error processing IPC request: {err:?}");
         }
 
         buf.clear();
@@ -459,13 +459,12 @@ fn validate_action(action: &Action) -> Result<(), String> {
     if let Action::Screenshot { path, .. }
     | Action::ScreenshotScreen { path, .. }
     | Action::ScreenshotWindow { path, .. } = action
+        && let Some(path) = path
     {
-        if let Some(path) = path {
-            // Relative paths are resolved against the niri compositor's working directory, which
-            // is almost certainly not what you want.
-            if !Path::new(path).is_absolute() {
-                return Err(format!("path must be absolute: {path}"));
-            }
+        // Relative paths are resolved against the niri compositor's working directory, which
+        // is almost certainly not what you want.
+        if !Path::new(path).is_absolute() {
+            return Err(format!("path must be absolute: {path}"));
         }
     }
 

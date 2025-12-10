@@ -1,12 +1,12 @@
-use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
-use smithay::backend::renderer::utils::{import_surface, RendererSurfaceStateUserData};
 use smithay::backend::renderer::Renderer as _;
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::backend::renderer::utils::{RendererSurfaceStateUserData, import_surface};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point};
-use smithay::wayland::compositor::{with_surface_tree_downward, TraversalAction};
+use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
 
-use super::texture::TextureBuffer;
 use super::BakedBuffer;
+use super::texture::TextureBuffer;
 
 /// Renders elements from a surface tree as textures into `storage`.
 pub fn render_snapshot_from_surface_tree(

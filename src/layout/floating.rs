@@ -17,13 +17,13 @@ use super::{
 };
 use crate::animation::{Animation, Clock};
 use crate::niri_render_elements;
+use crate::render_helpers::RenderTarget;
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
-use crate::render_helpers::RenderTarget;
 use crate::utils::transaction::TransactionBlocker;
 use crate::utils::{
-    center_preferring_top_left_in_area, clamp_preferring_top_left_in_area, ensure_min_max_size,
-    ensure_min_max_size_maybe_zero, ResizeEdge,
+    ResizeEdge, center_preferring_top_left_in_area, clamp_preferring_top_left_in_area,
+    ensure_min_max_size, ensure_min_max_size_maybe_zero,
 };
 use crate::window::ResolvedWindowRules;
 
@@ -200,7 +200,7 @@ impl Data {
 }
 
 impl<W: LayoutElement> FloatingSpace<W> {
-    pub fn new(
+    pub const fn new(
         view_size: Size<f64, Logical>,
         working_area: Rectangle<f64, Logical>,
         scale: f64,
@@ -449,7 +449,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.tiles.iter().any(|tile| tile.has_window(id))
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.tiles.is_empty()
     }
 
@@ -587,10 +587,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
 
         // Stop interactive resize.
-        if let Some(resize) = &self.interactive_resize {
-            if tile.focused_window().id() == &resize.window {
-                self.interactive_resize = None;
-            }
+        if let Some(resize) = &self.interactive_resize
+            && tile.focused_window().id() == &resize.window
+        {
+            self.interactive_resize = None;
         }
 
         // Store the floating size if we have one.
@@ -1051,26 +1051,26 @@ impl<W: LayoutElement> FloatingSpace<W> {
             PositionChange::SetFixed(x) => pos.x = x + working_area_loc.x,
             PositionChange::SetProportion(prop) => {
                 let prop = (prop / 100.).clamp(0., MAX_F);
-                pos.x = available_width * prop + working_area_loc.x;
+                pos.x = available_width.mul_add(prop, working_area_loc.x);
             }
             PositionChange::AdjustFixed(x) => pos.x += x,
             PositionChange::AdjustProportion(prop) => {
                 let current_prop = (pos.x - working_area_loc.x) / available_width.max(1.);
                 let prop = (current_prop + prop / 100.).clamp(0., MAX_F);
-                pos.x = available_width * prop + working_area_loc.x;
+                pos.x = available_width.mul_add(prop, working_area_loc.x);
             }
         }
         match y {
             PositionChange::SetFixed(y) => pos.y = y + working_area_loc.y,
             PositionChange::SetProportion(prop) => {
                 let prop = (prop / 100.).clamp(0., MAX_F);
-                pos.y = available_height * prop + working_area_loc.y;
+                pos.y = available_height.mul_add(prop, working_area_loc.y);
             }
             PositionChange::AdjustFixed(y) => pos.y += y,
             PositionChange::AdjustProportion(prop) => {
                 let current_prop = (pos.y - working_area_loc.y) / available_height.max(1.);
                 let prop = (current_prop + prop / 100.).clamp(0., MAX_F);
-                pos.y = available_height * prop + working_area_loc.y;
+                pos.y = available_height.mul_add(prop, working_area_loc.y);
             }
         }
 
@@ -1250,10 +1250,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
             return;
         };
 
-        if let Some(window) = window {
-            if window != &resize.window {
-                return;
-            }
+        if let Some(window) = window
+            && window != &resize.window
+        {
+            return;
         }
 
         self.interactive_resize = None;
@@ -1333,7 +1333,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let new_pos = data.logical_pos;
 
         let diff = prev_pos - new_pos;
-        if diff.x * diff.x + diff.y * diff.y > ANIMATION_THRESHOLD_SQ {
+        if diff.x.mul_add(diff.x, diff.y * diff.y) > ANIMATION_THRESHOLD_SQ {
             tile.animate_move_from(prev_pos - new_pos);
         }
     }
@@ -1387,11 +1387,11 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
                     let mut pos = Point::from((pos.x.0, pos.y.0));
 
-                    if relative_to == RelativeTo::Cursor {
-                        if let Some(cursor_pos) = cursor_pos {
-                            pos.x += cursor_pos.x - (area.size.w - self.view_size.w).abs();
-                            pos.y += cursor_pos.y - (area.size.h - self.view_size.h).abs();
-                        }
+                    if relative_to == RelativeTo::Cursor
+                        && let Some(cursor_pos) = cursor_pos
+                    {
+                        pos.x += cursor_pos.x - (area.size.w - self.view_size.w).abs();
+                        pos.y += cursor_pos.y - (area.size.h - self.view_size.h).abs();
                     }
 
                     if relative_to == RelativeTo::TopRight
@@ -1424,7 +1424,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.view_size
     }
 
-    pub fn working_area(&self) -> Rectangle<f64, Logical> {
+    pub const fn working_area(&self) -> Rectangle<f64, Logical> {
         self.working_area
     }
 

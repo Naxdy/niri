@@ -2,18 +2,18 @@ use std::cell::{Cell, Ref, RefCell};
 use std::time::Duration;
 
 use niri_config::{Color, CornerRadius, GradientInterpolation, WindowRule};
-use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
 use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::space::SpaceElement as _;
 use smithay::desktop::{PopupManager, Window};
 use smithay::output::{self, Output};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource as _;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size, Transform};
-use smithay::wayland::compositor::{remove_pre_commit_hook, with_states, HookId, SurfaceData};
+use smithay::wayland::compositor::{HookId, SurfaceData, remove_pre_commit_hook, with_states};
 use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::shell::xdg::{
     SurfaceCachedState, ToplevelCachedState, ToplevelConfigure, ToplevelSurface,
@@ -38,9 +38,8 @@ use crate::render_helpers::{BakedBuffer, RenderTarget, SplitElements};
 use crate::utils::id::IdCounter;
 use crate::utils::transaction::Transaction;
 use crate::utils::{
-    get_credentials_for_surface, send_scale_transform, update_tiled_state,
+    ResizeEdge, get_credentials_for_surface, send_scale_transform, update_tiled_state,
     with_toplevel_last_uncommitted_configure, with_toplevel_role, with_toplevel_role_and_current,
-    ResizeEdge,
 };
 
 #[derive(Debug)]
@@ -205,11 +204,11 @@ static MAPPED_ID_COUNTER: IdCounter = IdCounter::new();
 pub struct MappedId(u64);
 
 impl MappedId {
-    pub fn next() -> MappedId {
-        MappedId(MAPPED_ID_COUNTER.next())
+    pub fn next() -> Self {
+        Self(MAPPED_ID_COUNTER.next())
     }
 
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -229,11 +228,11 @@ enum InteractiveResize {
 }
 
 impl InteractiveResize {
-    fn data(&self) -> InteractiveResizeData {
+    const fn data(&self) -> InteractiveResizeData {
         match self {
-            InteractiveResize::Ongoing(data) => *data,
-            InteractiveResize::WaitingForLastConfigure(data) => *data,
-            InteractiveResize::WaitingForLastCommit { data, .. } => *data,
+            Self::Ongoing(data) => *data,
+            Self::WaitingForLastConfigure(data) => *data,
+            Self::WaitingForLastCommit { data, .. } => *data,
         }
     }
 }
@@ -330,15 +329,15 @@ impl Mapped {
         self.recompute_window_rules(rules, is_at_startup)
     }
 
-    pub fn set_needs_configure(&mut self) {
+    pub const fn set_needs_configure(&mut self) {
         self.needs_configure = true;
     }
 
-    pub fn id(&self) -> MappedId {
+    pub const fn id(&self) -> MappedId {
         self.id
     }
 
-    pub fn credentials(&self) -> Option<&Credentials> {
+    pub const fn credentials(&self) -> Option<&Credentials> {
         self.credentials.as_ref()
     }
 
@@ -346,27 +345,27 @@ impl Mapped {
         self.offscreen_data.borrow()
     }
 
-    pub fn is_focused(&self) -> bool {
+    pub const fn is_focused(&self) -> bool {
         self.is_focused
     }
 
-    pub fn is_active_in_column(&self) -> bool {
+    pub const fn is_active_in_column(&self) -> bool {
         self.is_active_in_column
     }
 
-    pub fn is_floating(&self) -> bool {
+    pub const fn is_floating(&self) -> bool {
         self.is_floating
     }
 
-    pub fn is_window_cast_target(&self) -> bool {
+    pub const fn is_window_cast_target(&self) -> bool {
         self.is_window_cast_target
     }
 
-    pub fn toggle_ignore_opacity_window_rule(&mut self) {
+    pub const fn toggle_ignore_opacity_window_rule(&mut self) {
         self.ignore_opacity_window_rule = !self.ignore_opacity_window_rule;
     }
 
-    pub fn set_is_focused(&mut self, is_focused: bool) {
+    pub const fn set_is_focused(&mut self, is_focused: bool) {
         if self.is_focused == is_focused {
             return;
         }
@@ -376,7 +375,7 @@ impl Mapped {
         self.need_to_recompute_rules = true;
     }
 
-    pub fn set_is_window_cast_target(&mut self, value: bool) {
+    pub const fn set_is_window_cast_target(&mut self, value: bool) {
         if self.is_window_cast_target == value {
             return;
         }
@@ -468,7 +467,7 @@ impl Mapped {
         rv
     }
 
-    pub fn last_interactive_resize_start(&self) -> &Cell<Option<(Duration, ResizeEdge)>> {
+    pub const fn last_interactive_resize_start(&self) -> &Cell<Option<(Duration, ResizeEdge)>> {
         &self.last_interactive_resize_start
     }
 
@@ -523,11 +522,11 @@ impl Mapped {
         })
     }
 
-    pub fn get_focus_timestamp(&self) -> Option<Duration> {
+    pub const fn get_focus_timestamp(&self) -> Option<Duration> {
         self.focus_timestamp
     }
 
-    pub fn set_focus_timestamp(&mut self, timestamp: Duration) {
+    pub const fn set_focus_timestamp(&mut self, timestamp: Duration) {
         self.focus_timestamp.replace(timestamp);
     }
 
@@ -560,11 +559,11 @@ impl Mapped {
         update_tiled_state(self.toplevel(), prefer_no_csd, self.rules.tiled_state);
     }
 
-    pub fn is_windowed_fullscreen(&self) -> bool {
+    pub const fn is_windowed_fullscreen(&self) -> bool {
         self.is_windowed_fullscreen
     }
 
-    pub fn set_urgent(&mut self, urgent: bool) {
+    pub const fn set_urgent(&mut self, urgent: bool) {
         if self.is_focused && urgent {
             return;
         }
@@ -574,7 +573,7 @@ impl Mapped {
         self.need_to_recompute_rules |= changed;
     }
 
-    pub fn is_urgent(&self) -> bool {
+    pub const fn is_urgent(&self) -> bool {
         self.is_urgent
     }
 }
@@ -1032,7 +1031,7 @@ impl LayoutElement for Mapped {
 
                 // With UseWindowSize, we do not consider size-only changes, because we will
                 // request the current window size and do not expect it to actually change.
-                if let Some(RequestSizeOnce::UseWindowSize) = self.request_size_once {
+                if matches!(self.request_size_once, Some(RequestSizeOnce::UseWindowSize)) {
                     server_pending.size = current_server_size;
                 }
 
@@ -1042,7 +1041,7 @@ impl LayoutElement for Mapped {
 
         if has_pending_changes {
             // If needed, replace the pending size with the current window size.
-            if let Some(RequestSizeOnce::UseWindowSize) = self.request_size_once {
+            if matches!(self.request_size_once, Some(RequestSizeOnce::UseWindowSize)) {
                 let size = self.window.geometry().size;
                 toplevel.with_pending_state(|state| {
                     state.size = Some(size);
@@ -1075,7 +1074,7 @@ impl LayoutElement for Mapped {
                 x => x,
             };
 
-            if let Some(RequestSizeOnce::WaitingForConfigure) = self.request_size_once {
+            if matches!(self.request_size_once, Some(RequestSizeOnce::WaitingForConfigure)) {
                 self.request_size_once = Some(RequestSizeOnce::WaitingForCommit(serial));
             }
 
@@ -1187,7 +1186,7 @@ impl LayoutElement for Mapped {
         // In this case self.request_size_once will already flip to UseWindowSize and this branch
         // will return the window's own new size, but the logic below would see an uncommitted size
         // change and return our size.
-        if let Some(RequestSizeOnce::UseWindowSize) = self.request_size_once {
+        if matches!(self.request_size_once, Some(RequestSizeOnce::UseWindowSize)) {
             return current_size;
         }
 
@@ -1339,16 +1338,15 @@ impl LayoutElement for Mapped {
     fn on_commit(&mut self, commit_serial: Serial) {
         if let Some(InteractiveResize::WaitingForLastCommit { serial, .. }) =
             &self.interactive_resize
+            && commit_serial.is_no_older_than(serial)
         {
-            if commit_serial.is_no_older_than(serial) {
-                self.interactive_resize = None;
-            }
+            self.interactive_resize = None;
         }
 
-        if let Some(RequestSizeOnce::WaitingForCommit(serial)) = &self.request_size_once {
-            if commit_serial.is_no_older_than(serial) {
-                self.request_size_once = Some(RequestSizeOnce::UseWindowSize);
-            }
+        if let Some(RequestSizeOnce::WaitingForCommit(serial)) = &self.request_size_once
+            && commit_serial.is_no_older_than(serial)
+        {
+            self.request_size_once = Some(RequestSizeOnce::UseWindowSize);
         }
 
         // "Commit" our "acked" pending windowed fullscreen state.

@@ -26,7 +26,7 @@ pub struct ConfigIncludeError {
 }
 
 impl<T, E> ConfigParseResult<T, E> {
-    pub fn from_err(err: E) -> Self {
+    pub const fn from_err(err: E) -> Self {
         Self {
             config: Err(err),
             includes: Vec::new(),

@@ -9,7 +9,7 @@ pub struct CubicBezier {
 }
 
 impl CubicBezier {
-    pub fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
+    pub const fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
         Self { x1, y1, x2, y2 }
     }
 
@@ -18,12 +18,18 @@ impl CubicBezier {
 
     fn x_for_t(&self, t: f64) -> f64 {
         let omt = 1. - t;
-        3. * omt * omt * t * self.x1 + 3. * omt * t * t * self.x2 + t * t * t
+        (t * t).mul_add(
+            t,
+            (3. * omt * omt * t).mul_add(self.x1, 3. * omt * t * t * self.x2),
+        )
     }
 
     fn y_for_t(&self, t: f64) -> f64 {
         let omt = 1. - t;
-        3. * omt * omt * t * self.y1 + 3. * omt * t * t * self.y2 + t * t * t
+        (t * t).mul_add(
+            t,
+            (3. * omt * omt * t).mul_add(self.y1, 3. * omt * t * t * self.y2),
+        )
     }
 
     fn t_for_x(&self, x: f64) -> f64 {

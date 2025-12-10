@@ -56,7 +56,7 @@ impl FromStr for Percent {
         }
 
         let value: f64 = value.parse().map_err(|_| miette!("error parsing value"))?;
-        Ok(Percent(value / 100.))
+        Ok(Self(value / 100.))
     }
 }
 
@@ -96,35 +96,35 @@ impl<S: knuffel::traits::ErrorSpan, const MIN: i32, const MAX: i32> knuffel::Dec
             knuffel::ast::Literal::Int(value) => match value.try_into() {
                 Ok(v) => {
                     if (MIN..=MAX).contains(&v) {
-                        Ok(FloatOrInt(f64::from(v)))
+                        Ok(Self(f64::from(v)))
                     } else {
                         ctx.emit_error(DecodeError::conversion(
                             val,
                             format!("value must be between {MIN} and {MAX}"),
                         ));
-                        Ok(FloatOrInt::default())
+                        Ok(Self::default())
                     }
                 }
                 Err(e) => {
                     ctx.emit_error(DecodeError::conversion(val, e));
-                    Ok(FloatOrInt::default())
+                    Ok(Self::default())
                 }
             },
             knuffel::ast::Literal::Decimal(value) => match value.try_into() {
                 Ok(v) => {
                     if (f64::from(MIN)..=f64::from(MAX)).contains(&v) {
-                        Ok(FloatOrInt(v))
+                        Ok(Self(v))
                     } else {
                         ctx.emit_error(DecodeError::conversion(
                             val,
                             format!("value must be between {MIN} and {MAX}"),
                         ));
-                        Ok(FloatOrInt::default())
+                        Ok(Self::default())
                     }
                 }
                 Err(e) => {
                     ctx.emit_error(DecodeError::conversion(val, e));
-                    Ok(FloatOrInt::default())
+                    Ok(Self::default())
                 }
             },
             _ => {
@@ -132,7 +132,7 @@ impl<S: knuffel::traits::ErrorSpan, const MIN: i32, const MAX: i32> knuffel::Dec
                     val,
                     "Unsupported value, only numbers are recognized",
                 ));
-                Ok(FloatOrInt::default())
+                Ok(Self::default())
             }
         }
     }

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use knuffel::errors::DecodeError;
 use smithay::input::keyboard::Keysym;
 
-use crate::utils::{expect_only_children, MergeWith};
+use crate::utils::{MergeWith, expect_only_children};
 use crate::{Action, Bind, Color, FloatOrInt, Key, Modifiers, Trigger};
 
 #[derive(Debug, PartialEq)]
@@ -18,7 +18,7 @@ pub struct RecentWindows {
 
 impl Default for RecentWindows {
     fn default() -> Self {
-        RecentWindows {
+        Self {
             on: true,
             debounce_ms: 750,
             open_delay_ms: 150,
@@ -134,7 +134,7 @@ impl MergeWith<MruPreviewsPart> for MruPreviews {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MruBind {
     // MRU bind keys must have a modifier, this is enforced during parsing. The switcher will close
     // once all modifiers are released.
@@ -158,7 +158,7 @@ impl From<MruBind> for Bind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MruDirection {
     /// Most recently used to least.
     #[default]
@@ -167,7 +167,7 @@ pub enum MruDirection {
     Backward,
 }
 
-#[derive(knuffel::DecodeScalar, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(knuffel::DecodeScalar, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MruScope {
     /// All windows.
     #[default]
@@ -178,7 +178,7 @@ pub enum MruScope {
     Workspace,
 }
 
-#[derive(knuffel::DecodeScalar, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(knuffel::DecodeScalar, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MruFilter {
     /// All windows.
     #[default]
@@ -188,7 +188,7 @@ pub enum MruFilter {
     AppId,
 }
 
-#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+#[derive(knuffel::Decode, Debug, Clone, PartialEq, Eq)]
 pub enum MruAction {
     NextWindow(
         #[knuffel(property(name = "scope"))] Option<MruScope>,
@@ -217,7 +217,7 @@ impl From<MruAction> for Action {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct MruBinds(pub Vec<MruBind>);
 
 fn default_binds() -> Vec<Bind> {

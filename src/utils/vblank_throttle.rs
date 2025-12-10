@@ -20,7 +20,7 @@ pub struct VBlankThrottle {
 }
 
 impl VBlankThrottle {
-    pub fn new(event_loop: LoopHandle<'static, State>, output_name: String) -> Self {
+    pub const fn new(event_loop: LoopHandle<'static, State>, output_name: String) -> Self {
         Self {
             event_loop,
             last_vblank_timestamp: None,

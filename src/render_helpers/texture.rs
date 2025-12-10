@@ -38,7 +38,7 @@ impl<T: Texture> TextureBuffer<T> {
         transform: Transform,
         opaque_regions: Vec<Rectangle<i32, Buffer>>,
     ) -> Self {
-        TextureBuffer {
+        Self {
             id: Id::new(),
             commit_counter: CommitCounter::default(),
             renderer_context_id: renderer.context_id(),
@@ -61,7 +61,7 @@ impl<T: Texture> TextureBuffer<T> {
         opaque_regions: Vec<Rectangle<i32, Buffer>>,
     ) -> Result<Self, R::Error> {
         let texture = renderer.import_memory(data, format, size.into(), flipped)?;
-        Ok(TextureBuffer::from_texture(
+        Ok(Self::from_texture(
             renderer,
             texture,
             scale,
@@ -86,11 +86,11 @@ impl<T: Texture> TextureBuffer<T> {
         )
     }
 
-    pub fn texture(&self) -> &T {
+    pub const fn texture(&self) -> &T {
         &self.texture
     }
 
-    pub fn texture_scale(&self) -> Scale<f64> {
+    pub const fn texture_scale(&self) -> Scale<f64> {
         self.scale
     }
 
@@ -98,11 +98,11 @@ impl<T: Texture> TextureBuffer<T> {
         self.scale = scale.into();
     }
 
-    pub fn texture_transform(&self) -> Transform {
+    pub const fn texture_transform(&self) -> Transform {
         self.transform
     }
 
-    pub fn set_texture_transform(&mut self, transform: Transform) {
+    pub const fn set_texture_transform(&mut self, transform: Transform) {
         self.transform = transform;
     }
 }
@@ -131,7 +131,7 @@ impl<T: Texture> TextureRenderElement<T> {
         size: Option<Size<f64, Logical>>,
         kind: Kind,
     ) -> Self {
-        TextureRenderElement {
+        Self {
             buffer,
             location: location.into(),
             alpha,
@@ -141,7 +141,7 @@ impl<T: Texture> TextureRenderElement<T> {
         }
     }
 
-    pub fn buffer(&self) -> &TextureBuffer<T> {
+    pub const fn buffer(&self) -> &TextureBuffer<T> {
         &self.buffer
     }
 }

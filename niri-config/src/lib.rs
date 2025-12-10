@@ -21,9 +21,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use knuffel::errors::DecodeError;
 use knuffel::Decode as _;
-use miette::{miette, Context as _, IntoDiagnostic as _};
+use knuffel::errors::DecodeError;
+use miette::{Context as _, IntoDiagnostic as _, miette};
 
 #[macro_use]
 pub mod macros;
@@ -264,12 +264,12 @@ where
                     //
                     // So, let's just work around the problem here, preserving the original
                     // behavior.
-                    if recursion == 0 {
-                        if let Some(border) = part.border.as_mut() {
-                            if !border.on && !border.off {
-                                border.on = true;
-                            }
-                        }
+                    if recursion == 0
+                        && let Some(border) = part.border.as_mut()
+                        && !border.on
+                        && !border.off
+                    {
+                        border.on = true;
                     }
 
                     config.borrow_mut().layout.merge_with(&part);
@@ -341,20 +341,20 @@ where
                             let relative_path = path.strip_prefix(root_base).ok().unwrap_or(&path);
                             let filename = relative_path.to_str().unwrap_or(filename);
 
-                            let part = knuffel::parse_with_context::<
-                                ConfigPart,
-                                knuffel::span::Span,
-                                _,
-                            >(filename, &text, |ctx| {
-                                ctx.set(BasePath(base));
-                                ctx.set(RootBase(root_base.clone()));
-                                ctx.set(Recursion(recursion));
-                                ctx.set(includes.clone());
-                                ctx.set(include_errors.clone());
-                                ctx.set(IncludeStack(include_stack));
-                                ctx.set(SawMruBinds(saw_mru_binds.clone()));
-                                ctx.set(config.clone());
-                            });
+                            let part = knuffel::parse_with_context::<Self, knuffel::span::Span, _>(
+                                filename,
+                                &text,
+                                |ctx| {
+                                    ctx.set(BasePath(base));
+                                    ctx.set(RootBase(root_base.clone()));
+                                    ctx.set(Recursion(recursion));
+                                    ctx.set(includes.clone());
+                                    ctx.set(include_errors.clone());
+                                    ctx.set(IncludeStack(include_stack));
+                                    ctx.set(SawMruBinds(saw_mru_binds.clone()));
+                                    ctx.set(config.clone());
+                                },
+                            );
 
                             match part {
                                 Ok(_) => {}
@@ -393,7 +393,7 @@ where
 
 impl Config {
     pub fn load_default() -> Self {
-        let res = Config::parse(
+        let res = Self::parse(
             Path::new("default-config.kdl"),
             include_str!("../../resources/default-config.kdl"),
         );
@@ -431,7 +431,7 @@ impl Config {
             .and_then(OsStr::to_str)
             .unwrap_or("config.kdl");
 
-        let config = Rc::new(RefCell::new(Config::default()));
+        let config = Rc::new(RefCell::new(Self::default()));
         let includes = Rc::new(RefCell::new(Includes(Vec::new())));
         let include_errors = Rc::new(RefCell::new(IncludeErrors(Vec::new())));
         let include_stack = HashSet::from([path.to_path_buf()]);
@@ -508,8 +508,8 @@ impl ConfigPath {
         maybe_create: impl FnOnce(&'a Path, &'a Path) -> miette::Result<&'a Path>,
     ) -> ConfigParseResult<Config, miette::Report> {
         let path = match self {
-            ConfigPath::Explicit(path) => path.as_path(),
-            ConfigPath::Regular {
+            Self::Explicit(path) => path.as_path(),
+            Self::Regular {
                 user_path,
                 system_path,
             } => {

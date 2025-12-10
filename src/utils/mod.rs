@@ -8,7 +8,7 @@ use std::ptr::null_mut;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use anyhow::{ensure, Context};
+use anyhow::{Context, ensure};
 use bitflags::bitflags;
 use directories::UserDirs;
 use git_version::git_version;
@@ -16,13 +16,13 @@ use niri_config::{Config, OutputName};
 use smithay::backend::renderer::utils::with_renderer_surface_state;
 use smithay::input::pointer::CursorIcon;
 use smithay::output::{self, Output};
-use smithay::reexports::rustix::time::{clock_gettime, ClockId};
+use smithay::reexports::rustix::time::{ClockId, clock_gettime};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{DisplayHandle, Resource as _};
 use smithay::utils::{Coordinate, Logical, Point, Rectangle, Size, Transform};
-use smithay::wayland::compositor::{send_surface_state, with_states, SurfaceData};
+use smithay::wayland::compositor::{SurfaceData, send_surface_state, with_states};
 use smithay::wayland::fractional_scale::with_fractional_scale;
 use smithay::wayland::shell::xdg::{
     ToplevelCachedState, ToplevelConfigure, ToplevelState, ToplevelSurface, XdgToplevelSurfaceData,
@@ -71,7 +71,7 @@ impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
 }
 
 impl ResizeEdge {
-    pub fn cursor_icon(self) -> CursorIcon {
+    pub const fn cursor_icon(self) -> CursorIcon {
         match self {
             Self::LEFT => CursorIcon::WResize,
             Self::RIGHT => CursorIcon::EResize,
@@ -183,7 +183,7 @@ pub fn panel_orientation(output: &Output) -> Transform {
         .unwrap_or(Transform::Normal)
 }
 
-pub fn ipc_transform_to_smithay(transform: niri_ipc::Transform) -> Transform {
+pub const fn ipc_transform_to_smithay(transform: niri_ipc::Transform) -> Transform {
     match transform {
         niri_ipc::Transform::Normal => Transform::Normal,
         niri_ipc::Transform::_90 => Transform::_90,
@@ -329,11 +329,11 @@ pub fn with_toplevel_last_uncommitted_configure<T>(
         } else if let Some(last_acked) = &role.last_acked {
             let mut configure = Some(last_acked);
 
-            if let Some(committed) = &guard.current().last_acked {
-                if committed.serial.is_no_older_than(&last_acked.serial) {
-                    // Already committed to this configure.
-                    configure = None;
-                }
+            if let Some(committed) = &guard.current().last_acked
+                && committed.serial.is_no_older_than(&last_acked.serial)
+            {
+                // Already committed to this configure.
+                configure = None;
             }
 
             f(configure)

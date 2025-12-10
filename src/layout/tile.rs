@@ -16,14 +16,15 @@ use super::opening_window::{OpenAnimation, OpeningWindowRenderElement};
 use super::shadow::Shadow;
 use super::{
     HitType, LayoutElement, LayoutElementRenderElement, LayoutElementRenderSnapshot, Options,
-    SizeFrac, RESIZE_ANIMATION_THRESHOLD,
+    RESIZE_ANIMATION_THRESHOLD, SizeFrac,
 };
 use crate::animation::{Animation, Clock};
-use crate::layout::tab_indicator::{TabIndicator, TabIndicatorRenderElement, TabInfo};
 use crate::layout::SizingMode;
+use crate::layout::tab_indicator::{TabIndicator, TabIndicatorRenderElement, TabInfo};
 use crate::niri_render_elements;
-use crate::render_helpers::blur::element::{Blur, BlurRenderElement};
+use crate::render_helpers::RenderTarget;
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
+use crate::render_helpers::blur::element::{Blur, BlurRenderElement};
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::clipped_surface::{ClippedSurfaceRenderElement, RoundedCornerDamage};
 use crate::render_helpers::damage::ExtraDamage;
@@ -34,7 +35,6 @@ use crate::render_helpers::shaders::Shaders;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
-use crate::render_helpers::RenderTarget;
 use crate::utils::transaction::Transaction;
 use crate::utils::{
     baba_is_float_offset, round_logical_in_physical, round_logical_in_physical_max1,
@@ -47,7 +47,7 @@ struct WindowSizeOverride {
 }
 
 impl WindowSizeOverride {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             size_override: None,
             rendered_frames: AtomicU8::new(0),
@@ -98,8 +98,8 @@ impl<W: LayoutElement> WindowInner<W> {
     /// otherwise.
     fn focus_window(&mut self, id: &W::Id) -> bool {
         match self {
-            WindowInner::Single(w) => w.as_ref().unwrap().id() == id,
-            WindowInner::Multiple { windows, focus_idx } => {
+            Self::Single(w) => w.as_ref().unwrap().id() == id,
+            Self::Multiple { windows, focus_idx } => {
                 if let Some(new_focus_idx) = windows.iter().position(|w| w.id() == id) {
                     *focus_idx = new_focus_idx;
                     true
@@ -112,8 +112,8 @@ impl<W: LayoutElement> WindowInner<W> {
 
     fn focused_window(&self) -> &W {
         match self {
-            WindowInner::Single(w) => w.as_ref().unwrap(),
-            WindowInner::Multiple { windows, focus_idx } => windows
+            Self::Single(w) => w.as_ref().unwrap(),
+            Self::Multiple { windows, focus_idx } => windows
                 .get(*focus_idx)
                 .expect("should have correct focus_idx"),
         }
@@ -121,8 +121,8 @@ impl<W: LayoutElement> WindowInner<W> {
 
     fn focused_window_mut(&mut self) -> &mut W {
         match self {
-            WindowInner::Single(w) => w.as_mut().unwrap(),
-            WindowInner::Multiple { windows, focus_idx } => windows
+            Self::Single(w) => w.as_mut().unwrap(),
+            Self::Multiple { windows, focus_idx } => windows
                 .get_mut(*focus_idx)
                 .expect("should have correct focus_idx"),
         }
@@ -130,8 +130,8 @@ impl<W: LayoutElement> WindowInner<W> {
 
     fn focus_next(&mut self) -> &W {
         match self {
-            WindowInner::Single(w) => w.as_ref().unwrap(),
-            WindowInner::Multiple { windows, focus_idx } => {
+            Self::Single(w) => w.as_ref().unwrap(),
+            Self::Multiple { windows, focus_idx } => {
                 *focus_idx = (*focus_idx + 1) % windows.len();
                 windows
                     .get(*focus_idx)
@@ -142,8 +142,8 @@ impl<W: LayoutElement> WindowInner<W> {
 
     fn focus_prev(&mut self) -> &W {
         match self {
-            WindowInner::Single(w) => w.as_ref().unwrap(),
-            WindowInner::Multiple { windows, focus_idx } => {
+            Self::Single(w) => w.as_ref().unwrap(),
+            Self::Multiple { windows, focus_idx } => {
                 *focus_idx = (*focus_idx - 1) % windows.len();
                 windows
                     .get(*focus_idx)
@@ -155,14 +155,14 @@ impl<W: LayoutElement> WindowInner<W> {
     /// Removes a window. Returns the number of remaining windows in this [`WindowInner`].
     fn remove_window(&mut self, id: &W::Id) -> usize {
         match self {
-            WindowInner::Single(w) => {
+            Self::Single(w) => {
                 if w.as_ref().unwrap().id() == id {
                     0
                 } else {
                     1
                 }
             }
-            WindowInner::Multiple { windows, focus_idx } => {
+            Self::Multiple { windows, focus_idx } => {
                 // If we only have a single window remaining, don't actually remove it yet, as the
                 // tile itself will be removed instead, and we still need the window for things
                 // like closing animations.
@@ -228,8 +228,8 @@ impl<W: LayoutElement> WindowInner<W> {
         options: Rc<Options>,
     ) -> Vec<Tile<W>> {
         match self {
-            WindowInner::Single(_) => Vec::new(),
-            WindowInner::Multiple { windows, focus_idx } => {
+            Self::Single(_) => Vec::new(),
+            Self::Multiple { windows, focus_idx } => {
                 let focused_window = windows.remove(*focus_idx);
                 let new_tiles = windows
                     .drain(..)
@@ -246,10 +246,10 @@ impl<W: LayoutElement> WindowInner<W> {
     /// Add a window to this [`WindowInner`], and focus it.
     fn add_window(&mut self, window: W) {
         match self {
-            WindowInner::Single(_) => {
+            Self::Single(_) => {
                 error!("attempted to add window to non-grouped tile");
             }
-            WindowInner::Multiple { windows, focus_idx } => {
+            Self::Multiple { windows, focus_idx } => {
                 windows.push(window);
                 *focus_idx = windows.len().checked_sub(1).expect("should never overflow");
             }
@@ -265,8 +265,8 @@ impl<W: LayoutElement> WindowInner<W> {
 
     fn iter_mut(&mut self) -> impl Iterator<Item = &mut W> {
         match self {
-            WindowInner::Single(w) => WindowInnerIterMut::Single(Some(w.as_mut().unwrap())),
-            WindowInner::Multiple {
+            Self::Single(w) => WindowInnerIterMut::Single(Some(w.as_mut().unwrap())),
+            Self::Multiple {
                 windows,
                 focus_idx: _,
             } => WindowInnerIterMut::Multiple(windows.iter_mut()),
@@ -581,83 +581,86 @@ impl<W: LayoutElement> Tile<W> {
         self.sizing_mode = self.window.focused_window().sizing_mode();
 
         if let Some(animate_from) = self.window.focused_window_mut().take_animation_snapshot() {
-            let params = match self.resize_animation.take() { Some(resize) => {
-                // Compute like in animated_window_size(), but using the snapshot geometry (since
-                // the current one is already overwritten).
-                let mut size = animate_from.size;
+            let params = match self.resize_animation.take() {
+                Some(resize) => {
+                    // Compute like in animated_window_size(), but using the snapshot geometry (since
+                    // the current one is already overwritten).
+                    let mut size = animate_from.size;
 
-                let val = resize.anim.value();
-                let size_from = resize.size_from;
-                let tile_size_from = resize.tile_size_from;
+                    let val = resize.anim.value();
+                    let size_from = resize.size_from;
+                    let tile_size_from = resize.tile_size_from;
 
-                size.w = size_from.w + (size.w - size_from.w) * val;
-                size.h = size_from.h + (size.h - size_from.h) * val;
+                    size.w = (size.w - size_from.w).mul_add(val, size_from.w);
+                    size.h = (size.h - size_from.h).mul_add(val, size_from.h);
 
-                let mut tile_size = animate_from.size;
-                if prev_sizing_mode.is_fullscreen() {
-                    tile_size.w = f64::max(tile_size.w, self.view_size.w);
-                    tile_size.h = f64::max(tile_size.h, self.view_size.h);
-                } else if prev_sizing_mode.is_normal() && !self.border.is_off() {
-                    let width = self.border.width();
-                    tile_size.w += width * 2.;
-                    tile_size.h += width * 2.;
+                    let mut tile_size = animate_from.size;
+                    if prev_sizing_mode.is_fullscreen() {
+                        tile_size.w = f64::max(tile_size.w, self.view_size.w);
+                        tile_size.h = f64::max(tile_size.h, self.view_size.h);
+                    } else if prev_sizing_mode.is_normal() && !self.border.is_off() {
+                        let width = self.border.width();
+                        tile_size.w += width * 2.;
+                        tile_size.h += width * 2.;
+                    }
+
+                    tile_size.w = (tile_size.w - tile_size_from.w).mul_add(val, tile_size_from.w);
+                    tile_size.h = (tile_size.h - tile_size_from.h).mul_add(val, tile_size_from.h);
+
+                    let fullscreen_from = resize
+                        .fullscreen_progress
+                        .map(|anim| anim.clamped_value().clamp(0., 1.))
+                        .unwrap_or(if prev_sizing_mode.is_fullscreen() {
+                            1.
+                        } else {
+                            0.
+                        });
+
+                    let expanded_from = resize
+                        .expanded_progress
+                        .map(|anim| anim.clamped_value().clamp(0., 1.))
+                        .unwrap_or(if prev_sizing_mode.is_normal() { 0. } else { 1. });
+
+                    // Also try to reuse the existing offscreen buffer if we have one.
+                    (
+                        size,
+                        tile_size,
+                        fullscreen_from,
+                        expanded_from,
+                        resize.offscreen,
+                    )
                 }
+                _ => {
+                    let size = animate_from.size;
 
-                tile_size.w = tile_size_from.w + (tile_size.w - tile_size_from.w) * val;
-                tile_size.h = tile_size_from.h + (tile_size.h - tile_size_from.h) * val;
+                    // Compute like in tile_size().
+                    let mut tile_size = size;
+                    if prev_sizing_mode.is_fullscreen() {
+                        tile_size.w = f64::max(tile_size.w, self.view_size.w);
+                        tile_size.h = f64::max(tile_size.h, self.view_size.h);
+                    } else if prev_sizing_mode.is_normal() && !self.border.is_off() {
+                        let width = self.border.width();
+                        tile_size.w += width * 2.;
+                        tile_size.h += width * 2.;
+                    }
 
-                let fullscreen_from = resize
-                    .fullscreen_progress
-                    .map(|anim| anim.clamped_value().clamp(0., 1.))
-                    .unwrap_or(if prev_sizing_mode.is_fullscreen() {
+                    let fullscreen_from = if prev_sizing_mode.is_fullscreen() {
                         1.
                     } else {
                         0.
-                    });
+                    };
 
-                let expanded_from = resize
-                    .expanded_progress
-                    .map(|anim| anim.clamped_value().clamp(0., 1.))
-                    .unwrap_or(if prev_sizing_mode.is_normal() { 0. } else { 1. });
+                    let expanded_from = if prev_sizing_mode.is_normal() { 0. } else { 1. };
 
-                // Also try to reuse the existing offscreen buffer if we have one.
-                (
-                    size,
-                    tile_size,
-                    fullscreen_from,
-                    expanded_from,
-                    resize.offscreen,
-                )
-            } _ => {
-                let size = animate_from.size;
-
-                // Compute like in tile_size().
-                let mut tile_size = size;
-                if prev_sizing_mode.is_fullscreen() {
-                    tile_size.w = f64::max(tile_size.w, self.view_size.w);
-                    tile_size.h = f64::max(tile_size.h, self.view_size.h);
-                } else if prev_sizing_mode.is_normal() && !self.border.is_off() {
-                    let width = self.border.width();
-                    tile_size.w += width * 2.;
-                    tile_size.h += width * 2.;
+                    (
+                        size,
+                        tile_size,
+                        fullscreen_from,
+                        expanded_from,
+                        OffscreenBuffer::default(),
+                    )
                 }
-
-                let fullscreen_from = if prev_sizing_mode.is_fullscreen() {
-                    1.
-                } else {
-                    0.
-                };
-
-                let expanded_from = if prev_sizing_mode.is_normal() { 0. } else { 1. };
-
-                (
-                    size,
-                    tile_size,
-                    fullscreen_from,
-                    expanded_from,
-                    OffscreenBuffer::default(),
-                )
-            }};
+            };
             let (size_from, tile_size_from, fullscreen_from, expanded_from, offscreen) = params;
 
             let change =
@@ -728,33 +731,34 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn advance_animations(&mut self) {
-        if let Some(open) = &mut self.open_animation {
-            if open.is_done() {
-                self.open_animation = None;
-            }
+        if let Some(open) = &mut self.open_animation
+            && open.is_done()
+        {
+            self.open_animation = None;
         }
 
-        if let Some(resize) = &mut self.resize_animation {
-            if resize.anim.is_done() {
-                self.resize_animation = None;
-            }
+        if let Some(resize) = &mut self.resize_animation
+            && resize.anim.is_done()
+        {
+            self.resize_animation = None;
         }
 
-        if let Some(move_) = &mut self.move_x_animation {
-            if move_.anim.is_done() {
-                self.move_x_animation = None;
-            }
+        if let Some(move_) = &mut self.move_x_animation
+            && move_.anim.is_done()
+        {
+            self.move_x_animation = None;
         }
-        if let Some(move_) = &mut self.move_y_animation {
-            if move_.anim.is_done() {
-                self.move_y_animation = None;
-            }
+        if let Some(move_) = &mut self.move_y_animation
+            && move_.anim.is_done()
+        {
+            self.move_y_animation = None;
         }
 
-        if let Some(alpha) = &mut self.alpha_animation {
-            if !alpha.hold_after_done && alpha.anim.is_done() {
-                self.alpha_animation = None;
-            }
+        if let Some(alpha) = &mut self.alpha_animation
+            && !alpha.hold_after_done
+            && alpha.anim.is_done()
+        {
+            self.alpha_animation = None;
         }
 
         self.tab_indicator.advance_animations();
@@ -892,7 +896,7 @@ impl<W: LayoutElement> Tile<W> {
         }
     }
 
-    pub fn scale(&self) -> f64 {
+    pub const fn scale(&self) -> f64 {
         self.scale
     }
 
@@ -988,11 +992,10 @@ impl<W: LayoutElement> Tile<W> {
         let from = from.clamp(0., 1.);
         let to = to.clamp(0., 1.);
 
-        let (current, offscreen) = match self.alpha_animation.take() { Some(alpha) => {
-            (alpha.anim.clamped_value(), alpha.offscreen)
-        } _ => {
-            (from, OffscreenBuffer::default())
-        }};
+        let (current, offscreen) = match self.alpha_animation.take() {
+            Some(alpha) => (alpha.anim.clamped_value(), alpha.offscreen),
+            _ => (from, OffscreenBuffer::default()),
+        };
 
         self.alpha_animation = Some(AlphaAnimation {
             anim: Animation::new(self.clock.clone(), current, to, 0., config),
@@ -1002,22 +1005,22 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn ensure_alpha_animates_to_1(&mut self) {
-        if let Some(alpha) = &self.alpha_animation {
-            if alpha.anim.to() != 1. {
-                // Cancel animation instead of starting a new one because the user likely wants to
-                // see the tile right away.
-                self.alpha_animation = None;
-            }
+        if let Some(alpha) = &self.alpha_animation
+            && alpha.anim.to() != 1.
+        {
+            // Cancel animation instead of starting a new one because the user likely wants to
+            // see the tile right away.
+            self.alpha_animation = None;
         }
     }
 
-    pub fn hold_alpha_animation_after_done(&mut self) {
+    pub const fn hold_alpha_animation_after_done(&mut self) {
         if let Some(alpha) = &mut self.alpha_animation {
             alpha.hold_after_done = true;
         }
     }
 
-    pub fn is_grouped_tile(&self) -> bool {
+    pub const fn is_grouped_tile(&self) -> bool {
         matches!(
             self.window,
             WindowInner::Multiple {
@@ -1141,7 +1144,7 @@ impl<W: LayoutElement> Tile<W> {
         }
     }
 
-    pub fn ungroup_all(&mut self) -> Vec<Tile<W>> {
+    pub fn ungroup_all(&mut self) -> Vec<Self> {
         let extra_size = self.tab_indicator_extra_size();
 
         if extra_size.h > 0. {
@@ -1203,15 +1206,15 @@ impl<W: LayoutElement> Tile<W> {
         self.window.iter_mut()
     }
 
-    pub fn sizing_mode(&self) -> SizingMode {
+    pub const fn sizing_mode(&self) -> SizingMode {
         self.sizing_mode
     }
 
     fn fullscreen_progress(&self) -> f64 {
-        if let Some(resize) = &self.resize_animation {
-            if let Some(anim) = &resize.fullscreen_progress {
-                return anim.clamped_value().clamp(0., 1.);
-            }
+        if let Some(resize) = &self.resize_animation
+            && let Some(anim) = &resize.fullscreen_progress
+        {
+            return anim.clamped_value().clamp(0., 1.);
         }
 
         if self.sizing_mode.is_fullscreen() {
@@ -1222,21 +1225,17 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     fn expanded_progress(&self) -> f64 {
-        if let Some(resize) = &self.resize_animation {
-            if let Some(anim) = &resize.expanded_progress {
-                return anim.clamped_value().clamp(0., 1.);
-            }
+        if let Some(resize) = &self.resize_animation
+            && let Some(anim) = &resize.expanded_progress
+        {
+            return anim.clamped_value().clamp(0., 1.);
         }
 
-        if self.sizing_mode.is_normal() {
-            0.
-        } else {
-            1.
-        }
+        if self.sizing_mode.is_normal() { 0. } else { 1. }
     }
 
     /// Returns `None` if the border is hidden and `Some(width)` if it should be shown.
-    pub fn effective_border_width(&self) -> Option<f64> {
+    pub const fn effective_border_width(&self) -> Option<f64> {
         if !self.sizing_mode.is_normal() {
             return None;
         }
@@ -1372,8 +1371,8 @@ impl<W: LayoutElement> Tile<W> {
             let val = resize.anim.value();
             let size_from = resize.size_from.to_f64();
 
-            size.w = f64::max(1., size_from.w + (size.w - size_from.w) * val);
-            size.h = f64::max(1., size_from.h + (size.h - size_from.h) * val);
+            size.w = f64::max(1., (size.w - size_from.w).mul_add(val, size_from.w));
+            size.h = f64::max(1., (size.h - size_from.h).mul_add(val, size_from.h));
             size = size
                 .to_physical_precise_round(self.scale)
                 .to_logical(self.scale);
@@ -1389,8 +1388,8 @@ impl<W: LayoutElement> Tile<W> {
             let val = resize.anim.value();
             let size_from = resize.tile_size_from.to_f64();
 
-            size.w = f64::max(1., size_from.w + (size.w - size_from.w) * val);
-            size.h = f64::max(1., size_from.h + (size.h - size_from.h) * val);
+            size.w = f64::max(1., (size.w - size_from.w).mul_add(val, size_from.w));
+            size.h = f64::max(1., (size.h - size_from.h).mul_add(val, size_from.h));
             size = size
                 .to_physical_precise_round(self.scale)
                 .to_logical(self.scale);
@@ -1441,20 +1440,19 @@ impl<W: LayoutElement> Tile<W> {
                 windows,
                 focus_idx: _,
             } = &self.window
-            {
-                if let Some(hit_idx) = self.tab_indicator.hit(
+                && let Some(hit_idx) = self.tab_indicator.hit(
                     Rectangle::from_size(self.tile_bounding_box()),
                     windows.len(),
                     self.scale,
                     point,
-                ) {
-                    return Some((
-                        windows.get(hit_idx),
-                        HitType::Activate {
-                            is_tab_indicator: true,
-                        },
-                    ));
-                }
+                )
+            {
+                return Some((
+                    windows.get(hit_idx),
+                    HitType::Activate {
+                        is_tab_indicator: true,
+                    },
+                ));
             }
 
             Some((
@@ -1477,8 +1475,8 @@ impl<W: LayoutElement> Tile<W> {
         // Can't go through effective_border_width() because we might be fullscreen.
         if !self.border.is_off() {
             let width = self.border.width();
-            size.w = f64::max(1., size.w - width * 2.);
-            size.h = f64::max(1., size.h - width * 2.);
+            size.w = f64::max(1., width.mul_add(-2., size.w));
+            size.h = f64::max(1., width.mul_add(-2., size.h));
         }
 
         size -= self.tab_indicator_extra_size();
@@ -1490,7 +1488,7 @@ impl<W: LayoutElement> Tile<W> {
             size.to_i32_floor(),
             SizingMode::Normal,
             animate,
-            transaction.clone(),
+            transaction,
         );
     }
 
@@ -1498,7 +1496,7 @@ impl<W: LayoutElement> Tile<W> {
         (if self.border.is_off() {
             size
         } else {
-            size + self.border.width() * 2.
+            self.border.width().mul_add(2., size)
         }) + self.tab_indicator_extra_size().w
     }
 
@@ -1506,7 +1504,7 @@ impl<W: LayoutElement> Tile<W> {
         (if self.border.is_off() {
             size
         } else {
-            size + self.border.width() * 2.
+            self.border.width().mul_add(2., size)
         }) + self.tab_indicator_extra_size().h
     }
 
@@ -1514,7 +1512,7 @@ impl<W: LayoutElement> Tile<W> {
         (if self.border.is_off() {
             size
         } else {
-            size - self.border.width() * 2.
+            self.border.width().mul_add(-2., size)
         }) - self.tab_indicator_extra_size().w
     }
 
@@ -1522,7 +1520,7 @@ impl<W: LayoutElement> Tile<W> {
         (if self.border.is_off() {
             size
         } else {
-            size - self.border.width() * 2.
+            self.border.width().mul_add(-2., size)
         }) - self.tab_indicator_extra_size().h
     }
 
@@ -1538,7 +1536,7 @@ impl<W: LayoutElement> Tile<W> {
             desired_size.to_i32_round(),
             SizingMode::Maximized,
             animate,
-            transaction.clone(),
+            transaction,
         );
     }
 
@@ -1549,7 +1547,7 @@ impl<W: LayoutElement> Tile<W> {
             desired_size.to_i32_round(),
             SizingMode::Fullscreen,
             animate,
-            transaction.clone(),
+            transaction,
         );
     }
 
@@ -1793,30 +1791,21 @@ impl<W: LayoutElement> Tile<W> {
                 rounded_corner_damage = Some(damage.with_location(window_render_loc).into());
             }
 
-            let clip_shader = clip_shader.clone();
+            let clip_shader = clip_shader;
 
             window_surface = Some(window.normal.into_iter().map(move |elem| match elem {
                 LayoutElementRenderElement::Wayland(elem) => {
                     // If we should clip to geometry, render a clipped window.
-                    if clip_to_geometry {
-                        if let Some(shader) = clip_shader.clone() {
-                            if ClippedSurfaceRenderElement::will_clip(&elem, scale, geo, radius) {
-                                let view_src = elem.view().src;
-                                let buf_size = elem.buffer_size();
-                                return ClippedSurfaceRenderElement::new(
-                                    elem,
-                                    view_src,
-                                    buf_size,
-                                    scale,
-                                    geo,
-                                    shader.clone(),
-                                    radius,
-                                    None,
-                                    0.,
-                                )
-                                .into();
-                            }
-                        }
+                    if clip_to_geometry
+                        && let Some(shader) = clip_shader.clone()
+                        && ClippedSurfaceRenderElement::will_clip(&elem, scale, geo, radius)
+                    {
+                        let view_src = elem.view().src;
+                        let buf_size = elem.buffer_size();
+                        return ClippedSurfaceRenderElement::new(
+                            elem, view_src, buf_size, scale, geo, shader, radius, None, 0.,
+                        )
+                        .into();
                     }
 
                     // Otherwise, render it normally.
@@ -2095,19 +2084,19 @@ impl<W: LayoutElement> Tile<W> {
         }
     }
 
-    pub fn take_unmap_snapshot(&mut self) -> Option<TileRenderSnapshot> {
+    pub const fn take_unmap_snapshot(&mut self) -> Option<TileRenderSnapshot> {
         self.unmap_snapshot.take()
     }
 
-    pub fn border(&self) -> &FocusRing {
+    pub const fn border(&self) -> &FocusRing {
         &self.border
     }
 
-    pub fn focus_ring(&self) -> &FocusRing {
+    pub const fn focus_ring(&self) -> &FocusRing {
         &self.focus_ring
     }
 
-    pub fn options(&self) -> &Rc<Options> {
+    pub const fn options(&self) -> &Rc<Options> {
         &self.options
     }
 

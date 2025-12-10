@@ -38,7 +38,7 @@ impl ScrollSwipeGesture {
         }
     }
 
-    pub fn reset(&mut self) -> bool {
+    pub const fn reset(&mut self) -> bool {
         if self.ongoing {
             self.ongoing = false;
             true
@@ -47,7 +47,7 @@ impl ScrollSwipeGesture {
         }
     }
 
-    pub fn is_vertical(&self) -> bool {
+    pub const fn is_vertical(&self) -> bool {
         self.vertical
     }
 }
@@ -60,10 +60,10 @@ impl Default for ScrollSwipeGesture {
 
 impl Action {
     pub fn begin(self) -> bool {
-        self == Action::BeginUpdate
+        self == Self::BeginUpdate
     }
 
     pub fn end(self) -> bool {
-        self == Action::End
+        self == Self::End
     }
 }

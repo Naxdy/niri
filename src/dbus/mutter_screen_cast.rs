@@ -7,7 +7,7 @@ use serde::Deserialize;
 use zbus::fdo::RequestNameFlags;
 use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, Value};
-use zbus::{fdo, interface, ObjectServer};
+use zbus::{ObjectServer, fdo, interface};
 
 use super::Start;
 use crate::backend::IpcOutputMap;
@@ -133,7 +133,7 @@ impl ScreenCast {
             Err(err) => {
                 return Err(fdo::Error::Failed(format!(
                     "error creating session object: {err:?}"
-                )))
+                )));
             }
         }
 
@@ -168,7 +168,7 @@ impl Session {
             return;
         }
 
-        Session::closed(&ctxt).await.unwrap();
+        Self::closed(&ctxt).await.unwrap();
 
         if let Err(err) = self.to_niri.send(ScreenCastToNiri::StopCast {
             session_id: self.id,
@@ -184,7 +184,7 @@ impl Session {
                 .unwrap();
         }
 
-        server.remove::<Session, _>(ctxt.path()).await.unwrap();
+        server.remove::<Self, _>(ctxt.path()).await.unwrap();
     }
 
     async fn record_monitor(
@@ -230,7 +230,7 @@ impl Session {
             Err(err) => {
                 return Err(fdo::Error::Failed(format!(
                     "error creating stream object: {err:?}"
-                )))
+                )));
             }
         }
 
@@ -269,7 +269,7 @@ impl Session {
             Err(err) => {
                 return Err(fdo::Error::Failed(format!(
                     "error creating stream object: {err:?}"
-                )))
+                )));
             }
         }
 
@@ -284,7 +284,7 @@ impl Session {
 impl Stream {
     #[zbus(signal)]
     pub async fn pipe_wire_stream_added(ctxt: &SignalEmitter<'_>, node_id: u32)
-        -> zbus::Result<()>;
+    -> zbus::Result<()>;
 
     #[zbus(property)]
     async fn parameters(&self) -> StreamParameters {
@@ -399,10 +399,10 @@ impl Stream {
 impl StreamTarget {
     fn make_id(&self) -> StreamTargetId {
         match self {
-            StreamTarget::Output(output) => StreamTargetId::Output {
+            Self::Output(output) => StreamTargetId::Output {
                 name: output.name.clone(),
             },
-            StreamTarget::Window { id } => StreamTargetId::Window { id: *id },
+            Self::Window { id } => StreamTargetId::Window { id: *id },
         }
     }
 }

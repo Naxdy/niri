@@ -127,28 +127,28 @@ impl<'a> WindowRef<'a> {
         }
     }
 
-    pub fn is_focused(self) -> bool {
+    pub const fn is_focused(self) -> bool {
         match self {
             WindowRef::Unmapped(_) => false,
             WindowRef::Mapped(mapped) => mapped.is_focused(),
         }
     }
 
-    pub fn is_urgent(self) -> bool {
+    pub const fn is_urgent(self) -> bool {
         match self {
             WindowRef::Unmapped(_) => false,
             WindowRef::Mapped(mapped) => mapped.is_urgent(),
         }
     }
 
-    pub fn is_active_in_column(self) -> bool {
+    pub const fn is_active_in_column(self) -> bool {
         match self {
             WindowRef::Unmapped(_) => true,
             WindowRef::Mapped(mapped) => mapped.is_active_in_column(),
         }
     }
 
-    pub fn is_floating(self) -> bool {
+    pub const fn is_floating(self) -> bool {
         match self {
             // FIXME: This means you cannot set initial configure rules based on is-floating. I'm
             // not sure there's a good way to support it, since this matcher makes a cycle with the
@@ -163,7 +163,7 @@ impl<'a> WindowRef<'a> {
         }
     }
 
-    pub fn is_window_cast_target(self) -> bool {
+    pub const fn is_window_cast_target(self) -> bool {
         match self {
             WindowRef::Unmapped(_) => false,
             WindowRef::Mapped(mapped) => mapped.is_window_cast_target(),
@@ -175,12 +175,12 @@ impl ResolvedWindowRules {
     pub fn compute(rules: &[WindowRule], window: WindowRef, is_at_startup: bool) -> Self {
         let _span = tracy_client::span!("ResolvedWindowRules::compute");
 
-        let mut resolved = ResolvedWindowRules::default();
+        let mut resolved = Self::default();
 
         with_toplevel_role(window.toplevel(), |role| {
             // Ensure server_pending like in Smithay's with_pending_state().
             if role.server_pending.is_none() {
-                role.server_pending = Some(role.current_server_state().clone());
+                role.server_pending = Some(role.current_server_state());
             }
 
             let mut open_on_output = None;
@@ -188,10 +188,10 @@ impl ResolvedWindowRules {
 
             for rule in rules {
                 let matches = |m: &Match| {
-                    if let Some(at_startup) = m.at_startup {
-                        if at_startup != is_at_startup {
-                            return false;
-                        }
+                    if let Some(at_startup) = m.at_startup
+                        && at_startup != is_at_startup
+                    {
+                        return false;
                     }
 
                     window_matches(window, role, m)
@@ -370,16 +370,16 @@ fn window_matches(window: WindowRef, role: &XdgToplevelSurfaceRoleAttributes, m:
     // Must be ensured by the caller.
     let server_pending = role.server_pending.as_ref().unwrap();
 
-    if let Some(is_focused) = m.is_focused {
-        if window.is_focused() != is_focused {
-            return false;
-        }
+    if let Some(is_focused) = m.is_focused
+        && window.is_focused() != is_focused
+    {
+        return false;
     }
 
-    if let Some(is_urgent) = m.is_urgent {
-        if window.is_urgent() != is_urgent {
-            return false;
-        }
+    if let Some(is_urgent) = m.is_urgent
+        && window.is_urgent() != is_urgent
+    {
+        return false;
     }
 
     if let Some(is_active) = m.is_active {
@@ -410,22 +410,22 @@ fn window_matches(window: WindowRef, role: &XdgToplevelSurfaceRoleAttributes, m:
         }
     }
 
-    if let Some(is_active_in_column) = m.is_active_in_column {
-        if window.is_active_in_column() != is_active_in_column {
-            return false;
-        }
+    if let Some(is_active_in_column) = m.is_active_in_column
+        && window.is_active_in_column() != is_active_in_column
+    {
+        return false;
     }
 
-    if let Some(is_floating) = m.is_floating {
-        if window.is_floating() != is_floating {
-            return false;
-        }
+    if let Some(is_floating) = m.is_floating
+        && window.is_floating() != is_floating
+    {
+        return false;
     }
 
-    if let Some(is_window_cast_target) = m.is_window_cast_target {
-        if window.is_window_cast_target() != is_window_cast_target {
-            return false;
-        }
+    if let Some(is_window_cast_target) = m.is_window_cast_target
+        && window.is_window_cast_target() != is_window_cast_target
+    {
+        return false;
     }
 
     true

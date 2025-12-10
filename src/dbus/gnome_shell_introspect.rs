@@ -58,7 +58,7 @@ impl Introspect {
 }
 
 impl Introspect {
-    pub fn new(
+    pub const fn new(
         to_niri: calloop::channel::Sender<IntrospectToNiri>,
         from_niri: async_channel::Receiver<NiriToIntrospect>,
     ) -> Self {

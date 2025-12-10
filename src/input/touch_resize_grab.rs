@@ -1,9 +1,9 @@
 use smithay::desktop::Window;
+use smithay::input::SeatHandler;
 use smithay::input::touch::{
     DownEvent, GrabStartData as TouchGrabStartData, MotionEvent, OrientationEvent, ShapeEvent,
     TouchGrab, TouchInnerHandle, UpEvent,
 };
-use smithay::input::SeatHandler;
 use smithay::utils::{IsAlive, Logical, Point, Serial};
 
 use crate::niri::State;
@@ -14,7 +14,7 @@ pub struct TouchResizeGrab {
 }
 
 impl TouchResizeGrab {
-    pub fn new(start_data: TouchGrabStartData<State>, window: Window) -> Self {
+    pub const fn new(start_data: TouchGrabStartData<State>, window: Window) -> Self {
         Self { start_data, window }
     }
 

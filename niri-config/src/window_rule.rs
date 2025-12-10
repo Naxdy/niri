@@ -72,7 +72,7 @@ pub struct WindowRule {
     pub tiled_state: Option<bool>,
 }
 
-#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq, Eq)]
 pub struct Match {
     #[knuffel(property, str)]
     pub app_id: Option<RegexEq>,

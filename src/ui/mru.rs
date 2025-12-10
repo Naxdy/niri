@@ -13,13 +13,13 @@ use niri_config::{
 use pango::FontDescription;
 use pangocairo::cairo::{self, ImageSurface};
 use smithay::backend::allocator::Fourcc;
+use smithay::backend::renderer::Color32F;
+use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::{
     Relocate, RelocateRenderElement, RescaleRenderElement,
 };
-use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
-use smithay::backend::renderer::Color32F;
 use smithay::input::keyboard::Keysym;
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
@@ -29,6 +29,7 @@ use crate::layout::focus_ring::{FocusRing, FocusRingRenderElement};
 use crate::layout::{Layout, LayoutElement as _, LayoutElementRenderElement};
 use crate::niri::Niri;
 use crate::niri_render_elements;
+use crate::render_helpers::RenderTarget;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::clipped_surface::ClippedSurfaceRenderElement;
 use crate::render_helpers::gradient_fade_texture::GradientFadeTextureRenderElement;
@@ -38,13 +39,12 @@ use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shaders::Shaders;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
-use crate::render_helpers::RenderTarget;
 use crate::utils::{
     baba_is_float_offset, output_size, round_logical_in_physical, to_physical_precise_round,
     with_toplevel_role,
 };
-use crate::window::mapped::MappedId;
 use crate::window::Mapped;
+use crate::window::mapped::MappedId;
 
 #[cfg(test)]
 mod tests;
@@ -264,7 +264,7 @@ impl Thumbnail {
         }
     }
 
-    fn are_animations_ongoing(&self) -> bool {
+    const fn are_animations_ongoing(&self) -> bool {
         self.open_animation.is_some() || self.move_animation.is_some()
     }
 
@@ -389,23 +389,15 @@ impl Thumbnail {
         // FIXME: deduplicate code with Tile::render_inner()
         let elems = elems.map(move |elem| match elem {
             LayoutElementRenderElement::Wayland(elem) => {
-                if let Some(shader) = clip_shader.clone() {
-                    if ClippedSurfaceRenderElement::will_clip(&elem, s, geo, radius) {
-                        let view_src = elem.view().src;
-                        let buf_size = elem.buffer_size();
-                        let elem = ClippedSurfaceRenderElement::new(
-                            elem,
-                            view_src,
-                            buf_size,
-                            s,
-                            geo,
-                            shader.clone(),
-                            radius,
-                            None,
-                            0.,
-                        );
-                        return ThumbnailRenderElement::ClippedSurface(elem);
-                    }
+                if let Some(shader) = clip_shader.clone()
+                    && ClippedSurfaceRenderElement::will_clip(&elem, s, geo, radius)
+                {
+                    let view_src = elem.view().src;
+                    let buf_size = elem.buffer_size();
+                    let elem = ClippedSurfaceRenderElement::new(
+                        elem, view_src, buf_size, s, geo, shader, radius, None, 0.,
+                    );
+                    return ThumbnailRenderElement::ClippedSurface(elem);
                 }
 
                 // If we don't have the shader, render it normally.
@@ -447,8 +439,8 @@ impl Thumbnail {
                 y: preview_geo.size.h / geo.size.h,
             };
             let offset = Point::new(
-                preview_geo.size.w - (geo.size.w * thumb_scale.x),
-                preview_geo.size.h - (geo.size.h * thumb_scale.y),
+                geo.size.w.mul_add(-thumb_scale.x, preview_geo.size.w),
+                geo.size.h.mul_add(-thumb_scale.y, preview_geo.size.h),
             )
             .downscale(2.);
             let elem = RescaleRenderElement::from_element(elem, Point::new(0, 0), thumb_scale);
@@ -620,7 +612,7 @@ impl WindowMru {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.thumbnails.is_empty()
     }
 
@@ -861,30 +853,30 @@ fn match_filter(scope: MruScope, app_id_filter: Option<&str>) -> impl Fn(&Thumbn
 impl ViewPos {
     fn current(&self) -> f64 {
         match self {
-            ViewPos::Static(pos) => *pos,
-            ViewPos::Animation(anim) => anim.value(),
+            Self::Static(pos) => *pos,
+            Self::Animation(anim) => anim.value(),
         }
     }
 
-    fn target(&self) -> f64 {
+    const fn target(&self) -> f64 {
         match self {
-            ViewPos::Static(pos) => *pos,
-            ViewPos::Animation(anim) => anim.to(),
+            Self::Static(pos) => *pos,
+            Self::Animation(anim) => anim.to(),
         }
     }
 
-    fn are_animations_ongoing(&self) -> bool {
+    const fn are_animations_ongoing(&self) -> bool {
         match self {
-            ViewPos::Static(_) => false,
-            ViewPos::Animation(_) => true,
+            Self::Static(_) => false,
+            Self::Animation(_) => true,
         }
     }
 
     fn advance_animations(&mut self) {
-        if let ViewPos::Animation(anim) = self {
-            if anim.is_done() {
-                *self = ViewPos::Static(anim.to());
-            }
+        if let Self::Animation(anim) = self
+            && anim.is_done()
+        {
+            *self = Self::Static(anim.to());
         }
     }
 
@@ -896,13 +888,13 @@ impl ViewPos {
     ) {
         // FIXME: also compute and use current velocity.
         let anim = Animation::new(clock, self.current() + from, self.target(), 0., config);
-        *self = ViewPos::Animation(anim);
+        *self = Self::Animation(anim);
     }
 
     fn offset(&mut self, delta: f64) {
         match self {
-            ViewPos::Static(pos) => *pos += delta,
-            ViewPos::Animation(anim) => anim.offset(delta),
+            Self::Static(pos) => *pos += delta,
+            Self::Animation(anim) => anim.offset(delta),
         }
     }
 }
@@ -934,7 +926,7 @@ impl WindowMruUi {
         inner.update_config();
     }
 
-    pub fn is_open(&self) -> bool {
+    pub const fn is_open(&self) -> bool {
         matches!(self.state, UiState::Open { .. })
     }
 
@@ -1068,14 +1060,14 @@ impl WindowMruUi {
         inner.wmru.last();
     }
 
-    pub fn scope(&self) -> MruScope {
+    pub const fn scope(&self) -> MruScope {
         match &self.state {
             UiState::Closed { previous_scope, .. } => *previous_scope,
             UiState::Open(inner) | UiState::Closing { inner, .. } => inner.wmru.scope,
         }
     }
 
-    pub fn current_window_id(&self) -> Option<MappedId> {
+    pub const fn current_window_id(&self) -> Option<MappedId> {
         let UiState::Open(inner) = &self.state else {
             return None;
         };
@@ -1234,7 +1226,7 @@ impl WindowMruUi {
             .chain(&self.dynamic_opened_binds)
     }
 
-    pub fn output(&self) -> Option<&Output> {
+    pub const fn output(&self) -> Option<&Output> {
         match &self.state {
             UiState::Open(inner) => Some(&inner.output),
             _ => None,
@@ -1316,7 +1308,7 @@ impl Inner {
         let output_size = output_size(&self.output);
 
         let working_x = STRUT + GAP;
-        let working_width = (output_size.w - working_x * 2.).max(0.);
+        let working_width = working_x.mul_add(-2., output_size.w).max(0.);
 
         let mut current_geo = Rectangle::default();
         let mut strip_width = 0.;
@@ -1581,7 +1573,7 @@ impl Inner {
             let size = texture.logical_size();
             let location = Point::new((output_size.w - size.w) / 2., padding * 2.);
             let elem = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
-                texture.clone(),
+                texture,
                 location,
                 1.,
                 None,
@@ -1665,7 +1657,7 @@ impl TitleTexture {
             .clone()
     }
 
-    fn get_stale(&self) -> Option<&MruTexture> {
+    const fn get_stale(&self) -> Option<&MruTexture> {
         if let Some(Some(texture)) = &self.texture {
             Some(texture)
         } else {

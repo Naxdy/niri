@@ -38,7 +38,7 @@ impl ServiceChannel {
 }
 
 impl ServiceChannel {
-    pub fn new(to_niri: calloop::channel::Sender<NewClient>) -> Self {
+    pub const fn new(to_niri: calloop::channel::Sender<NewClient>) -> Self {
         Self { to_niri }
     }
 }

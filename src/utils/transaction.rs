@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use atomic::Ordering;
-use calloop::ping::{make_ping, Ping};
-use calloop::timer::{TimeoutAction, Timer};
 use calloop::LoopHandle;
+use calloop::ping::{Ping, make_ping};
+use calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::Client;
 use smithay::wayland::compositor::{Blocker, BlockerState};
 
@@ -95,15 +95,18 @@ impl Transaction {
 
                     // FIXME: come up with some way to control the deadline timer from tests.
                     #[cfg(not(test))]
-                    match inner.upgrade() { Some(inner) => {
-                        trace!("deadline reached, completing transaction");
-                        inner.complete();
-                    } _ => {
-                        // We should remove the timer automatically. But this callback can still
-                        // just happen to run while the ping callback is scheduled, leading to this
-                        // branch being legitimately taken.
-                        trace!("transaction completed without removing the timer");
-                    }}
+                    match inner.upgrade() {
+                        Some(inner) => {
+                            trace!("deadline reached, completing transaction");
+                            inner.complete();
+                        }
+                        _ => {
+                            // We should remove the timer automatically. But this callback can still
+                            // just happen to run while the ping callback is scheduled, leading to this
+                            // branch being legitimately taken.
+                            trace!("transaction completed without removing the timer");
+                        }
+                    }
 
                     TimeoutAction::Drop
                 })
@@ -151,7 +154,7 @@ impl Drop for Transaction {
 }
 
 impl TransactionBlocker {
-    pub fn completed() -> Self {
+    pub const fn completed() -> Self {
         Self(Weak::new())
     }
 }
@@ -167,7 +170,7 @@ impl Blocker for TransactionBlocker {
 }
 
 impl Inner {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             completed: AtomicBool::new(false),
             notifications: Mutex::new(None),

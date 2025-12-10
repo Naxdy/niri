@@ -45,11 +45,11 @@ static OUTPUT_ID_COUNTER: IdCounter = IdCounter::new();
 pub struct OutputId(u64);
 
 impl OutputId {
-    fn next() -> OutputId {
-        OutputId(OUTPUT_ID_COUNTER.next())
+    fn next() -> Self {
+        Self(OUTPUT_ID_COUNTER.next())
     }
 
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -58,17 +58,17 @@ impl Backend {
     pub fn init(&mut self, niri: &mut Niri) {
         let _span = tracy_client::span!("Backend::init");
         match self {
-            Backend::Tty(tty) => tty.init(niri),
-            Backend::Winit(winit) => winit.init(niri),
-            Backend::Headless(headless) => headless.init(niri),
+            Self::Tty(tty) => tty.init(niri),
+            Self::Winit(winit) => winit.init(niri),
+            Self::Headless(headless) => headless.init(niri),
         }
     }
 
     pub fn seat_name(&self) -> String {
         match self {
-            Backend::Tty(tty) => tty.seat_name(),
-            Backend::Winit(winit) => winit.seat_name(),
-            Backend::Headless(headless) => headless.seat_name(),
+            Self::Tty(tty) => tty.seat_name(),
+            Self::Winit(winit) => winit.seat_name(),
+            Self::Headless(headless) => headless.seat_name(),
         }
     }
 
@@ -77,9 +77,9 @@ impl Backend {
         f: impl FnOnce(&mut GlesRenderer) -> T,
     ) -> Option<T> {
         match self {
-            Backend::Tty(tty) => tty.with_primary_renderer(f),
-            Backend::Winit(winit) => winit.with_primary_renderer(f),
-            Backend::Headless(headless) => headless.with_primary_renderer(f),
+            Self::Tty(tty) => tty.with_primary_renderer(f),
+            Self::Winit(winit) => winit.with_primary_renderer(f),
+            Self::Headless(headless) => headless.with_primary_renderer(f),
         }
     }
 
@@ -90,70 +90,70 @@ impl Backend {
         target_presentation_time: Duration,
     ) -> RenderResult {
         match self {
-            Backend::Tty(tty) => tty.render(niri, output, target_presentation_time),
-            Backend::Winit(winit) => winit.render(niri, output),
-            Backend::Headless(headless) => headless.render(niri, output),
+            Self::Tty(tty) => tty.render(niri, output, target_presentation_time),
+            Self::Winit(winit) => winit.render(niri, output),
+            Self::Headless(headless) => headless.render(niri, output),
         }
     }
 
     pub fn mod_key(&self, config: &Config) -> ModKey {
         match self {
-            Backend::Winit(_) => config.input.mod_key_nested.unwrap_or({
-                if let Some(ModKey::Alt) = config.input.mod_key {
+            Self::Winit(_) => config.input.mod_key_nested.unwrap_or({
+                if config.input.mod_key == Some(ModKey::Alt) {
                     ModKey::Super
                 } else {
                     ModKey::Alt
                 }
             }),
-            Backend::Tty(_) | Backend::Headless(_) => config.input.mod_key.unwrap_or(ModKey::Super),
+            Self::Tty(_) | Self::Headless(_) => config.input.mod_key.unwrap_or(ModKey::Super),
         }
     }
 
     pub fn change_vt(&mut self, vt: i32) {
         match self {
-            Backend::Tty(tty) => tty.change_vt(vt),
-            Backend::Winit(_) => (),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.change_vt(vt),
+            Self::Winit(_) => (),
+            Self::Headless(_) => (),
         }
     }
 
     pub fn suspend(&mut self) {
         match self {
-            Backend::Tty(tty) => tty.suspend(),
-            Backend::Winit(_) => (),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.suspend(),
+            Self::Winit(_) => (),
+            Self::Headless(_) => (),
         }
     }
 
     pub fn toggle_debug_tint(&mut self) {
         match self {
-            Backend::Tty(tty) => tty.toggle_debug_tint(),
-            Backend::Winit(winit) => winit.toggle_debug_tint(),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.toggle_debug_tint(),
+            Self::Winit(winit) => winit.toggle_debug_tint(),
+            Self::Headless(_) => (),
         }
     }
 
     pub fn import_dmabuf(&mut self, dmabuf: &Dmabuf) -> bool {
         match self {
-            Backend::Tty(tty) => tty.import_dmabuf(dmabuf),
-            Backend::Winit(winit) => winit.import_dmabuf(dmabuf),
-            Backend::Headless(headless) => headless.import_dmabuf(dmabuf),
+            Self::Tty(tty) => tty.import_dmabuf(dmabuf),
+            Self::Winit(winit) => winit.import_dmabuf(dmabuf),
+            Self::Headless(headless) => headless.import_dmabuf(dmabuf),
         }
     }
 
     pub fn early_import(&mut self, surface: &WlSurface) {
         match self {
-            Backend::Tty(tty) => tty.early_import(surface),
-            Backend::Winit(_) => (),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.early_import(surface),
+            Self::Winit(_) => (),
+            Self::Headless(_) => (),
         }
     }
 
     pub fn ipc_outputs(&self) -> Arc<Mutex<IpcOutputMap>> {
         match self {
-            Backend::Tty(tty) => tty.ipc_outputs(),
-            Backend::Winit(winit) => winit.ipc_outputs(),
-            Backend::Headless(headless) => headless.ipc_outputs(),
+            Self::Tty(tty) => tty.ipc_outputs(),
+            Self::Winit(winit) => winit.ipc_outputs(),
+            Self::Headless(headless) => headless.ipc_outputs(),
         }
     }
 
@@ -163,45 +163,45 @@ impl Backend {
     ) -> Option<smithay::backend::allocator::gbm::GbmDevice<smithay::backend::drm::DrmDeviceFd>>
     {
         match self {
-            Backend::Tty(tty) => tty.primary_gbm_device(),
-            Backend::Winit(_) => None,
-            Backend::Headless(_) => None,
+            Self::Tty(tty) => tty.primary_gbm_device(),
+            Self::Winit(_) => None,
+            Self::Headless(_) => None,
         }
     }
 
     pub fn set_monitors_active(&mut self, active: bool) {
         match self {
-            Backend::Tty(tty) => tty.set_monitors_active(active),
-            Backend::Winit(_) => (),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.set_monitors_active(active),
+            Self::Winit(_) => (),
+            Self::Headless(_) => (),
         }
     }
 
     pub fn set_output_on_demand_vrr(&mut self, niri: &mut Niri, output: &Output, enable_vrr: bool) {
         match self {
-            Backend::Tty(tty) => tty.set_output_on_demand_vrr(niri, output, enable_vrr),
-            Backend::Winit(_) => (),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.set_output_on_demand_vrr(niri, output, enable_vrr),
+            Self::Winit(_) => (),
+            Self::Headless(_) => (),
         }
     }
 
     pub fn update_ignored_nodes_config(&mut self, niri: &mut Niri) {
         match self {
-            Backend::Tty(tty) => tty.update_ignored_nodes_config(niri),
-            Backend::Winit(_) => (),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.update_ignored_nodes_config(niri),
+            Self::Winit(_) => (),
+            Self::Headless(_) => (),
         }
     }
 
     pub fn on_output_config_changed(&mut self, niri: &mut Niri) {
         match self {
-            Backend::Tty(tty) => tty.on_output_config_changed(niri),
-            Backend::Winit(_) => (),
-            Backend::Headless(_) => (),
+            Self::Tty(tty) => tty.on_output_config_changed(niri),
+            Self::Winit(_) => (),
+            Self::Headless(_) => (),
         }
     }
 
-    pub fn tty_checked(&mut self) -> Option<&mut Tty> {
+    pub const fn tty_checked(&mut self) -> Option<&mut Tty> {
         if let Self::Tty(v) = self {
             Some(v)
         } else {

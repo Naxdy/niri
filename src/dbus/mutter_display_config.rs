@@ -210,7 +210,7 @@ impl DisplayConfig {
                             x => {
                                 return Err(zbus::fdo::Error::Failed(format!(
                                     "Unknown transform {x}",
-                                )))
+                                )));
                             }
                         },
                         position: Some(niri_config::Position {
@@ -256,33 +256,33 @@ impl DisplayConfig {
     pub async fn monitors_changed(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     #[zbus(property)]
-    fn power_save_mode(&self) -> i32 {
+    const fn power_save_mode(&self) -> i32 {
         -1
     }
 
     #[zbus(property)]
-    fn set_power_save_mode(&self, _mode: i32) -> zbus::Result<()> {
+    const fn set_power_save_mode(&self, _mode: i32) -> zbus::Result<()> {
         Err(zbus::Error::Unsupported)
     }
 
     #[zbus(property)]
-    fn panel_orientation_managed(&self) -> bool {
+    const fn panel_orientation_managed(&self) -> bool {
         false
     }
 
     #[zbus(property)]
-    fn apply_monitors_config_allowed(&self) -> bool {
+    const fn apply_monitors_config_allowed(&self) -> bool {
         true
     }
 
     #[zbus(property)]
-    fn night_light_supported(&self) -> bool {
+    const fn night_light_supported(&self) -> bool {
         false
     }
 }
 
 impl DisplayConfig {
-    pub fn new(
+    pub const fn new(
         to_niri: calloop::channel::Sender<HashMap<String, Option<niri_config::Output>>>,
         ipc_outputs: Arc<Mutex<IpcOutputMap>>,
     ) -> Self {

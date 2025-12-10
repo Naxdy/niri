@@ -36,7 +36,7 @@ impl Headless {
         }
     }
 
-    pub fn init(&mut self, _niri: &mut Niri) {}
+    pub const fn init(&mut self, _niri: &mut Niri) {}
 
     pub fn add_renderer(&mut self) -> anyhow::Result<()> {
         if self.renderer.is_some() {

@@ -45,7 +45,7 @@ impl FocusRing {
         }
     }
 
-    pub fn update_config(&mut self, config: niri_config::FocusRing) {
+    pub const fn update_config(&mut self, config: niri_config::FocusRing) {
         self.config = config;
     }
 
@@ -141,20 +141,29 @@ impl FocusRing {
             );
 
             // Top edge.
-            self.sizes[0] = Size::from((win_size.w + width * 2. - top_left - top_right, width));
+            self.sizes[0] =
+                Size::from((width.mul_add(2., win_size.w) - top_left - top_right, width));
             self.locations[0] = Point::from((-width + top_left, -width));
 
             // Bottom edge.
-            self.sizes[1] =
-                Size::from((win_size.w + width * 2. - bottom_left - bottom_right, width));
+            self.sizes[1] = Size::from((
+                width.mul_add(2., win_size.w) - bottom_left - bottom_right,
+                width,
+            ));
             self.locations[1] = Point::from((-width + bottom_left, win_size.h));
 
             // Left edge.
-            self.sizes[2] = Size::from((width, win_size.h + width * 2. - top_left - bottom_left));
+            self.sizes[2] = Size::from((
+                width,
+                width.mul_add(2., win_size.h) - top_left - bottom_left,
+            ));
             self.locations[2] = Point::from((-width, -width + top_left));
 
             // Right edge.
-            self.sizes[3] = Size::from((width, win_size.h + width * 2. - top_right - bottom_right));
+            self.sizes[3] = Size::from((
+                width,
+                width.mul_add(2., win_size.h) - top_right - bottom_right,
+            ));
             self.locations[3] = Point::from((win_size.w, -width + top_right));
 
             // Top-left corner.
@@ -262,19 +271,19 @@ impl FocusRing {
         rv.into_iter()
     }
 
-    pub fn width(&self) -> f64 {
+    pub const fn width(&self) -> f64 {
         self.config.width
     }
 
-    pub fn is_off(&self) -> bool {
+    pub const fn is_off(&self) -> bool {
         self.config.off
     }
 
-    pub fn set_thicken_corners(&mut self, value: bool) {
+    pub const fn set_thicken_corners(&mut self, value: bool) {
         self.thicken_corners = value;
     }
 
-    pub fn config(&self) -> &niri_config::FocusRing {
+    pub const fn config(&self) -> &niri_config::FocusRing {
         &self.config
     }
 }

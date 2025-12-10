@@ -1,6 +1,6 @@
+use smithay::backend::renderer::Renderer;
 use smithay::backend::renderer::element::{Element, Id, RenderElement};
 use smithay::backend::renderer::utils::CommitCounter;
-use smithay::backend::renderer::Renderer;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size};
 
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ impl ExtraDamage {
         self.commit.increment();
     }
 
-    pub fn with_location(mut self, location: Point<f64, Logical>) -> Self {
+    pub const fn with_location(mut self, location: Point<f64, Logical>) -> Self {
         self.geometry.loc = location;
         self
     }

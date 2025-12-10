@@ -15,13 +15,13 @@ use smithay::backend::input::{InputEvent, TabletToolDescriptor};
 use smithay::desktop::{PopupKind, PopupManager};
 use smithay::input::dnd::{DnDGrab, DndGrabHandler};
 use smithay::input::pointer::{CursorIcon, CursorImageStatus, Focus, PointerHandle};
-use smithay::input::{keyboard, Seat, SeatHandler, SeatState};
+use smithay::input::{Seat, SeatHandler, SeatState, keyboard};
 use smithay::output::Output;
-use smithay::reexports::rustix::fs::{fcntl_setfl, OFlags};
+use smithay::reexports::rustix::fs::{OFlags, fcntl_setfl};
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
+use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Logical, Point, Rectangle};
 use smithay::wayland::compositor::{get_parent, with_states};
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
@@ -36,18 +36,18 @@ use smithay::wayland::keyboard_shortcuts_inhibit::{
     KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
 };
 use smithay::wayland::output::OutputHandler;
-use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraintsHandler};
+use smithay::wayland::pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint};
 use smithay::wayland::security_context::{
     SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
 };
 use smithay::wayland::selection::data_device::{
-    set_data_device_focus, DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler,
+    DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
 };
 use smithay::wayland::selection::ext_data_control::{
     DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState,
 };
 use smithay::wayland::selection::primary_selection::{
-    set_primary_focus, PrimarySelectionHandler, PrimarySelectionState,
+    PrimarySelectionHandler, PrimarySelectionState, set_primary_focus,
 };
 use smithay::wayland::selection::wlr_data_control::{
     DataControlHandler as WlrDataControlHandler, DataControlState as WlrDataControlState,
@@ -104,7 +104,7 @@ impl SeatHandler for State {
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
 
-    fn seat_state(&mut self) -> &mut SeatState<State> {
+    fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.niri.seat_state
     }
 
@@ -455,7 +455,7 @@ impl DmabufHandler for State {
         notifier: ImportNotifier,
     ) {
         if self.backend.import_dmabuf(&dmabuf) {
-            let _ = notifier.successful::<State>();
+            let _ = notifier.successful::<Self>();
         } else {
             notifier.failed();
         }
@@ -564,15 +564,15 @@ impl ForeignToplevelHandler for State {
         {
             let window = mapped.window.clone();
 
-            if let Some(requested_output) = wl_output.as_ref().and_then(Output::from_resource) {
-                if Some(&requested_output) != current_output {
-                    self.niri.layout.move_to_output(
-                        Some(&window),
-                        &requested_output,
-                        None,
-                        ActivateWindow::Smart,
-                    );
-                }
+            if let Some(requested_output) = wl_output.as_ref().and_then(Output::from_resource)
+                && Some(&requested_output) != current_output
+            {
+                self.niri.layout.move_to_output(
+                    Some(&window),
+                    &requested_output,
+                    None,
+                    ActivateWindow::Smart,
+                );
             }
 
             self.niri.layout.set_fullscreen(&window, true);
@@ -610,10 +610,10 @@ impl ExtWorkspaceHandler for State {
     fn activate_workspace(&mut self, id: WorkspaceId) {
         let reference = niri_config::WorkspaceReference::Id(id.get());
         if let Some((mut output, index)) = self.niri.find_output_and_workspace_index(reference) {
-            if let Some(active) = self.niri.layout.active_output() {
-                if output.as_ref() == Some(active) {
-                    output = None;
-                }
+            if let Some(active) = self.niri.layout.active_output()
+                && output.as_ref() == Some(active)
+            {
+                output = None;
             }
 
             if let Some(output) = output {
@@ -787,7 +787,7 @@ impl XdgActivationHandler for State {
             data.user_data.insert_if_missing(|| UrgentOnlyMarker);
             return true;
         };
-        let Some(seat) = Seat::<State>::from_resource(&seat) else {
+        let Some(seat) = Seat::<Self>::from_resource(&seat) else {
             return false;
         };
 

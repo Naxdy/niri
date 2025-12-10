@@ -16,7 +16,7 @@ impl RubberBand {
         let c = self.stiffness;
         let d = self.limit;
 
-        c * d * d / (c * x + d).powi(2)
+        c * d * d / c.mul_add(x, d).powi(2)
     }
 
     pub fn clamp(&self, min: f64, max: f64, x: f64) -> f64 {

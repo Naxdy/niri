@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::utils::{Flag, MergeWith};
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Debug {
     pub preview_render: Option<PreviewRender>,
     pub dbus_interfaces_in_non_session_instances: bool,
@@ -26,7 +26,7 @@ pub struct Debug {
     pub skip_cursor_only_updates_during_vrr: bool,
 }
 
-#[derive(knuffel::Decode, Debug, Default, PartialEq)]
+#[derive(knuffel::Decode, Debug, Default, PartialEq, Eq)]
 pub struct DebugPart {
     #[knuffel(child, unwrap(argument))]
     pub preview_render: Option<PreviewRender>,

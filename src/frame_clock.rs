@@ -31,7 +31,7 @@ impl FrameClock {
             .map(|r| Duration::from_nanos(r.get()))
     }
 
-    pub fn set_vrr(&mut self, vrr: bool) {
+    pub const fn set_vrr(&mut self, vrr: bool) {
         if self.vrr == vrr {
             return;
         }
@@ -40,11 +40,11 @@ impl FrameClock {
         self.last_presentation_time = None;
     }
 
-    pub fn vrr(&self) -> bool {
+    pub const fn vrr(&self) -> bool {
         self.vrr
     }
 
-    pub fn presented(&mut self, presentation_time: Duration) {
+    pub const fn presented(&mut self, presentation_time: Duration) {
         if presentation_time.is_zero() {
             // Not interested in these.
             return;

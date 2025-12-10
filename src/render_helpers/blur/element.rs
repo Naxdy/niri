@@ -11,7 +11,7 @@ use niri_config::CornerRadius;
 use pango::glib::property::PropertySet;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::gles::{
-    ffi, GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform,
+    GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform, ffi,
 };
 use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
 use smithay::backend::renderer::{Offscreen, Texture};
@@ -19,10 +19,10 @@ use smithay::reexports::gbm::Format;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
-use crate::render_helpers::blur::{get_rerender_at, EffectsFramebuffersUserData};
+use crate::render_helpers::blur::{EffectsFramebuffersUserData, get_rerender_at};
 use crate::render_helpers::render_data::RendererData;
 use crate::render_helpers::renderer::AsGlesFrame;
-use crate::render_helpers::shaders::{mat3_uniform, Shaders};
+use crate::render_helpers::shaders::{Shaders, mat3_uniform};
 
 use super::{CurrentBuffer, EffectsFramebuffers};
 
@@ -102,10 +102,10 @@ impl Blur {
     // TODO: the alpha tex methods can probably do better / without clearing `self.inner` entirely
 
     pub fn clear_alpha_tex(&self) {
-        if let Some(inner) = self.inner.borrow_mut().as_mut() {
-            if self.alpha_tex.borrow().is_some() {
-                inner.damage_all();
-            }
+        if let Some(inner) = self.inner.borrow_mut().as_mut()
+            && self.alpha_tex.borrow().is_some()
+        {
+            inner.damage_all();
         }
 
         self.alpha_tex.set(None);
@@ -116,7 +116,7 @@ impl Blur {
         self.inner.set(None);
     }
 
-    pub fn update_render_elements(&mut self, is_active: bool) {
+    pub const fn update_render_elements(&mut self, is_active: bool) {
         self.config.on = is_active;
     }
 
@@ -150,8 +150,8 @@ impl Blur {
             let mut sample_area = destination_area.to_f64().upscale(zoom);
             let center =
                 (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.).to_point();
-            sample_area.loc.x = center.x - (center.x - destination_area.loc.x as f64) * zoom;
-            sample_area.loc.y = center.y - (center.y - destination_area.loc.y as f64) * zoom;
+            sample_area.loc.x = (center.x - destination_area.loc.x as f64).mul_add(-zoom, center.x);
+            sample_area.loc.y = (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
             sample_area.to_i32_round()
         } else {
             destination_area
@@ -577,7 +577,7 @@ impl<'render> RenderElement<TtyRenderer<'render>> for BlurRenderElement {
     ) -> Result<(), TtyRendererError<'render>> {
         let _span = trace_span!("blur_draw_tty").entered();
 
-        <BlurRenderElement as RenderElement<GlesRenderer>>::draw(
+        <Self as RenderElement<GlesRenderer>>::draw(
             self,
             frame.as_gles_frame(),
             src,

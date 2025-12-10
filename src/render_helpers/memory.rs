@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use smithay::backend::allocator::format::get_bpp;
 use smithay::backend::allocator::Fourcc;
+use smithay::backend::allocator::format::get_bpp;
 use smithay::utils::{Buffer, Logical, Scale, Size, Transform};
 
 #[derive(Clone)]
@@ -41,19 +41,19 @@ impl MemoryBuffer {
         &self.data
     }
 
-    pub fn format(&self) -> Fourcc {
+    pub const fn format(&self) -> Fourcc {
         self.format
     }
 
-    pub fn size(&self) -> Size<i32, Buffer> {
+    pub const fn size(&self) -> Size<i32, Buffer> {
         self.size
     }
 
-    pub fn scale(&self) -> Scale<f64> {
+    pub const fn scale(&self) -> Scale<f64> {
         self.scale
     }
 
-    pub fn transform(&self) -> Transform {
+    pub const fn transform(&self) -> Transform {
         self.transform
     }
 

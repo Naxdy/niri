@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use calloop::generic::Generic;
@@ -49,7 +49,7 @@ impl ScreencopyQueue {
     }
 
     pub fn split(&mut self) -> (&mut OutputDamageTracker, Option<&Screencopy>) {
-        let ScreencopyQueue {
+        let Self {
             damage_tracker,
             screencopies,
         } = self;
@@ -434,27 +434,27 @@ impl Drop for Screencopy {
 
 impl Screencopy {
     /// Get the target buffer to copy to.
-    pub fn buffer(&self) -> &ScreencopyBuffer {
+    pub const fn buffer(&self) -> &ScreencopyBuffer {
         &self.buffer
     }
 
-    pub fn region_loc(&self) -> Point<i32, Physical> {
+    pub const fn region_loc(&self) -> Point<i32, Physical> {
         self.info.region_loc
     }
 
-    pub fn buffer_size(&self) -> Size<i32, Physical> {
+    pub const fn buffer_size(&self) -> Size<i32, Physical> {
         self.info.buffer_size
     }
 
-    pub fn output(&self) -> &Output {
+    pub const fn output(&self) -> &Output {
         &self.info.output
     }
 
-    pub fn overlay_cursor(&self) -> bool {
+    pub const fn overlay_cursor(&self) -> bool {
         self.info.overlay_cursor
     }
 
-    pub fn with_damage(&self) -> bool {
+    pub const fn with_damage(&self) -> bool {
         self.with_damage
     }
 

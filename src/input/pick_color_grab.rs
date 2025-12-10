@@ -2,24 +2,24 @@ use niri_ipc::PickedColor;
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::ButtonState;
 use smithay::backend::renderer::element::utils::{Relocate, RelocateRenderElement};
+use smithay::input::SeatHandler;
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
     GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
     GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
     MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
 };
-use smithay::input::SeatHandler;
 use smithay::utils::{Logical, Physical, Point, Scale, Size, Transform};
 
 use crate::niri::State;
-use crate::render_helpers::{render_to_vec, RenderTarget};
+use crate::render_helpers::{RenderTarget, render_to_vec};
 
 pub struct PickColorGrab {
     start_data: PointerGrabStartData<State>,
 }
 
 impl PickColorGrab {
-    pub fn new(start_data: PointerGrabStartData<State>) -> Self {
+    pub const fn new(start_data: PointerGrabStartData<State>) -> Self {
         Self { start_data }
     }
 

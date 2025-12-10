@@ -124,11 +124,11 @@ impl TryFrom<CompletionShell> for Shell {
 
     fn try_from(shell: CompletionShell) -> Result<Self, Self::Error> {
         match shell {
-            CompletionShell::Bash => Ok(Shell::Bash),
-            CompletionShell::Elvish => Ok(Shell::Elvish),
-            CompletionShell::Fish => Ok(Shell::Fish),
-            CompletionShell::PowerShell => Ok(Shell::PowerShell),
-            CompletionShell::Zsh => Ok(Shell::Zsh),
+            CompletionShell::Bash => Ok(Self::Bash),
+            CompletionShell::Elvish => Ok(Self::Elvish),
+            CompletionShell::Fish => Ok(Self::Fish),
+            CompletionShell::PowerShell => Ok(Self::PowerShell),
+            CompletionShell::Zsh => Ok(Self::Zsh),
             CompletionShell::Nushell => Err("Nushell should be handled separately"),
         }
     }

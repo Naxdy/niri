@@ -1,11 +1,11 @@
 use smithay::backend::input::ButtonState;
+use smithay::input::SeatHandler;
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
     GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
     GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
     MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
 };
-use smithay::input::SeatHandler;
 use smithay::utils::{Logical, Point};
 
 use crate::niri::State;
@@ -16,7 +16,7 @@ pub struct PickWindowGrab {
 }
 
 impl PickWindowGrab {
-    pub fn new(start_data: PointerGrabStartData<State>) -> Self {
+    pub const fn new(start_data: PointerGrabStartData<State>) -> Self {
         Self { start_data }
     }
 

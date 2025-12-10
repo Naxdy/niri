@@ -1,5 +1,5 @@
-use crate::utils::MergeWith;
 use crate::FloatOrInt;
+use crate::utils::MergeWith;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Gestures {
@@ -97,7 +97,7 @@ impl MergeWith<DndEdgeWorkspaceSwitchPart> for DndEdgeWorkspaceSwitch {
     }
 }
 
-#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
+#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HotCorners {
     #[knuffel(child)]
     pub off: bool,

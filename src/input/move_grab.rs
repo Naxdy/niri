@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use smithay::backend::input::ButtonState;
 use smithay::desktop::Window;
+use smithay::input::SeatHandler;
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, CursorIcon, CursorImageStatus, GestureHoldBeginEvent,
     GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
@@ -12,7 +13,6 @@ use smithay::input::pointer::{
 use smithay::input::touch::{
     self, GrabStartData as TouchGrabStartData, TouchGrab, TouchInnerHandle,
 };
-use smithay::input::SeatHandler;
 use smithay::output::Output;
 use smithay::utils::{IsAlive, Logical, Point, Serial};
 
@@ -163,7 +163,7 @@ impl MoveGrab {
 
             // Check if the gesture moved far enough to decide.
             let c = location - self.start_data.location();
-            if c.x * c.x + c.y * c.y >= 8. * 8. {
+            if c.x.mul_add(c.x, c.y * c.y) >= 8. * 8. {
                 let is_floating = data
                     .niri
                     .layout

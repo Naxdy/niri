@@ -1,6 +1,6 @@
 use smithay::reexports::wayland_server::{
-    protocol::wl_surface::WlSurface, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch,
-    New, Resource,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+    protocol::wl_surface::WlSurface,
 };
 use wayland_protocols_plasma::blur::server::{
     org_kde_kwin_blur::OrgKdeKwinBlur, org_kde_kwin_blur_manager::OrgKdeKwinBlurManager,

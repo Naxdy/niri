@@ -4,7 +4,7 @@ use smithay::reexports::{
         ext_background_effect_surface_v1::{self, ExtBackgroundEffectSurfaceV1},
     },
     wayland_server::{
-        protocol::wl_surface::WlSurface, Client, Dispatch, DisplayHandle, GlobalDispatch,
+        Client, Dispatch, DisplayHandle, GlobalDispatch, protocol::wl_surface::WlSurface,
     },
 };
 

@@ -1,5 +1,5 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use arrayvec::ArrayVec;
 use smithay::output::Output;
@@ -219,12 +219,12 @@ fn refresh_toplevel(
                         for wl_output in outputs.drain(..) {
                             instance.output_leave(&wl_output);
                         }
-                        if let Some(output) = &data.output {
-                            if let Some(client) = instance.client() {
-                                for wl_output in output.client_outputs(&client) {
-                                    instance.output_enter(&wl_output);
-                                    outputs.push(wl_output);
-                                }
+                        if let Some(output) = &data.output
+                            && let Some(client) = instance.client()
+                        {
+                            for wl_output in output.client_outputs(&client) {
+                                instance.output_enter(&wl_output);
+                                outputs.push(wl_output);
                             }
                         }
                     }

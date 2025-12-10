@@ -158,21 +158,27 @@ impl Spring {
         // f32::EPSILON even though it's doubles.
         if (beta - omega0).abs() <= f64::from(f32::EPSILON) {
             // Critically damped.
-            self.to + envelope * (x0 + (beta * x0 + v0) * t)
+            self.to + envelope * (beta * x0 + v0).mul_add(t, x0)
         } else if beta < omega0 {
             // Underdamped.
-            let omega1 = ((omega0 * omega0) - (beta * beta)).sqrt();
+            let omega1 = omega0.mul_add(omega0, -(beta * beta)).sqrt();
 
             self.to
                 + envelope
-                    * (x0 * (omega1 * t).cos() + ((beta * x0 + v0) / omega1) * (omega1 * t).sin())
+                    * x0.mul_add(
+                        (omega1 * t).cos(),
+                        ((beta * x0 + v0) / omega1) * (omega1 * t).sin(),
+                    )
         } else {
             // Overdamped.
             let omega2 = ((beta * beta) - (omega0 * omega0)).sqrt();
 
             self.to
                 + envelope
-                    * (x0 * (omega2 * t).cosh() + ((beta * x0 + v0) / omega2) * (omega2 * t).sinh())
+                    * x0.mul_add(
+                        (omega2 * t).cosh(),
+                        ((beta * x0 + v0) / omega2) * (omega2 * t).sinh(),
+                    )
         }
     }
 }

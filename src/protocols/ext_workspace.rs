@@ -10,8 +10,8 @@
 //!   expected to be stable across sessions.
 //! - Workspace name: name for named workspaces, index for unnamed.
 
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::mem;
 
 use arrayvec::ArrayVec;
@@ -47,11 +47,11 @@ enum Action {
 }
 
 impl Action {
-    fn order(&self) -> u8 {
+    const fn order(&self) -> u8 {
         // First assign everything (move across outputs), then activate.
         match self {
-            Action::Assign(_, _) => 0,
-            Action::Activate(_) => 1,
+            Self::Assign(_, _) => 0,
+            Self::Activate(_) => 1,
         }
     }
 }
@@ -221,17 +221,17 @@ fn send_workspace_enter_leave(
     data: &ExtWorkspaceData,
     enter: bool,
 ) {
-    if let Some(output) = &data.output {
-        if let Some(group_data) = workspace_groups.get(output) {
-            for group in &group_data.instances {
-                let manager: &ExtWorkspaceManagerV1 = group.data().unwrap();
-                for workspace in &data.instances {
-                    if workspace.data() == Some(manager) {
-                        if enter {
-                            group.workspace_enter(workspace);
-                        } else {
-                            group.workspace_leave(workspace);
-                        }
+    if let Some(output) = &data.output
+        && let Some(group_data) = workspace_groups.get(output)
+    {
+        for group in &group_data.instances {
+            let manager: &ExtWorkspaceManagerV1 = group.data().unwrap();
+            for workspace in &data.instances {
+                if workspace.data() == Some(manager) {
+                    if enter {
+                        group.workspace_enter(workspace);
+                    } else {
+                        group.workspace_leave(workspace);
                     }
                 }
             }

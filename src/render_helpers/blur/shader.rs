@@ -11,7 +11,7 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
-use smithay::backend::renderer::gles::{ffi, link_program, GlesError, GlesRenderer};
+use smithay::backend::renderer::gles::{GlesError, GlesRenderer, ffi, link_program};
 
 const BLUR_DOWN_SRC: &str = include_str!("../shaders/blur_down.frag");
 const BLUR_UP_SRC: &str = include_str!("../shaders/blur_up.frag");
@@ -58,107 +58,115 @@ impl BlurShader {
         }
     }
 
-    pub(super) unsafe fn compile(gl: &ffi::Gles2, src: &str) -> Result<Self, GlesError> { unsafe {
-        let create_variant = |defines: &[&str]| -> Result<BlurShaderVariant, GlesError> {
-            let shader = src.replace(
-                "//_DEFINES_",
-                &defines.iter().fold(String::new(), |mut shader, define| {
-                    let _ = writeln!(&mut shader, "#define {}", define);
-                    shader
-                }),
-            );
-            let debug_shader = src.replace(
-                "//_DEFINES_",
-                &defines.iter().chain(&["DEBUG_FLAGS"]).fold(
-                    String::new(),
-                    |mut shader, define| {
-                        let _ = writeln!(shader, "#define {}", define);
+    pub(super) unsafe fn compile(gl: &ffi::Gles2, src: &str) -> Result<Self, GlesError> {
+        unsafe {
+            let create_variant = |defines: &[&str]| -> Result<BlurShaderVariant, GlesError> {
+                let shader = src.replace(
+                    "//_DEFINES_",
+                    &defines.iter().fold(String::new(), |mut shader, define| {
+                        let _ = writeln!(&mut shader, "#define {}", define);
                         shader
+                    }),
+                );
+                let debug_shader = src.replace(
+                    "//_DEFINES_",
+                    &defines.iter().chain(&["DEBUG_FLAGS"]).fold(
+                        String::new(),
+                        |mut shader, define| {
+                            let _ = writeln!(shader, "#define {}", define);
+                            shader
+                        },
+                    ),
+                );
+
+                let program = link_program(gl, VERTEX_SRC, &shader)?;
+                let debug_program = link_program(gl, VERTEX_SRC, debug_shader.as_ref())?;
+
+                let vert = c"vert";
+                let vert_position = c"vert_position";
+                let tex = c"tex";
+                let matrix = c"matrix";
+                let tex_matrix = c"tex_matrix";
+                let alpha = c"alpha";
+                let radius = c"radius";
+                let half_pixel = c"half_pixel";
+
+                Ok(BlurShaderVariant {
+                    normal: BlurShaderProgram {
+                        program,
+                        uniform_tex: gl
+                            .GetUniformLocation(program, tex.as_ptr() as *const ffi::types::GLchar),
+                        uniform_matrix: gl.GetUniformLocation(
+                            program,
+                            matrix.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_tex_matrix: gl.GetUniformLocation(
+                            program,
+                            tex_matrix.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_alpha: gl.GetUniformLocation(
+                            program,
+                            alpha.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_radius: gl.GetUniformLocation(
+                            program,
+                            radius.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_half_pixel: gl.GetUniformLocation(
+                            program,
+                            half_pixel.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        attrib_vert: gl
+                            .GetAttribLocation(program, vert.as_ptr() as *const ffi::types::GLchar),
+                        attrib_vert_position: gl.GetAttribLocation(
+                            program,
+                            vert_position.as_ptr() as *const ffi::types::GLchar,
+                        ),
                     },
-                ),
-            );
+                    debug: BlurShaderProgram {
+                        program: debug_program,
+                        uniform_tex: gl.GetUniformLocation(
+                            debug_program,
+                            tex.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_matrix: gl.GetUniformLocation(
+                            debug_program,
+                            matrix.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_tex_matrix: gl.GetUniformLocation(
+                            debug_program,
+                            tex_matrix.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_alpha: gl.GetUniformLocation(
+                            debug_program,
+                            alpha.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_radius: gl.GetUniformLocation(
+                            debug_program,
+                            radius.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        uniform_half_pixel: gl.GetUniformLocation(
+                            debug_program,
+                            half_pixel.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        attrib_vert: gl.GetAttribLocation(
+                            debug_program,
+                            vert.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                        attrib_vert_position: gl.GetAttribLocation(
+                            debug_program,
+                            vert_position.as_ptr() as *const ffi::types::GLchar,
+                        ),
+                    },
+                })
+            };
 
-            let program = unsafe { link_program(gl, VERTEX_SRC, &shader)? };
-            let debug_program = unsafe { link_program(gl, VERTEX_SRC, debug_shader.as_ref())? };
-
-            let vert = c"vert";
-            let vert_position = c"vert_position";
-            let tex = c"tex";
-            let matrix = c"matrix";
-            let tex_matrix = c"tex_matrix";
-            let alpha = c"alpha";
-            let radius = c"radius";
-            let half_pixel = c"half_pixel";
-
-            Ok(BlurShaderVariant {
-                normal: BlurShaderProgram {
-                    program,
-                    uniform_tex: gl
-                        .GetUniformLocation(program, tex.as_ptr() as *const ffi::types::GLchar),
-                    uniform_matrix: gl
-                        .GetUniformLocation(program, matrix.as_ptr() as *const ffi::types::GLchar),
-                    uniform_tex_matrix: gl.GetUniformLocation(
-                        program,
-                        tex_matrix.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    uniform_alpha: gl
-                        .GetUniformLocation(program, alpha.as_ptr() as *const ffi::types::GLchar),
-                    uniform_radius: gl
-                        .GetUniformLocation(program, radius.as_ptr() as *const ffi::types::GLchar),
-                    uniform_half_pixel: gl.GetUniformLocation(
-                        program,
-                        half_pixel.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    attrib_vert: gl
-                        .GetAttribLocation(program, vert.as_ptr() as *const ffi::types::GLchar),
-                    attrib_vert_position: gl.GetAttribLocation(
-                        program,
-                        vert_position.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                },
-                debug: BlurShaderProgram {
-                    program: debug_program,
-                    uniform_tex: gl.GetUniformLocation(
-                        debug_program,
-                        tex.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    uniform_matrix: gl.GetUniformLocation(
-                        debug_program,
-                        matrix.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    uniform_tex_matrix: gl.GetUniformLocation(
-                        debug_program,
-                        tex_matrix.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    uniform_alpha: gl.GetUniformLocation(
-                        debug_program,
-                        alpha.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    uniform_radius: gl.GetUniformLocation(
-                        debug_program,
-                        radius.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    uniform_half_pixel: gl.GetUniformLocation(
-                        debug_program,
-                        half_pixel.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    attrib_vert: gl.GetAttribLocation(
-                        debug_program,
-                        vert.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                    attrib_vert_position: gl.GetAttribLocation(
-                        debug_program,
-                        vert_position.as_ptr() as *const ffi::types::GLchar,
-                    ),
-                },
-            })
-        };
-
-        Ok(BlurShader(Arc::new([
-            create_variant(&[])?,
-            create_variant(&["NO_ALPHA"])?,
-        ])))
-    }}
+            Ok(Self(Arc::new([
+                create_variant(&[])?,
+                create_variant(&["NO_ALPHA"])?,
+            ])))
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

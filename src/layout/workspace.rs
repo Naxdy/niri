@@ -10,7 +10,7 @@ use niri_config::{
 use niri_ipc::{PositionChange, SizeChange, WindowLayout};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::desktop::{layer_map_for_output, Window};
+use smithay::desktop::{Window, layer_map_for_output};
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -30,16 +30,16 @@ use super::{
 };
 use crate::animation::Clock;
 use crate::niri_render_elements;
+use crate::render_helpers::RenderTarget;
 use crate::render_helpers::blur::EffectsFramebuffers;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
-use crate::render_helpers::RenderTarget;
 use crate::utils::id::IdCounter;
 use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::utils::{
-    ensure_min_max_size, ensure_min_max_size_maybe_zero, output_size, send_scale_transform,
-    ResizeEdge,
+    ResizeEdge, ensure_min_max_size, ensure_min_max_size_maybe_zero, output_size,
+    send_scale_transform,
 };
 use crate::window::ResolvedWindowRules;
 
@@ -130,15 +130,15 @@ static WORKSPACE_ID_COUNTER: IdCounter = IdCounter::new();
 pub struct WorkspaceId(u64);
 
 impl WorkspaceId {
-    fn next() -> WorkspaceId {
-        WorkspaceId(WORKSPACE_ID_COUNTER.next())
+    fn next() -> Self {
+        Self(WORKSPACE_ID_COUNTER.next())
     }
 
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 
-    pub fn specific(id: u64) -> Self {
+    pub const fn specific(id: u64) -> Self {
         Self(id)
     }
 }
@@ -343,11 +343,11 @@ impl<W: LayoutElement> Workspace<W> {
         Self::new_with_config_no_outputs(None, clock, options)
     }
 
-    pub fn id(&self) -> WorkspaceId {
+    pub const fn id(&self) -> WorkspaceId {
         self.id
     }
 
-    pub fn name(&self) -> Option<&String> {
+    pub const fn name(&self) -> Option<&String> {
         self.name.as_ref()
     }
 
@@ -359,7 +359,7 @@ impl<W: LayoutElement> Workspace<W> {
         self.has_windows() || self.name.is_some()
     }
 
-    pub fn scale(&self) -> smithay::output::Scale {
+    pub const fn scale(&self) -> smithay::output::Scale {
         self.scale
     }
 
@@ -475,7 +475,7 @@ impl<W: LayoutElement> Workspace<W> {
         self.floating.has_window(id)
     }
 
-    pub fn current_output(&self) -> Option<&Output> {
+    pub const fn current_output(&self) -> Option<&Output> {
         self.output.as_ref()
     }
 
@@ -595,7 +595,7 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    pub fn view_size(&self) -> Size<f64, Logical> {
+    pub const fn view_size(&self) -> Size<f64, Logical> {
         self.view_size
     }
 
@@ -738,7 +738,7 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    fn update_focus_floating_tiling_after_removing(&mut self, removed_from_floating: bool) {
+    const fn update_focus_floating_tiling_after_removing(&mut self, removed_from_floating: bool) {
         if removed_from_floating {
             if self.floating.is_empty() {
                 self.floating_is_active = FloatingActive::No;
@@ -781,10 +781,10 @@ impl<W: LayoutElement> Workspace<W> {
             },
         };
 
-        if let Some(output) = &self.output {
-            if let Some(w) = tile.windows().find(|w| w.id() == id) {
-                w.output_leave(output)
-            }
+        if let Some(output) = &self.output
+            && let Some(w) = tile.windows().find(|w| w.id() == id)
+        {
+            w.output_leave(output)
         }
 
         if tile.remove_window(id) == 0 {
@@ -878,7 +878,7 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    pub fn resolve_default_height(
+    pub const fn resolve_default_height(
         &self,
         default_height: Option<Option<PresetSize>>,
         is_floating: bool,
@@ -1634,26 +1634,26 @@ impl<W: LayoutElement> Workspace<W> {
                 PositionChange::SetFixed(x) => pos.x = x + working_area_loc.x,
                 PositionChange::SetProportion(prop) => {
                     let prop = (prop / 100.).clamp(0., MAX_F);
-                    pos.x = available_width * prop + working_area_loc.x;
+                    pos.x = available_width.mul_add(prop, working_area_loc.x);
                 }
                 PositionChange::AdjustFixed(x) => pos.x += x,
                 PositionChange::AdjustProportion(prop) => {
                     let current_prop = (pos.x - working_area_loc.x) / available_width.max(1.);
                     let prop = (current_prop + prop / 100.).clamp(0., MAX_F);
-                    pos.x = available_width * prop + working_area_loc.x;
+                    pos.x = available_width.mul_add(prop, working_area_loc.x);
                 }
             }
             match y {
                 PositionChange::SetFixed(y) => pos.y = y + working_area_loc.y,
                 PositionChange::SetProportion(prop) => {
                     let prop = (prop / 100.).clamp(0., MAX_F);
-                    pos.y = available_height * prop + working_area_loc.y;
+                    pos.y = available_height.mul_add(prop, working_area_loc.y);
                 }
                 PositionChange::AdjustFixed(y) => pos.y += y,
                 PositionChange::AdjustProportion(prop) => {
                     let current_prop = (pos.y - working_area_loc.y) / available_height.max(1.);
                     let prop = (current_prop + prop / 100.).clamp(0., MAX_F);
-                    pos.y = available_height * prop + working_area_loc.y;
+                    pos.y = available_height.mul_add(prop, working_area_loc.y);
                 }
             }
 
@@ -1849,14 +1849,13 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<(&W, HitType)> {
         // This logic is consistent with tiles_with_render_positions().
-        if self.is_floating_visible() {
-            if let Some(rv) = self
+        if self.is_floating_visible()
+            && let Some(rv) = self
                 .floating
                 .tiles_with_render_positions()
                 .find_map(|(tile, tile_pos)| HitType::hit_tile(tile, tile_pos, pos))
-            {
-                return Some(rv);
-            }
+        {
+            return Some(rv);
         }
 
         self.scrolling.window_under(pos)
@@ -2063,11 +2062,11 @@ impl<W: LayoutElement> Workspace<W> {
         self.floating.logical_to_size_frac(logical_pos)
     }
 
-    pub fn working_area(&self) -> Rectangle<f64, Logical> {
+    pub const fn working_area(&self) -> Rectangle<f64, Logical> {
         self.working_area
     }
 
-    pub fn layout_config(&self) -> Option<&niri_config::LayoutPart> {
+    pub const fn layout_config(&self) -> Option<&niri_config::LayoutPart> {
         self.layout_config.as_ref()
     }
 

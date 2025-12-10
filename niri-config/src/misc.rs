@@ -1,6 +1,6 @@
-use crate::appearance::{Color, WorkspaceShadow, WorkspaceShadowPart, DEFAULT_BACKDROP_COLOR};
-use crate::utils::{Flag, MergeWith};
 use crate::FloatOrInt;
+use crate::appearance::{Color, DEFAULT_BACKDROP_COLOR, WorkspaceShadow, WorkspaceShadowPart};
+use crate::utils::{Flag, MergeWith};
 
 #[derive(knuffel::Decode, Debug, Clone, PartialEq, Eq)]
 pub struct SpawnAtStartup {
@@ -14,7 +14,7 @@ pub struct SpawnShAtStartup {
     pub command: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Cursor {
     pub xcursor_theme: String,
     pub xcursor_size: u8,
@@ -33,7 +33,7 @@ impl Default for Cursor {
     }
 }
 
-#[derive(knuffel::Decode, Debug, PartialEq)]
+#[derive(knuffel::Decode, Debug, PartialEq, Eq)]
 pub struct CursorPart {
     #[knuffel(child, unwrap(argument))]
     pub xcursor_theme: Option<String>,
@@ -53,7 +53,7 @@ impl MergeWith<CursorPart> for Cursor {
     }
 }
 
-#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+#[derive(knuffel::Decode, Debug, Clone, PartialEq, Eq)]
 pub struct ScreenshotPath(#[knuffel(argument)] pub Option<String>);
 
 impl Default for ScreenshotPath {

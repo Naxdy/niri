@@ -13,8 +13,8 @@ use pango::{Alignment, FontDescription};
 use pangocairo::cairo::{self, ImageSurface};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::TouchSlot;
-use smithay::backend::renderer::element::utils::{Relocate, RelocateRenderElement};
 use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::element::utils::{Relocate, RelocateRenderElement};
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::backend::renderer::{ExportMem, Texture as _};
 use smithay::input::keyboard::{Keysym, ModifiersState};
@@ -27,7 +27,7 @@ use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
-use crate::render_helpers::{render_to_texture, RenderTarget};
+use crate::render_helpers::{RenderTarget, render_to_texture};
 use crate::utils::to_physical_precise_round;
 
 const SELECTION_BORDER: i32 = 2;
@@ -36,11 +36,9 @@ const PADDING: i32 = 8;
 const RADIUS: i32 = 16;
 const FONT: &str = "sans 14px";
 const BORDER: i32 = 4;
-const TEXT_HIDE_P: &str =
-    "Press <span face='mono' bgcolor='#2C2C2C'> Space </span> to save the screenshot.\n\
+const TEXT_HIDE_P: &str = "Press <span face='mono' bgcolor='#2C2C2C'> Space </span> to save the screenshot.\n\
      Press <span face='mono' bgcolor='#2C2C2C'> P </span> to hide the pointer.";
-const TEXT_SHOW_P: &str =
-    "Press <span face='mono' bgcolor='#2C2C2C'> Space </span> to save the screenshot.\n\
+const TEXT_SHOW_P: &str = "Press <span face='mono' bgcolor='#2C2C2C'> Space </span> to save the screenshot.\n\
      Press <span face='mono' bgcolor='#2C2C2C'> P </span> to show the pointer.";
 
 // Ideally the screenshot UI should support cross-output selections. However, that poses some
@@ -111,11 +109,11 @@ niri_render_elements! {
 }
 
 impl Button {
-    fn is_down(&self) -> bool {
+    const fn is_down(&self) -> bool {
         matches!(self, Self::Down { .. })
     }
 
-    fn is_dragging_selection(&self) -> bool {
+    const fn is_dragging_selection(&self) -> bool {
         matches!(
             self,
             Self::Down {
@@ -127,7 +125,7 @@ impl Button {
 }
 
 impl ScreenshotUi {
-    pub fn new(clock: Clock, config: Rc<RefCell<Config>>) -> Self {
+    pub const fn new(clock: Clock, config: Rc<RefCell<Config>>) -> Self {
         Self::Closed {
             last_selection: None,
             clock,
@@ -270,14 +268,14 @@ impl ScreenshotUi {
         true
     }
 
-    pub fn toggle_pointer(&mut self) {
+    pub const fn toggle_pointer(&mut self) {
         if let Self::Open { show_pointer, .. } = self {
             *show_pointer = !*show_pointer;
         }
     }
 
-    pub fn is_open(&self) -> bool {
-        matches!(self, ScreenshotUi::Open { .. })
+    pub const fn is_open(&self) -> bool {
+        matches!(self, Self::Open { .. })
     }
 
     pub fn set_space_down(&mut self, down: bool) {
@@ -536,7 +534,7 @@ impl ScreenshotUi {
         self.update_buffers();
     }
 
-    pub fn advance_animations(&mut self) {}
+    pub const fn advance_animations(&mut self) {}
 
     pub fn are_animations_ongoing(&self) -> bool {
         let Self::Open { open_anim, .. } = self else {
@@ -688,10 +686,8 @@ impl ScreenshotUi {
         };
         let screenshot = &output_data.screenshot[index];
 
-        if *show_pointer {
-            if let Some(pointer) = screenshot.pointer.clone() {
-                elements.push(pointer.into());
-            }
+        if *show_pointer && let Some(pointer) = screenshot.pointer.clone() {
+            elements.push(pointer.into());
         }
         elements.push(screenshot.buffer.clone().into());
 
@@ -721,33 +717,32 @@ impl ScreenshotUi {
 
         // Composite the pointer on top if needed.
         let mut tex_rect = None;
-        if *show_pointer {
-            if let Some(pointer) = screenshot.pointer.clone() {
-                let scale = pointer.0.buffer().texture_scale();
-                let offset = rect.loc.upscale(-1);
+        if *show_pointer && let Some(pointer) = screenshot.pointer.clone() {
+            let scale = pointer.0.buffer().texture_scale();
+            let offset = rect.loc.upscale(-1);
 
-                let mut elements = ArrayVec::<_, 2>::new();
-                elements.push(pointer);
-                elements.push(screenshot.buffer.clone());
-                let elements = elements.iter().rev().map(|elem| {
-                    RelocateRenderElement::from_element(elem, offset, Relocate::Relative)
-                });
+            let mut elements = ArrayVec::<_, 2>::new();
+            elements.push(pointer);
+            elements.push(screenshot.buffer.clone());
+            let elements = elements
+                .iter()
+                .rev()
+                .map(|elem| RelocateRenderElement::from_element(elem, offset, Relocate::Relative));
 
-                let res = render_to_texture(
-                    renderer,
-                    rect.size,
-                    scale,
-                    Transform::Normal,
-                    Fourcc::Abgr8888,
-                    elements,
-                );
-                match res {
-                    Ok((texture, _)) => {
-                        tex_rect = Some((texture, Rectangle::from_size(rect.size)));
-                    }
-                    Err(err) => {
-                        warn!("error compositing pointer onto screenshot: {err:?}");
-                    }
+            let res = render_to_texture(
+                renderer,
+                rect.size,
+                scale,
+                Transform::Normal,
+                Fourcc::Abgr8888,
+                elements,
+            );
+            match res {
+                Ok((texture, _)) => {
+                    tex_rect = Some((texture, Rectangle::from_size(rect.size)));
+                }
+                Err(err) => {
+                    warn!("error compositing pointer onto screenshot: {err:?}");
                 }
             }
         }
@@ -781,7 +776,7 @@ impl ScreenshotUi {
         action(raw, mods)
     }
 
-    pub fn selection_output(&self) -> Option<&Output> {
+    pub const fn selection_output(&self) -> Option<&Output> {
         if let Self::Open {
             selection: (output, _, _),
             ..
@@ -866,21 +861,19 @@ impl ScreenshotUi {
         };
 
         // Check if this is a second touch (different slot) while already dragging.
-        if let Some(new_slot) = slot {
-            if let Button::Down {
+        if let Some(new_slot) = slot
+            && let Button::Down {
                 on_capture_button: false,
                 move_state,
                 last_pos,
                 ..
             } = button
-            {
-                if move_state.is_none() {
-                    *move_state = Some(MoveState {
-                        pointer_offset: last_pos.1 - selection.1,
-                        touch_slot: Some(new_slot),
-                    });
-                }
-            }
+            && move_state.is_none()
+        {
+            *move_state = Some(MoveState {
+                pointer_offset: last_pos.1 - selection.1,
+                touch_slot: Some(new_slot),
+            });
         }
 
         if button.is_down() {
@@ -944,11 +937,11 @@ impl ScreenshotUi {
         };
 
         // Check if this is a move touch and if so, stop the move.
-        if let Some(state) = move_state {
-            if state.touch_slot.is_some_and(|m_slot| Some(m_slot) == slot) {
-                *move_state = None;
-                return None;
-            }
+        if let Some(state) = move_state
+            && state.touch_slot.is_some_and(|m_slot| Some(m_slot) == slot)
+        {
+            *move_state = None;
+            return None;
         };
 
         if touch_slot != slot {
@@ -1167,11 +1160,14 @@ fn render_panel(
     cr.fill()?;
 
     cr.new_sub_path();
-    cr.arc(padding + r, yc, r - circle_stroke * 2., 0., TAU);
+    cr.arc(padding + r, yc, circle_stroke.mul_add(-2., r), 0., TAU);
     cr.set_source_rgb(1., 1., 1.);
     cr.fill()?;
 
-    cr.move_to(padding + r * 2. + padding - half_border_width, padding);
+    cr.move_to(
+        r.mul_add(2., padding) + padding - half_border_width,
+        padding,
+    );
 
     let layout = pangocairo::functions::create_layout(&cr);
     layout.context().set_round_glyph_positions(false);

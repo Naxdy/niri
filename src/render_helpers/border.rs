@@ -11,7 +11,7 @@ use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, T
 
 use super::renderer::NiriRenderer;
 use super::shader_element::ShaderRenderElement;
-use super::shaders::{mat3_uniform, ProgramType, Shaders};
+use super::shaders::{ProgramType, Shaders, mat3_uniform};
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 
 /// Renders a wide variety of borders and border parts.

@@ -1,8 +1,8 @@
-use knuffel::errors::DecodeError;
 use knuffel::Decode as _;
+use knuffel::errors::DecodeError;
 
-use crate::utils::{expect_only_children, parse_arg_node, MergeWith};
 use crate::FloatOrInt;
+use crate::utils::{MergeWith, expect_only_children, parse_arg_node};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Animations {
@@ -525,7 +525,7 @@ where
 }
 
 impl Animation {
-    pub fn new_off() -> Self {
+    pub const fn new_off() -> Self {
         Self {
             off: true,
             kind: Kind::Easing(EasingParams {
@@ -828,7 +828,7 @@ where
             ));
         }
 
-        Ok(SpringParams {
+        Ok(Self {
             damping_ratio,
             stiffness,
             epsilon,

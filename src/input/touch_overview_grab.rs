@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use smithay::desktop::Window;
+use smithay::input::SeatHandler;
 use smithay::input::touch::{
     DownEvent, GrabStartData as TouchGrabStartData, MotionEvent, OrientationEvent, ShapeEvent,
     TouchGrab, TouchInnerHandle, UpEvent,
 };
-use smithay::input::SeatHandler;
 use smithay::output::Output;
 use smithay::utils::{IsAlive, Logical, Point, Serial};
 
@@ -37,7 +37,7 @@ enum GestureState {
 }
 
 impl TouchOverviewGrab {
-    pub fn new(
+    pub const fn new(
         start_data: TouchGrabStartData<State>,
         start_timestamp: Duration,
         output: Output,
@@ -80,13 +80,13 @@ impl TouchOverviewGrab {
                         }
                     };
 
-                    let ws_idx = match layout.workspaces().find(|(_, _, ws)| ws_matches(ws))
-                    { Some((Some(mon), ws_idx, _)) => {
-                        // The workspace could've moved to a different output in the meantime.
-                        (*mon.output() == self.output).then_some(ws_idx)
-                    } _ => {
-                        None
-                    }};
+                    let ws_idx = match layout.workspaces().find(|(_, _, ws)| ws_matches(ws)) {
+                        Some((Some(mon), ws_idx, _)) => {
+                            // The workspace could've moved to a different output in the meantime.
+                            (*mon.output() == self.output).then_some(ws_idx)
+                        }
+                        _ => None,
+                    };
 
                     if let Some(ws_idx) = ws_idx {
                         layout.toggle_overview_to_workspace(ws_idx);
@@ -127,11 +127,11 @@ impl TouchGrab<State> for TouchOverviewGrab {
             return;
         }
 
-        if matches!(self.gesture, GestureState::InteractiveMove) {
-            if let Some(window) = &self.window.as_ref() {
-                data.niri.layout.toggle_window_floating(Some(window));
-                data.niri.queue_redraw_all();
-            }
+        if matches!(self.gesture, GestureState::InteractiveMove)
+            && let Some(window) = &self.window.as_ref()
+        {
+            data.niri.layout.toggle_window_floating(Some(window));
+            data.niri.queue_redraw_all();
         }
     }
 
@@ -169,18 +169,18 @@ impl TouchGrab<State> for TouchOverviewGrab {
         let layout = &mut data.niri.layout;
 
         // Check if we should become interactive move.
-        if matches!(self.gesture, GestureState::Recognizing) {
-            if let Some(window) = self.window.as_ref().filter(|win| win.alive()) {
-                let passed = timestamp.saturating_sub(self.start_timestamp);
-                if INTERACTIVE_MOVE_THRESHOLD <= passed
-                    && layout.interactive_move_begin(
-                        window.clone(),
-                        &self.output,
-                        self.start_pos_within_output,
-                    )
-                {
-                    self.gesture = GestureState::InteractiveMove;
-                }
+        if matches!(self.gesture, GestureState::Recognizing)
+            && let Some(window) = self.window.as_ref().filter(|win| win.alive())
+        {
+            let passed = timestamp.saturating_sub(self.start_timestamp);
+            if INTERACTIVE_MOVE_THRESHOLD <= passed
+                && layout.interactive_move_begin(
+                    window.clone(),
+                    &self.output,
+                    self.start_pos_within_output,
+                )
+            {
+                self.gesture = GestureState::InteractiveMove;
             }
         }
 
@@ -189,14 +189,13 @@ impl TouchGrab<State> for TouchOverviewGrab {
             let c = event.location - self.start_data.location;
 
             // Check if the gesture moved far enough to decide. Threshold copied from libadwaita.
-            if c.x * c.x + c.y * c.y >= 16. * 16. {
-                if let Some(ws_id) = self.workspace_id.filter(|_| c.x.abs() > c.y.abs()) {
-                    if let Some((ws_idx, ws)) = layout.find_workspace_by_id(ws_id) {
-                        if ws.current_output() == Some(&self.output) {
-                            layout.view_offset_gesture_begin(&self.output, Some(ws_idx), false);
-                            self.gesture = GestureState::ViewOffset;
-                        }
-                    }
+            if c.x.mul_add(c.x, c.y * c.y) >= 16. * 16. {
+                if let Some(ws_id) = self.workspace_id.filter(|_| c.x.abs() > c.y.abs())
+                    && let Some((ws_idx, ws)) = layout.find_workspace_by_id(ws_id)
+                    && ws.current_output() == Some(&self.output)
+                {
+                    layout.view_offset_gesture_begin(&self.output, Some(ws_idx), false);
+                    self.gesture = GestureState::ViewOffset;
                 }
 
                 if matches!(self.gesture, GestureState::Recognizing) {

@@ -10,10 +10,10 @@ use std::rc::Rc;
 
 use glam::{Mat3, Vec2};
 use niri_config::Blur;
-use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::AsRenderElements;
+use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::gles::format::fourcc_to_gl_formats;
-use smithay::backend::renderer::gles::{ffi, Capability, GlesError, GlesRenderer, GlesTexture};
+use smithay::backend::renderer::gles::{Capability, GlesError, GlesRenderer, GlesTexture, ffi};
 use smithay::backend::renderer::{Bind, Blit, Frame, Offscreen, Renderer, Texture, TextureFilter};
 use smithay::desktop::LayerMap;
 use smithay::output::Output;
@@ -41,7 +41,7 @@ enum CurrentBuffer {
 }
 
 impl CurrentBuffer {
-    pub fn swap(&mut self) {
+    pub const fn swap(&mut self) {
         *self = match self {
             // sampled from normal, render to swapped
             Self::Normal => Self::Swapped,
@@ -127,7 +127,7 @@ impl EffectsFramebuffers {
             )
         };
 
-        let this = EffectsFramebuffers {
+        let this = Self {
             optimized_blur: create_buffer(renderer, texture_size).unwrap(),
             optimized_blur_rerender_at: get_rerender_at(),
             effects: create_buffer(renderer, texture_size).unwrap(),
@@ -168,7 +168,7 @@ impl EffectsFramebuffers {
             )
         };
 
-        *fx_buffers = EffectsFramebuffers {
+        *fx_buffers = Self {
             optimized_blur: create_buffer(renderer, texture_size)?,
             optimized_blur_rerender_at: get_rerender_at(),
             effects: create_buffer(renderer, texture_size)?,
@@ -288,18 +288,18 @@ impl EffectsFramebuffers {
     }
 
     /// Get the sample and render buffers.
-    pub fn buffers(&mut self) -> (&GlesTexture, &mut GlesTexture) {
+    pub const fn buffers(&mut self) -> (&GlesTexture, &mut GlesTexture) {
         match self.current_buffer {
             CurrentBuffer::Normal => (&self.effects, &mut self.effects_swapped),
             CurrentBuffer::Swapped => (&self.effects_swapped, &mut self.effects),
         }
     }
 
-    pub fn output_size(&self) -> Size<i32, Physical> {
+    pub const fn output_size(&self) -> Size<i32, Physical> {
         self.output_size
     }
 
-    pub fn transform(&self) -> Transform {
+    pub const fn transform(&self) -> Transform {
         self.transform
     }
 }
@@ -319,231 +319,233 @@ pub(super) unsafe fn get_main_buffer_blur(
     dst: Rectangle<i32, Physical>,
     texture_cache: &GlesTexture,
     alpha_tex: Option<&GlesTexture>,
-) -> Result<GlesTexture, GlesError> { unsafe {
-    let tex_size = fx_buffers
-        .effects
-        .size()
-        .to_logical(1, Transform::Normal)
-        .to_physical(scale);
+) -> Result<GlesTexture, GlesError> {
+    unsafe {
+        let tex_size = fx_buffers
+            .effects
+            .size()
+            .to_logical(1, Transform::Normal)
+            .to_physical(scale);
 
-    let dst_expanded = {
-        let mut dst = dst;
-        let size =
-            (2f32.powi(blur_config.passes as i32 + 1) * blur_config.radius.0 as f32).ceil() as i32;
-        dst.loc -= Point::from((size, size)).upscale(8);
-        dst.size += Size::from((size, size)).upscale(16);
-        dst
-    };
+        let dst_expanded = {
+            let mut dst = dst;
+            let size = (2f32.powi(blur_config.passes as i32 + 1) * blur_config.radius.0 as f32)
+                .ceil() as i32;
+            dst.loc -= Point::from((size, size)).upscale(8);
+            dst.size += Size::from((size, size)).upscale(16);
+            dst
+        };
 
-    // let dst_expanded = fx_buffers
-    //     .transform()
-    //     .transform_rect_in(dst_expanded, &tex_size);
+        // let dst_expanded = fx_buffers
+        //     .transform()
+        //     .transform_rect_in(dst_expanded, &tex_size);
 
-    let mut prev_fbo = 0;
-    gl.GetIntegerv(ffi::FRAMEBUFFER_BINDING, &mut prev_fbo as *mut _);
+        let mut prev_fbo = 0;
+        gl.GetIntegerv(ffi::FRAMEBUFFER_BINDING, &mut prev_fbo as *mut _);
 
-    let (sample_buffer, _) = fx_buffers.buffers();
+        let (sample_buffer, _) = fx_buffers.buffers();
 
-    // First get a fbo for the texture we are about to read into
-    let mut sample_fbo = 0u32;
-    {
-        gl.GenFramebuffers(1, &mut sample_fbo as *mut _);
-        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, sample_fbo);
-        gl.FramebufferTexture2D(
-            ffi::FRAMEBUFFER,
-            ffi::COLOR_ATTACHMENT0,
-            ffi::TEXTURE_2D,
-            sample_buffer.tex_id(),
-            0,
-        );
-        gl.Clear(ffi::COLOR_BUFFER_BIT);
-        let status = gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
-        if status != ffi::FRAMEBUFFER_COMPLETE {
-            gl.DeleteFramebuffers(1, &mut sample_fbo as *mut _);
-            return Err(GlesError::FramebufferBindingError);
-        }
-    }
-
-    if let Some(alpha_tex) = alpha_tex {
-        gl.ActiveTexture(ffi::TEXTURE1);
-        gl.BindTexture(ffi::TEXTURE_2D, alpha_tex.tex_id());
-        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
-        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
-    }
-
-    {
-        // TODO: need to rotate blur texture on transformed screens
-
-        // NOTE: We are assured that the size of the effects texture is the same
-        // as the bound fbo size, so blitting uses dst immediately
-        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, sample_fbo);
-
-        let dst_x0 = dst_expanded.loc.x;
-        let dst_y0 = dst_expanded.loc.y;
-        let dst_x1 = dst_expanded.loc.x + dst_expanded.size.w;
-        let dst_y1 = dst_expanded.loc.y + dst_expanded.size.h;
-
-        let src_expanded = fx_buffers
-            .transform()
-            .invert()
-            .transform_rect_in(dst_expanded, &tex_size);
-
-        let src_x0 = src_expanded.loc.x;
-        let src_y0 = src_expanded.loc.y;
-        let src_x1 = src_expanded.loc.x + src_expanded.size.w;
-        let src_y1 = src_expanded.loc.y + src_expanded.size.h;
-
-        gl.BlitFramebuffer(
-            src_x0,
-            src_y0,
-            src_x1,
-            src_y1,
-            dst_x0,
-            dst_y0,
-            dst_x1,
-            dst_y1,
-            ffi::COLOR_BUFFER_BIT,
-            ffi::LINEAR,
-        );
-
-        if gl.GetError() == ffi::INVALID_OPERATION {
-            error!("TrueBlur needs GLES3.0 for blitting");
-            return Err(GlesError::BlitError);
-        }
-    }
-
-    {
-        let passes = blur_config.passes;
-        let half_pixel = [
-            0.5 / (tex_size.w as f32 / 2.0),
-            0.5 / (tex_size.h as f32 / 2.0),
-        ];
-
-        for i in 0..passes {
-            let (sample_buffer, render_buffer) = fx_buffers.buffers();
-            let damage = dst_expanded.downscale(1 << (i + 1));
-            render_blur_pass_with_gl(
-                gl,
-                vbos,
-                debug,
-                supports_instancing,
-                projection_matrix,
-                sample_buffer,
-                render_buffer,
-                scale,
-                &shaders.down,
-                half_pixel,
-                blur_config,
-                damage,
-            )?;
-            fx_buffers.current_buffer.swap();
+        // First get a fbo for the texture we are about to read into
+        let mut sample_fbo = 0u32;
+        {
+            gl.GenFramebuffers(1, &mut sample_fbo as *mut _);
+            gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, sample_fbo);
+            gl.FramebufferTexture2D(
+                ffi::FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::TEXTURE_2D,
+                sample_buffer.tex_id(),
+                0,
+            );
+            gl.Clear(ffi::COLOR_BUFFER_BIT);
+            let status = gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
+            if status != ffi::FRAMEBUFFER_COMPLETE {
+                gl.DeleteFramebuffers(1, &mut sample_fbo as *mut _);
+                return Err(GlesError::FramebufferBindingError);
+            }
         }
 
-        let half_pixel = [
-            0.5 / (tex_size.w as f32 * 2.0),
-            0.5 / (tex_size.h as f32 * 2.0),
-        ];
-        for i in 0..passes {
-            let (sample_buffer, render_buffer) = fx_buffers.buffers();
-            let damage = dst_expanded.downscale(1 << (passes - 1 - i));
-            render_blur_pass_with_gl(
-                gl,
-                vbos,
-                debug,
-                supports_instancing,
-                projection_matrix,
-                sample_buffer,
-                render_buffer,
-                scale,
-                &shaders.up,
-                half_pixel,
-                blur_config,
-                damage,
-            )?;
-            fx_buffers.current_buffer.swap();
+        if let Some(alpha_tex) = alpha_tex {
+            gl.ActiveTexture(ffi::TEXTURE1);
+            gl.BindTexture(ffi::TEXTURE_2D, alpha_tex.tex_id());
+            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
+            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
         }
-    }
 
-    // Copy over cached texture
-    {
-        let mut tex_cache_fbo = 0;
+        {
+            // TODO: need to rotate blur texture on transformed screens
 
-        gl.GenFramebuffers(1, &mut tex_cache_fbo as *mut _);
-        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, tex_cache_fbo);
-        gl.FramebufferTexture2D(
-            ffi::DRAW_FRAMEBUFFER,
-            ffi::COLOR_ATTACHMENT0,
-            ffi::TEXTURE_2D,
-            texture_cache.tex_id(),
-            0,
-        );
-        gl.Clear(ffi::COLOR_BUFFER_BIT);
-        let status = gl.CheckFramebufferStatus(ffi::DRAW_FRAMEBUFFER);
-        if status != ffi::FRAMEBUFFER_COMPLETE {
+            // NOTE: We are assured that the size of the effects texture is the same
+            // as the bound fbo size, so blitting uses dst immediately
+            gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, sample_fbo);
+
+            let dst_x0 = dst_expanded.loc.x;
+            let dst_y0 = dst_expanded.loc.y;
+            let dst_x1 = dst_expanded.loc.x + dst_expanded.size.w;
+            let dst_y1 = dst_expanded.loc.y + dst_expanded.size.h;
+
+            let src_expanded = fx_buffers
+                .transform()
+                .invert()
+                .transform_rect_in(dst_expanded, &tex_size);
+
+            let src_x0 = src_expanded.loc.x;
+            let src_y0 = src_expanded.loc.y;
+            let src_x1 = src_expanded.loc.x + src_expanded.size.w;
+            let src_y1 = src_expanded.loc.y + src_expanded.size.h;
+
+            gl.BlitFramebuffer(
+                src_x0,
+                src_y0,
+                src_x1,
+                src_y1,
+                dst_x0,
+                dst_y0,
+                dst_x1,
+                dst_y1,
+                ffi::COLOR_BUFFER_BIT,
+                ffi::LINEAR,
+            );
+
+            if gl.GetError() == ffi::INVALID_OPERATION {
+                error!("TrueBlur needs GLES3.0 for blitting");
+                return Err(GlesError::BlitError);
+            }
+        }
+
+        {
+            let passes = blur_config.passes;
+            let half_pixel = [
+                0.5 / (tex_size.w as f32 / 2.0),
+                0.5 / (tex_size.h as f32 / 2.0),
+            ];
+
+            for i in 0..passes {
+                let (sample_buffer, render_buffer) = fx_buffers.buffers();
+                let damage = dst_expanded.downscale(1 << (i + 1));
+                render_blur_pass_with_gl(
+                    gl,
+                    vbos,
+                    debug,
+                    supports_instancing,
+                    projection_matrix,
+                    sample_buffer,
+                    render_buffer,
+                    scale,
+                    &shaders.down,
+                    half_pixel,
+                    blur_config,
+                    damage,
+                )?;
+                fx_buffers.current_buffer.swap();
+            }
+
+            let half_pixel = [
+                0.5 / (tex_size.w as f32 * 2.0),
+                0.5 / (tex_size.h as f32 * 2.0),
+            ];
+            for i in 0..passes {
+                let (sample_buffer, render_buffer) = fx_buffers.buffers();
+                let damage = dst_expanded.downscale(1 << (passes - 1 - i));
+                render_blur_pass_with_gl(
+                    gl,
+                    vbos,
+                    debug,
+                    supports_instancing,
+                    projection_matrix,
+                    sample_buffer,
+                    render_buffer,
+                    scale,
+                    &shaders.up,
+                    half_pixel,
+                    blur_config,
+                    damage,
+                )?;
+                fx_buffers.current_buffer.swap();
+            }
+        }
+
+        // Copy over cached texture
+        {
+            let mut tex_cache_fbo = 0;
+
+            gl.GenFramebuffers(1, &mut tex_cache_fbo as *mut _);
+            gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, tex_cache_fbo);
+            gl.FramebufferTexture2D(
+                ffi::DRAW_FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::TEXTURE_2D,
+                texture_cache.tex_id(),
+                0,
+            );
+            gl.Clear(ffi::COLOR_BUFFER_BIT);
+            let status = gl.CheckFramebufferStatus(ffi::DRAW_FRAMEBUFFER);
+            if status != ffi::FRAMEBUFFER_COMPLETE {
+                gl.DeleteFramebuffers(1, &mut tex_cache_fbo as *mut _);
+                return Err(GlesError::FramebufferBindingError);
+            }
+            gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, tex_cache_fbo);
+
+            let mut render_buffer_fbo = 0;
+
+            gl.GenFramebuffers(1, &mut render_buffer_fbo as *mut _);
+            gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, render_buffer_fbo);
+            gl.FramebufferTexture2D(
+                ffi::READ_FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::TEXTURE_2D,
+                fx_buffers.effects.tex_id(),
+                0,
+            );
+            gl.Clear(ffi::COLOR_BUFFER_BIT);
+            let status = gl.CheckFramebufferStatus(ffi::READ_FRAMEBUFFER);
+            if status != ffi::FRAMEBUFFER_COMPLETE {
+                gl.DeleteFramebuffers(1, &mut render_buffer_fbo as *mut _);
+                return Err(GlesError::FramebufferBindingError);
+            }
+            gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, render_buffer_fbo);
+
+            let dst_x0 = dst_expanded.loc.x;
+            let dst_y0 = dst_expanded.loc.y;
+            let dst_x1 = dst_expanded.loc.x + dst_expanded.size.w;
+            let dst_y1 = dst_expanded.loc.y + dst_expanded.size.h;
+
+            let src_x0 = dst_x0;
+            let src_y0 = dst_y0;
+            let src_x1 = dst_x1;
+            let src_y1 = dst_y1;
+
+            gl.BlitFramebuffer(
+                src_x0,
+                src_y0,
+                src_x1,
+                src_y1,
+                dst_x0,
+                dst_y0,
+                dst_x1,
+                dst_y1,
+                ffi::COLOR_BUFFER_BIT,
+                ffi::LINEAR,
+            );
+
+            if gl.GetError() == ffi::INVALID_OPERATION {
+                error!("TrueBlur needs GLES3.0 for blitting");
+                return Err(GlesError::BlitError);
+            }
+
             gl.DeleteFramebuffers(1, &mut tex_cache_fbo as *mut _);
-            return Err(GlesError::FramebufferBindingError);
-        }
-        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, tex_cache_fbo);
-
-        let mut render_buffer_fbo = 0;
-
-        gl.GenFramebuffers(1, &mut render_buffer_fbo as *mut _);
-        gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, render_buffer_fbo);
-        gl.FramebufferTexture2D(
-            ffi::READ_FRAMEBUFFER,
-            ffi::COLOR_ATTACHMENT0,
-            ffi::TEXTURE_2D,
-            fx_buffers.effects.tex_id(),
-            0,
-        );
-        gl.Clear(ffi::COLOR_BUFFER_BIT);
-        let status = gl.CheckFramebufferStatus(ffi::READ_FRAMEBUFFER);
-        if status != ffi::FRAMEBUFFER_COMPLETE {
             gl.DeleteFramebuffers(1, &mut render_buffer_fbo as *mut _);
-            return Err(GlesError::FramebufferBindingError);
-        }
-        gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, render_buffer_fbo);
-
-        let dst_x0 = dst_expanded.loc.x;
-        let dst_y0 = dst_expanded.loc.y;
-        let dst_x1 = dst_expanded.loc.x + dst_expanded.size.w;
-        let dst_y1 = dst_expanded.loc.y + dst_expanded.size.h;
-
-        let src_x0 = dst_x0;
-        let src_y0 = dst_y0;
-        let src_x1 = dst_x1;
-        let src_y1 = dst_y1;
-
-        gl.BlitFramebuffer(
-            src_x0,
-            src_y0,
-            src_x1,
-            src_y1,
-            dst_x0,
-            dst_y0,
-            dst_x1,
-            dst_y1,
-            ffi::COLOR_BUFFER_BIT,
-            ffi::LINEAR,
-        );
-
-        if gl.GetError() == ffi::INVALID_OPERATION {
-            error!("TrueBlur needs GLES3.0 for blitting");
-            return Err(GlesError::BlitError);
         }
 
-        gl.DeleteFramebuffers(1, &mut tex_cache_fbo as *mut _);
-        gl.DeleteFramebuffers(1, &mut render_buffer_fbo as *mut _);
-    }
+        // Cleanup
+        {
+            gl.DeleteFramebuffers(1, &mut sample_fbo as *mut _);
+            gl.BindFramebuffer(ffi::FRAMEBUFFER, prev_fbo as u32);
+        }
 
-    // Cleanup
-    {
-        gl.DeleteFramebuffers(1, &mut sample_fbo as *mut _);
-        gl.BindFramebuffer(ffi::FRAMEBUFFER, prev_fbo as u32);
+        Ok(fx_buffers.effects.clone())
     }
-
-    Ok(fx_buffers.effects.clone())
-}}
+}
 
 // Renders a blur pass using a GlesFrame with syncing and fencing provided by smithay. Used for
 // updating optimized blur buffer since we are not yet rendering.
@@ -733,158 +735,160 @@ unsafe fn render_blur_pass_with_gl(
     // dst is the region that should have blur
     // it gets up/downscaled with passes
     _damage: Rectangle<i32, Physical>,
-) -> Result<(), GlesError> { unsafe {
-    trace!("rendering blur pass with GL");
+) -> Result<(), GlesError> {
+    unsafe {
+        trace!("rendering blur pass with GL");
 
-    let tex_size = sample_buffer.size();
-    let src = Rectangle::from_size(tex_size.to_f64());
-    let dest = src
-        .to_logical(1.0, Transform::Normal, &src.size)
-        .to_physical(scale as f64)
-        .to_i32_round();
+        let tex_size = sample_buffer.size();
+        let src = Rectangle::from_size(tex_size.to_f64());
+        let dest = src
+            .to_logical(1.0, Transform::Normal, &src.size)
+            .to_physical(scale as f64)
+            .to_i32_round();
 
-    let damage = dest;
+        let damage = dest;
 
-    // FIXME: Should we call gl.Finish() when done rendering this pass? If yes, should we check
-    // if the gl context is shared or not? What about fencing, we don't have access to that
+        // FIXME: Should we call gl.Finish() when done rendering this pass? If yes, should we check
+        // if the gl context is shared or not? What about fencing, we don't have access to that
 
-    // PERF: Instead of taking the whole src/dst as damage, adapt the code to run with only the
-    // damaged window? This would cause us to make a custom WaylandSurfaceRenderElement to blur out
-    // stuff. Complicated.
+        // PERF: Instead of taking the whole src/dst as damage, adapt the code to run with only the
+        // damaged window? This would cause us to make a custom WaylandSurfaceRenderElement to blur out
+        // stuff. Complicated.
 
-    // First bind to our render buffer
-    let mut render_buffer_fbo = 0;
-    {
-        gl.GenFramebuffers(1, &mut render_buffer_fbo as *mut _);
-        gl.BindFramebuffer(ffi::FRAMEBUFFER, render_buffer_fbo);
-        gl.FramebufferTexture2D(
-            ffi::FRAMEBUFFER,
-            ffi::COLOR_ATTACHMENT0,
-            ffi::TEXTURE_2D,
-            render_buffer.tex_id(),
-            0,
-        );
+        // First bind to our render buffer
+        let mut render_buffer_fbo = 0;
+        {
+            gl.GenFramebuffers(1, &mut render_buffer_fbo as *mut _);
+            gl.BindFramebuffer(ffi::FRAMEBUFFER, render_buffer_fbo);
+            gl.FramebufferTexture2D(
+                ffi::FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::TEXTURE_2D,
+                render_buffer.tex_id(),
+                0,
+            );
 
-        let status = gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
-        if status != ffi::FRAMEBUFFER_COMPLETE {
-            return Err(GlesError::FramebufferBindingError);
+            let status = gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
+            if status != ffi::FRAMEBUFFER_COMPLETE {
+                return Err(GlesError::FramebufferBindingError);
+            }
         }
-    }
 
-    {
-        let mat = projection_matrix;
-        // NOTE: We are assured that tex_size != 0, and src.size != too (by damage tracker)
-        let tex_mat = build_texture_mat(src, dest, tex_size, Transform::Normal);
+        {
+            let mat = projection_matrix;
+            // NOTE: We are assured that tex_size != 0, and src.size != too (by damage tracker)
+            let tex_mat = build_texture_mat(src, dest, tex_size, Transform::Normal);
 
-        gl.Disable(ffi::BLEND);
+            gl.Disable(ffi::BLEND);
 
-        // FIXME: Use actual damage for this? Would require making a custom window render element
-        // that includes blur and whatnot to get the damage for the window only
-        let damage = [
-            damage.loc.x as f32,
-            damage.loc.y as f32,
-            damage.size.w as f32,
-            damage.size.h as f32,
-        ];
+            // FIXME: Use actual damage for this? Would require making a custom window render element
+            // that includes blur and whatnot to get the damage for the window only
+            let damage = [
+                damage.loc.x as f32,
+                damage.loc.y as f32,
+                damage.size.w as f32,
+                damage.size.h as f32,
+            ];
 
-        let mut vertices = Vec::with_capacity(4);
-        let damage_len = if supports_instancing {
-            vertices.extend(damage);
-            vertices.len() / 4
-        } else {
-            for _ in 0..6 {
-                // Add the 4 f32s per damage rectangle for each of the 6 vertices.
-                vertices.extend_from_slice(&damage);
+            let mut vertices = Vec::with_capacity(4);
+            let damage_len = if supports_instancing {
+                vertices.extend(damage);
+                vertices.len() / 4
+            } else {
+                for _ in 0..6 {
+                    // Add the 4 f32s per damage rectangle for each of the 6 vertices.
+                    vertices.extend_from_slice(&damage);
+                }
+
+                1
+            };
+
+            // SAFETY: internal texture should always have a format
+            // We also use Abgr8888 which is known and confirmed
+            let (internal_format, _, _) =
+                fourcc_to_gl_formats(sample_buffer.format().unwrap()).unwrap();
+            let variant = blur_program.variant_for_format(Some(internal_format), false);
+
+            let program = if debug {
+                &variant.debug
+            } else {
+                &variant.normal
+            };
+
+            gl.ActiveTexture(ffi::TEXTURE0);
+            gl.BindTexture(ffi::TEXTURE_2D, sample_buffer.tex_id());
+            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
+            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
+
+            gl.UseProgram(program.program);
+
+            gl.Uniform1i(program.uniform_tex, 0);
+
+            gl.UniformMatrix3fv(
+                program.uniform_matrix,
+                1,
+                ffi::FALSE,
+                mat.as_ref() as *const f32,
+            );
+            gl.UniformMatrix3fv(
+                program.uniform_tex_matrix,
+                1,
+                ffi::FALSE,
+                tex_mat.as_ref() as *const f32,
+            );
+            gl.Uniform1f(program.uniform_alpha, 1.0);
+            gl.Uniform1f(program.uniform_radius, config.radius.0 as f32);
+            gl.Uniform2f(program.uniform_half_pixel, half_pixel[0], half_pixel[1]);
+
+            gl.EnableVertexAttribArray(program.attrib_vert as u32);
+            gl.BindBuffer(ffi::ARRAY_BUFFER, vbos[0]);
+            gl.VertexAttribPointer(
+                program.attrib_vert as u32,
+                2,
+                ffi::FLOAT,
+                ffi::FALSE,
+                0,
+                std::ptr::null(),
+            );
+
+            // vert_position
+            gl.EnableVertexAttribArray(program.attrib_vert_position as u32);
+            gl.BindBuffer(ffi::ARRAY_BUFFER, 0);
+
+            gl.VertexAttribPointer(
+                program.attrib_vert_position as u32,
+                4,
+                ffi::FLOAT,
+                ffi::FALSE,
+                0,
+                vertices.as_ptr() as *const _,
+            );
+
+            if supports_instancing {
+                gl.VertexAttribDivisor(program.attrib_vert as u32, 0);
+                gl.VertexAttribDivisor(program.attrib_vert_position as u32, 1);
+                gl.DrawArraysInstanced(ffi::TRIANGLE_STRIP, 0, 4, damage_len as i32);
+            } else {
+                let count = damage_len * 6;
+                gl.DrawArrays(ffi::TRIANGLES, 0, count as i32);
             }
 
-            1
-        };
-
-        // SAFETY: internal texture should always have a format
-        // We also use Abgr8888 which is known and confirmed
-        let (internal_format, _, _) =
-            fourcc_to_gl_formats(sample_buffer.format().unwrap()).unwrap();
-        let variant = blur_program.variant_for_format(Some(internal_format), false);
-
-        let program = if debug {
-            &variant.debug
-        } else {
-            &variant.normal
-        };
-
-        gl.ActiveTexture(ffi::TEXTURE0);
-        gl.BindTexture(ffi::TEXTURE_2D, sample_buffer.tex_id());
-        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
-        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
-
-        gl.UseProgram(program.program);
-
-        gl.Uniform1i(program.uniform_tex, 0);
-
-        gl.UniformMatrix3fv(
-            program.uniform_matrix,
-            1,
-            ffi::FALSE,
-            mat.as_ref() as *const f32,
-        );
-        gl.UniformMatrix3fv(
-            program.uniform_tex_matrix,
-            1,
-            ffi::FALSE,
-            tex_mat.as_ref() as *const f32,
-        );
-        gl.Uniform1f(program.uniform_alpha, 1.0);
-        gl.Uniform1f(program.uniform_radius, config.radius.0 as f32);
-        gl.Uniform2f(program.uniform_half_pixel, half_pixel[0], half_pixel[1]);
-
-        gl.EnableVertexAttribArray(program.attrib_vert as u32);
-        gl.BindBuffer(ffi::ARRAY_BUFFER, vbos[0]);
-        gl.VertexAttribPointer(
-            program.attrib_vert as u32,
-            2,
-            ffi::FLOAT,
-            ffi::FALSE,
-            0,
-            std::ptr::null(),
-        );
-
-        // vert_position
-        gl.EnableVertexAttribArray(program.attrib_vert_position as u32);
-        gl.BindBuffer(ffi::ARRAY_BUFFER, 0);
-
-        gl.VertexAttribPointer(
-            program.attrib_vert_position as u32,
-            4,
-            ffi::FLOAT,
-            ffi::FALSE,
-            0,
-            vertices.as_ptr() as *const _,
-        );
-
-        if supports_instancing {
-            gl.VertexAttribDivisor(program.attrib_vert as u32, 0);
-            gl.VertexAttribDivisor(program.attrib_vert_position as u32, 1);
-            gl.DrawArraysInstanced(ffi::TRIANGLE_STRIP, 0, 4, damage_len as i32);
-        } else {
-            let count = damage_len * 6;
-            gl.DrawArrays(ffi::TRIANGLES, 0, count as i32);
+            gl.BindTexture(ffi::TEXTURE_2D, 0);
+            gl.DisableVertexAttribArray(program.attrib_vert as u32);
+            gl.DisableVertexAttribArray(program.attrib_vert_position as u32);
         }
 
-        gl.BindTexture(ffi::TEXTURE_2D, 0);
-        gl.DisableVertexAttribArray(program.attrib_vert as u32);
-        gl.DisableVertexAttribArray(program.attrib_vert_position as u32);
-    }
+        // Clean up
+        {
+            gl.Enable(ffi::BLEND);
+            gl.DeleteFramebuffers(1, &render_buffer_fbo as *const _);
+            gl.BlendFunc(ffi::ONE, ffi::ONE_MINUS_SRC_ALPHA);
+            gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+        }
 
-    // Clean up
-    {
-        gl.Enable(ffi::BLEND);
-        gl.DeleteFramebuffers(1, &render_buffer_fbo as *const _);
-        gl.BlendFunc(ffi::ONE, ffi::ONE_MINUS_SRC_ALPHA);
-        gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+        Ok(())
     }
-
-    Ok(())
-}}
+}
 
 // Copied from smithay, adapted to use glam structs
 fn build_texture_mat(

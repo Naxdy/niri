@@ -14,21 +14,21 @@ use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
 use super::scrolling::{Column, ColumnWidth};
 use super::tile::Tile;
 use super::workspace::{
-    compute_working_area, OutputId, Workspace, WorkspaceAddWindowTarget, WorkspaceId,
-    WorkspaceRenderElement,
+    OutputId, Workspace, WorkspaceAddWindowTarget, WorkspaceId, WorkspaceRenderElement,
+    compute_working_area,
 };
-use super::{compute_overview_zoom, ActivateWindow, HitType, LayoutElement, Options};
+use super::{ActivateWindow, HitType, LayoutElement, Options, compute_overview_zoom};
 use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::niri_render_elements;
+use crate::render_helpers::RenderTarget;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::SolidColorRenderElement;
-use crate::render_helpers::RenderTarget;
 use crate::rubber_band::RubberBand;
 use crate::utils::transaction::Transaction;
 use crate::utils::{
-    output_size, round_logical_in_physical, round_logical_in_physical_max1, ResizeEdge,
+    ResizeEdge, output_size, round_logical_in_physical, round_logical_in_physical_max1,
 };
 
 /// Amount of touchpad movement to scroll the height of one workspace.
@@ -198,24 +198,24 @@ pub type MonitorRenderElement<R> =
 impl WorkspaceSwitch {
     pub fn current_idx(&self) -> f64 {
         match self {
-            WorkspaceSwitch::Animation(anim) => anim.value(),
-            WorkspaceSwitch::Gesture(gesture) => {
+            Self::Animation(anim) => anim.value(),
+            Self::Gesture(gesture) => {
                 gesture.current_idx + gesture.animation.as_ref().map_or(0., |anim| anim.value())
             }
         }
     }
 
-    pub fn target_idx(&self) -> f64 {
+    pub const fn target_idx(&self) -> f64 {
         match self {
-            WorkspaceSwitch::Animation(anim) => anim.to(),
-            WorkspaceSwitch::Gesture(gesture) => gesture.current_idx,
+            Self::Animation(anim) => anim.to(),
+            Self::Gesture(gesture) => gesture.current_idx,
         }
     }
 
     pub fn offset(&mut self, delta: isize) {
         match self {
-            WorkspaceSwitch::Animation(anim) => anim.offset(delta as f64),
-            WorkspaceSwitch::Gesture(gesture) => {
+            Self::Animation(anim) => anim.offset(delta as f64),
+            Self::Gesture(gesture) => {
                 if delta >= 0 {
                     gesture.center_idx += delta as usize;
                 } else {
@@ -227,10 +227,10 @@ impl WorkspaceSwitch {
         }
     }
 
-    fn is_animation_ongoing(&self) -> bool {
+    const fn is_animation_ongoing(&self) -> bool {
         match self {
-            WorkspaceSwitch::Animation(_) => true,
-            WorkspaceSwitch::Gesture(gesture) => gesture.animation.is_some(),
+            Self::Animation(_) => true,
+            Self::Gesture(gesture) => gesture.animation.is_some(),
         }
     }
 }
@@ -253,10 +253,10 @@ impl WorkspaceSwitchGesture {
 }
 
 impl InsertWorkspace {
-    fn existing_id(self) -> Option<WorkspaceId> {
+    const fn existing_id(self) -> Option<WorkspaceId> {
         match self {
-            InsertWorkspace::Existing(id) => Some(id),
-            InsertWorkspace::NewAt(_) => None,
+            Self::Existing(id) => Some(id),
+            Self::NewAt(_) => None,
         }
     }
 }
@@ -264,15 +264,15 @@ impl InsertWorkspace {
 impl OverviewProgress {
     pub fn value(&self) -> f64 {
         match self {
-            OverviewProgress::Animation(anim) => anim.value(),
-            OverviewProgress::Value(v) => *v,
+            Self::Animation(anim) => anim.value(),
+            Self::Value(v) => *v,
         }
     }
 
     pub fn clamped_value(&self) -> f64 {
         match self {
-            OverviewProgress::Animation(anim) => anim.clamped_value(),
-            OverviewProgress::Value(v) => *v,
+            Self::Animation(anim) => anim.clamped_value(),
+            Self::Value(v) => *v,
         }
     }
 }
@@ -357,15 +357,15 @@ impl<W: LayoutElement> Monitor<W> {
         self.workspaces
     }
 
-    pub fn output(&self) -> &Output {
+    pub const fn output(&self) -> &Output {
         &self.output
     }
 
-    pub fn output_name(&self) -> &String {
+    pub const fn output_name(&self) -> &String {
         &self.output_name
     }
 
-    pub fn active_workspace_idx(&self) -> usize {
+    pub const fn active_workspace_idx(&self) -> usize {
         self.active_workspace_idx
     }
 
@@ -413,10 +413,10 @@ impl<W: LayoutElement> Monitor<W> {
             self.active_workspace_idx += 1;
         }
 
-        if let Some(switch) = &mut self.workspace_switch {
-            if idx as f64 <= switch.target_idx() {
-                switch.offset(1);
-            }
+        if let Some(switch) = &mut self.workspace_switch
+            && idx as f64 <= switch.target_idx()
+        {
+            switch.offset(1);
         }
     }
 
@@ -1080,10 +1080,10 @@ impl<W: LayoutElement> Monitor<W> {
                     }
                 }
 
-                if let Some(anim) = &mut gesture.animation {
-                    if anim.is_done() {
-                        gesture.animation = None;
-                    }
+                if let Some(anim) = &mut gesture.animation
+                    && anim.is_done()
+                {
+                    gesture.animation = None;
                 }
             }
             None => (),
@@ -1403,11 +1403,11 @@ impl<W: LayoutElement> Monitor<W> {
         // If the view jumped (can happen when going from corrected to uncorrected render_idx, for
         // example when toggling the overview in the middle of an overview animation), then restart
         // the workspace switch to avoid jumps.
-        if prev_render_idx != new_render_idx {
-            if let Some(WorkspaceSwitch::Animation(anim)) = &mut self.workspace_switch {
-                // FIXME: maintain velocity.
-                *anim = anim.restarted(prev_render_idx, anim.to(), 0.);
-            }
+        if prev_render_idx != new_render_idx
+            && let Some(WorkspaceSwitch::Animation(anim)) = &mut self.workspace_switch
+        {
+            // FIXME: maintain velocity.
+            *anim = anim.restarted(prev_render_idx, anim.to(), 0.);
         }
     }
 
@@ -1423,13 +1423,11 @@ impl<W: LayoutElement> Monitor<W> {
             Some(WorkspaceSwitch::Animation(switch_anim)),
             Some(OverviewProgress::Animation(progress_anim)),
         ) = (&self.workspace_switch, &self.overview_progress)
+            && switch_anim.start_time() == progress_anim.start_time()
+            && (switch_anim.duration().as_secs_f64() - progress_anim.duration().as_secs_f64()).abs()
+                <= 0.001
         {
-            if switch_anim.start_time() == progress_anim.start_time()
-                && (switch_anim.duration().as_secs_f64() - progress_anim.duration().as_secs_f64())
-                    .abs()
-                    <= 0.001
-            {
-                #[rustfmt::skip]
+            #[rustfmt::skip]
                 // How this was derived:
                 //
                 // - Assume we're animating a zoom + switch. Consider switch "from" and "to".
@@ -1471,17 +1469,18 @@ impl<W: LayoutElement> Monitor<W> {
                 // - first_y = to * from_height - switch_anim.value() * from_height - to * current_height
                 // - first_y = -switch_anim.value() * from_height + to * (from_height - current_height)
                 let from = progress_anim.from();
-                let from_zoom = compute_overview_zoom(&self.options, Some(from));
-                let from_ws_height_with_gap = self.workspace_size_with_gap(from_zoom).h;
+            let from_zoom = compute_overview_zoom(&self.options, Some(from));
+            let from_ws_height_with_gap = self.workspace_size_with_gap(from_zoom).h;
 
-                let zoom = self.overview_zoom();
-                let ws_height_with_gap = self.workspace_size_with_gap(zoom).h;
+            let zoom = self.overview_zoom();
+            let ws_height_with_gap = self.workspace_size_with_gap(zoom).h;
 
-                let first_ws_y = -switch_anim.value() * from_ws_height_with_gap
-                    + switch_anim.to() * (from_ws_height_with_gap - ws_height_with_gap);
+            let first_ws_y = (-switch_anim.value()).mul_add(
+                from_ws_height_with_gap,
+                switch_anim.to() * (from_ws_height_with_gap - ws_height_with_gap),
+            );
 
-                return -first_ws_y / ws_height_with_gap;
-            }
+            return -first_ws_y / ws_height_with_gap;
         };
 
         if let Some(switch) = &self.workspace_switch {
@@ -1509,7 +1508,7 @@ impl<W: LayoutElement> Monitor<W> {
 
         // Return position for one-past-last workspace too.
         (0..=self.workspaces.len()).map(move |idx| {
-            let y = first_ws_y + idx as f64 * ws_height_with_gap;
+            let y = (idx as f64).mul_add(ws_height_with_gap, first_ws_y);
             let loc = Point::from((0., y)) + static_offset;
             Rectangle::new(loc, ws_size)
         })
@@ -1662,16 +1661,15 @@ impl<W: LayoutElement> Monitor<W> {
     ) -> impl Iterator<Item = MonitorRenderElement<R>> + use<R, W> {
         let mut rv = None;
 
-        if !self.options.layout.insert_hint.off {
-            if let Some(render_loc) = self.insert_hint_render_loc {
-                if let InsertWorkspace::NewAt(_) = render_loc.workspace {
-                    let iter = self
-                        .insert_hint_element
-                        .render(renderer, render_loc.location)
-                        .map(MonitorInnerRenderElement::UncroppedInsertHint);
-                    rv = Some(iter);
-                }
-            }
+        if !self.options.layout.insert_hint.off
+            && let Some(render_loc) = self.insert_hint_render_loc
+            && let InsertWorkspace::NewAt(_) = render_loc.workspace
+        {
+            let iter = self
+                .insert_hint_element
+                .render(renderer, render_loc.location)
+                .map(MonitorInnerRenderElement::UncroppedInsertHint);
+            rv = Some(iter);
         }
 
         rv.into_iter().flatten().map(|elem| {
@@ -1724,16 +1722,15 @@ impl<W: LayoutElement> Monitor<W> {
 
         // Draw the insert hint.
         let mut insert_hint = None;
-        if !self.options.layout.insert_hint.off {
-            if let Some(render_loc) = self.insert_hint_render_loc {
-                if let InsertWorkspace::Existing(workspace_id) = render_loc.workspace {
-                    insert_hint = Some((
-                        workspace_id,
-                        self.insert_hint_element
-                            .render(renderer, render_loc.location),
-                    ));
-                }
-            }
+        if !self.options.layout.insert_hint.off
+            && let Some(render_loc) = self.insert_hint_render_loc
+            && let InsertWorkspace::Existing(workspace_id) = render_loc.workspace
+        {
+            insert_hint = Some((
+                workspace_id,
+                self.insert_hint_element
+                    .render(renderer, render_loc.location),
+            ));
         }
 
         self.workspaces_with_render_geo().map(move |(ws, geo)| {
@@ -2073,19 +2070,19 @@ impl<W: LayoutElement> Monitor<W> {
         self.workspace_switch_gesture_end(None);
     }
 
-    pub fn scale(&self) -> smithay::output::Scale {
+    pub const fn scale(&self) -> smithay::output::Scale {
         self.scale
     }
 
-    pub fn view_size(&self) -> Size<f64, Logical> {
+    pub const fn view_size(&self) -> Size<f64, Logical> {
         self.view_size
     }
 
-    pub fn working_area(&self) -> Rectangle<f64, Logical> {
+    pub const fn working_area(&self) -> Rectangle<f64, Logical> {
         self.working_area
     }
 
-    pub fn layout_config(&self) -> Option<&niri_config::LayoutPart> {
+    pub const fn layout_config(&self) -> Option<&niri_config::LayoutPart> {
         self.layout_config.as_ref()
     }
 

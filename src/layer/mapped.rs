@@ -1,10 +1,10 @@
 use niri_config::utils::MergeWith as _;
 use niri_config::{Config, LayerRule};
 use smithay::backend::allocator::Fourcc;
-use smithay::backend::renderer::element::surface::{
-    render_elements_from_surface_tree, WaylandSurfaceRenderElement,
-};
 use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::element::surface::{
+    WaylandSurfaceRenderElement, render_elements_from_surface_tree,
+};
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{LayerSurface, PopupManager};
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
@@ -14,13 +14,13 @@ use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
-use crate::render_helpers::blur::element::{Blur, BlurRenderElement, CommitTracker};
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
+use crate::render_helpers::blur::element::{Blur, BlurRenderElement, CommitTracker};
 use crate::render_helpers::clipped_surface::ClippedSurfaceRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
-use crate::render_helpers::{render_to_texture, RenderTarget, SplitElements};
+use crate::render_helpers::{RenderTarget, SplitElements, render_to_texture};
 use crate::utils::{baba_is_float_offset, round_logical_in_physical};
 
 #[derive(Debug)]
@@ -112,7 +112,7 @@ impl MappedLayer {
         self.shadow.update_shaders();
     }
 
-    pub fn update_sizes(&mut self, view_size: Size<f64, Logical>, scale: f64) {
+    pub const fn update_sizes(&mut self, view_size: Size<f64, Logical>, scale: f64) {
         self.view_size = view_size;
         self.scale = scale;
     }
@@ -135,15 +135,15 @@ impl MappedLayer {
         self.blur.update_render_elements(self.rules.blur.on);
     }
 
-    pub fn are_animations_ongoing(&self) -> bool {
+    pub const fn are_animations_ongoing(&self) -> bool {
         self.rules.baba_is_float
     }
 
-    pub fn surface(&self) -> &LayerSurface {
+    pub const fn surface(&self) -> &LayerSurface {
         &self.surface
     }
 
-    pub fn rules(&self) -> &ResolvedLayerRules {
+    pub const fn rules(&self) -> &ResolvedLayerRules {
         &self.rules
     }
 
@@ -330,7 +330,7 @@ impl MappedLayer {
         rv
     }
 
-    pub fn set_blurred(&mut self, new_blurred: bool) {
+    pub const fn set_blurred(&mut self, new_blurred: bool) {
         if !self.rules.blur.off {
             self.rules.blur.on = new_blurred;
         }

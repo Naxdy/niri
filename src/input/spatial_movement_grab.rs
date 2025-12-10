@@ -1,12 +1,12 @@
 use std::time::Duration;
 
+use smithay::input::SeatHandler;
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
     GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
     GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
     MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
 };
-use smithay::input::SeatHandler;
 use smithay::output::Output;
 use smithay::utils::{Logical, Point};
 
@@ -29,7 +29,7 @@ enum GestureState {
 }
 
 impl SpatialMovementGrab {
-    pub fn new(
+    pub const fn new(
         start_data: PointerGrabStartData<State>,
         output: Output,
         workspace_id: WorkspaceId,
@@ -90,7 +90,7 @@ impl PointerGrab<State> for SpatialMovementGrab {
                 let c = event.location - self.start_data.location;
 
                 // Check if the gesture moved far enough to decide. Threshold copied from GTK 4.
-                if c.x * c.x + c.y * c.y >= 8. * 8. {
+                if c.x.mul_add(c.x, c.y * c.y) >= 8. * 8. {
                     if c.x.abs() > c.y.abs() {
                         self.gesture = GestureState::ViewOffset;
                         if let Some((ws_idx, ws)) = layout.find_workspace_by_id(self.workspace_id) {

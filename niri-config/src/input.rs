@@ -4,9 +4,9 @@ use miette::miette;
 use smithay::input::keyboard::XkbConfig;
 use smithay::reexports::input;
 
+use crate::FloatOrInt;
 use crate::binds::Modifiers;
 use crate::utils::{Flag, MergeWith, Percent};
-use crate::FloatOrInt;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Input {
@@ -420,14 +420,14 @@ pub enum ModKey {
 }
 
 impl ModKey {
-    pub fn to_modifiers(&self) -> Modifiers {
+    pub const fn to_modifiers(&self) -> Modifiers {
         match self {
-            ModKey::Ctrl => Modifiers::CTRL,
-            ModKey::Shift => Modifiers::SHIFT,
-            ModKey::Alt => Modifiers::ALT,
-            ModKey::Super => Modifiers::SUPER,
-            ModKey::IsoLevel3Shift => Modifiers::ISO_LEVEL3_SHIFT,
-            ModKey::IsoLevel5Shift => Modifiers::ISO_LEVEL5_SHIFT,
+            Self::Ctrl => Modifiers::CTRL,
+            Self::Shift => Modifiers::SHIFT,
+            Self::Alt => Modifiers::ALT,
+            Self::Super => Modifiers::SUPER,
+            Self::IsoLevel3Shift => Modifiers::ISO_LEVEL3_SHIFT,
+            Self::IsoLevel5Shift => Modifiers::ISO_LEVEL5_SHIFT,
         }
     }
 }

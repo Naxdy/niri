@@ -62,7 +62,7 @@ impl<S: knuffel::traits::ErrorSpan> knuffel::DecodeScalar<S> for WorkspaceName {
     fn raw_decode(
         val: &knuffel::span::Spanned<knuffel::ast::Literal, S>,
         ctx: &mut knuffel::decode::Context<S>,
-    ) -> Result<WorkspaceName, DecodeError<S>> {
+    ) -> Result<Self, DecodeError<S>> {
         #[derive(Debug)]
         struct WorkspaceNameSet(Vec<String>);
         match &**val {

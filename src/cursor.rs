@@ -5,15 +5,15 @@ use std::fs::File;
 use std::io::Read;
 use std::rc::Rc;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::memory::MemoryRenderBuffer;
 use smithay::input::pointer::{CursorIcon, CursorImageStatus, CursorImageSurfaceData};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{IsAlive, Logical, Physical, Point, Transform};
 use smithay::wayland::compositor::with_states;
-use xcursor::parser::{parse_xcursor, Image};
 use xcursor::CursorTheme;
+use xcursor::parser::{Image, parse_xcursor};
 
 /// Some default looking `left_ptr` icon.
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../resources/cursor.rgba");
@@ -51,10 +51,10 @@ impl CursorManager {
 
     /// Checks if the cursor WlSurface is alive, and if not, cleans it up.
     pub fn check_cursor_image_surface_alive(&mut self) {
-        if let CursorImageStatus::Surface(surface) = &self.current_cursor {
-            if !surface.alive() {
-                self.current_cursor = CursorImageStatus::default_named();
-            }
+        if let CursorImageStatus::Surface(surface) = &self.current_cursor
+            && !surface.alive()
+        {
+            self.current_cursor = CursorImageStatus::default_named();
         }
     }
 
@@ -145,7 +145,7 @@ impl CursorManager {
     }
 
     /// Currently used cursor_image as a cursor provider.
-    pub fn cursor_image(&self) -> &CursorImageStatus {
+    pub const fn cursor_image(&self) -> &CursorImageStatus {
         &self.current_cursor
     }
 
@@ -309,7 +309,7 @@ impl XCursor {
     }
 
     /// Check whether the cursor is animated.
-    pub fn is_animated_cursor(&self) -> bool {
+    pub const fn is_animated_cursor(&self) -> bool {
         self.images.len() > 1
     }
 

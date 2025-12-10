@@ -1,11 +1,11 @@
 use smithay::desktop::Window;
+use smithay::input::SeatHandler;
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
     GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
     GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
     MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
 };
-use smithay::input::SeatHandler;
 use smithay::utils::{IsAlive, Logical, Point};
 
 use crate::niri::State;
@@ -16,7 +16,7 @@ pub struct ResizeGrab {
 }
 
 impl ResizeGrab {
-    pub fn new(start_data: PointerGrabStartData<State>, window: Window) -> Self {
+    pub const fn new(start_data: PointerGrabStartData<State>, window: Window) -> Self {
         Self { start_data, window }
     }
 

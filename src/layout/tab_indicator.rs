@@ -6,8 +6,8 @@ use std::mem;
 use anyhow::ensure;
 use itertools::izip;
 use niri_config::{CornerRadius, Gradient, GradientRelativeTo, TabIndicatorPosition};
-use pango::glib::property::PropertySet;
 use pango::FontDescription;
+use pango::glib::property::PropertySet;
 use pangocairo::cairo::{self, ImageSurface};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::Kind;
@@ -71,7 +71,7 @@ struct TitleTexture {
 }
 
 impl TabIndicator {
-    pub fn new(config: niri_config::TabIndicator) -> Self {
+    pub const fn new(config: niri_config::TabIndicator) -> Self {
         Self {
             shader_locs: Vec::new(),
             shaders: Vec::new(),
@@ -82,7 +82,7 @@ impl TabIndicator {
         }
     }
 
-    pub fn update_config(&mut self, config: niri_config::TabIndicator) {
+    pub const fn update_config(&mut self, config: niri_config::TabIndicator) {
         self.config = config;
     }
 
@@ -93,14 +93,14 @@ impl TabIndicator {
     }
 
     pub fn advance_animations(&mut self) {
-        if let Some(anim) = &mut self.open_anim {
-            if anim.is_done() {
-                self.open_anim = None;
-            }
+        if let Some(anim) = &mut self.open_anim
+            && anim.is_done()
+        {
+            self.open_anim = None;
         }
     }
 
-    pub fn are_animations_ongoing(&self) -> bool {
+    pub const fn are_animations_ongoing(&self) -> bool {
         self.open_anim.is_some()
     }
 
@@ -130,16 +130,16 @@ impl TabIndicator {
         // Compute px_per_tab before applying the animation to gaps_between in order to avoid it
         // growing and shrinking over the duration of the animation.
         let pixel = 1. / scale;
-        let shortest_length = count as f64 * (pixel + gaps_between) - gaps_between;
+        let shortest_length = (count as f64).mul_add(pixel + gaps_between, -gaps_between);
         let length = f64::max(min_length, shortest_length);
         let px_per_tab = (length + gaps_between) / count as f64 - gaps_between;
 
         let gaps_between = round(self.config.gaps_between_tabs * progress);
 
-        let length = (count - 1) as f64 * (px_per_tab + gaps_between) + px_per_tab * progress;
+        let length = ((count - 1) as f64).mul_add(px_per_tab + gaps_between, px_per_tab * progress);
         let px_per_tab = floor_logical_in_physical_max1(scale, px_per_tab);
         let floored_length =
-            (count - 1) as f64 * (px_per_tab + gaps_between) + px_per_tab * progress;
+            ((count - 1) as f64).mul_add(px_per_tab + gaps_between, px_per_tab * progress);
         let mut ones_left = ((length - floored_length) / pixel).round() as usize;
 
         let mut shader_loc = Point::from((0., round((side - length) / 2.)));
@@ -455,7 +455,7 @@ impl TabIndicator {
         }
     }
 
-    pub fn config(&self) -> niri_config::TabIndicator {
+    pub const fn config(&self) -> niri_config::TabIndicator {
         self.config
     }
 }
@@ -523,7 +523,7 @@ impl TabInfo {
 
         let geometry = Rectangle::new(Point::default(), tile_size);
 
-        TabInfo {
+        Self {
             gradient,
             geometry,
             title: window.title().unwrap_or_default(),

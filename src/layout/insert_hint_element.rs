@@ -27,7 +27,7 @@ impl InsertHintElement {
         }
     }
 
-    pub fn update_config(&mut self, config: niri_config::InsertHint) {
+    pub const fn update_config(&mut self, config: niri_config::InsertHint) {
         self.inner.update_config(niri_config::FocusRing {
             off: config.off,
             width: 0.,

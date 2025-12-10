@@ -8,8 +8,8 @@ use niri_config::Config;
 use ordered_float::NotNan;
 use pangocairo::cairo::{self, ImageSurface};
 use pangocairo::pango::{Alignment, FontDescription};
-use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::output::Output;
 use smithay::reexports::gbm::Format as Fourcc;
 use smithay::utils::{Point, Transform};
@@ -122,7 +122,7 @@ impl ExitConfirmDialog {
         true
     }
 
-    pub fn is_open(&self) -> bool {
+    pub const fn is_open(&self) -> bool {
         matches!(self.state, State::Showing(_) | State::Visible)
     }
 
@@ -143,7 +143,7 @@ impl ExitConfirmDialog {
         }
     }
 
-    pub fn are_animations_ongoing(&self) -> bool {
+    pub const fn are_animations_ongoing(&self) -> bool {
         matches!(self.state, State::Showing(_) | State::Hiding(_))
     }
 
@@ -199,7 +199,7 @@ impl ExitConfirmDialog {
         let elem = RescaleRenderElement::from_element(
             elem,
             (location + size.downscale(2.)).to_physical_precise_round(scale),
-            value.max(0.) * 0.2 + 0.8,
+            value.max(0.).mul_add(0.2, 0.8),
         );
         rv.push(ExitConfirmDialogRenderElement::Texture(elem));
 

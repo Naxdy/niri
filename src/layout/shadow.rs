@@ -14,7 +14,7 @@ pub struct Shadow {
 }
 
 impl Shadow {
-    pub fn new(config: niri_config::Shadow) -> Self {
+    pub const fn new(config: niri_config::Shadow) -> Self {
         Self {
             shader_rects: Vec::new(),
             shaders: Vec::new(),
@@ -22,7 +22,7 @@ impl Shadow {
         }
     }
 
-    pub fn update_config(&mut self, config: niri_config::Shadow) {
+    pub const fn update_config(&mut self, config: niri_config::Shadow) {
         self.config = config;
     }
 

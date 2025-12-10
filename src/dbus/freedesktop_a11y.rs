@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::Context;
 use futures_util::StreamExt;
 use smithay::backend::input::{KeyState, Keycode};
-use smithay::input::keyboard::{xkb, Keysym};
+use smithay::input::keyboard::{Keysym, xkb};
 use zbus::blocking::object_server::InterfaceRef;
 use zbus::fdo::{self, RequestNameFlags};
 use zbus::interface;
@@ -238,7 +238,7 @@ impl KeyboardMonitor {
                 ctxt = ctxt.set_destination(BusName::Unique(name.as_ref()));
                 let ctxt = &ctxt;
                 async_io::block_on(async move {
-                    if let Err(err) = KeyboardMonitor::key_event(
+                    if let Err(err) = Self::key_event(
                         ctxt,
                         released,
                         mods,

@@ -200,7 +200,7 @@ impl OffscreenBuffer {
 
 impl Default for OffscreenBuffer {
     fn default() -> Self {
-        OffscreenBuffer {
+        Self {
             inner: RefCell::new(None),
             id: Id::new(),
         }
@@ -208,20 +208,20 @@ impl Default for OffscreenBuffer {
 }
 
 impl OffscreenRenderElement {
-    pub fn texture(&self) -> &GlesTexture {
+    pub const fn texture(&self) -> &GlesTexture {
         &self.texture
     }
 
-    pub fn offset(&self) -> Point<f64, Logical> {
+    pub const fn offset(&self) -> Point<f64, Logical> {
         self.offset
     }
 
-    pub fn with_alpha(mut self, alpha: f32) -> Self {
+    pub const fn with_alpha(mut self, alpha: f32) -> Self {
         self.alpha = alpha;
         self
     }
 
-    pub fn with_offset(mut self, offset: Point<f64, Logical>) -> Self {
+    pub const fn with_offset(mut self, offset: Point<f64, Logical>) -> Self {
         self.offset = offset;
         self
     }

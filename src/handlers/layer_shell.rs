@@ -1,5 +1,5 @@
 use smithay::delegate_layer_shell;
-use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, WindowSurfaceType};
+use smithay::desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output};
 use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -56,23 +56,24 @@ impl WlrLayerShellHandler for State {
         self.niri.unmapped_layer_surfaces.remove(wl_surface);
 
         let output = match self.niri.layout.outputs().find_map(|o| {
-                let map = layer_map_for_output(o);
-                let layer = map
-                    .layers()
-                    .find(|&layer| layer.layer_surface() == &surface)
-                    .cloned();
-                layer.map(|layer| (o.clone(), map, layer))
-            }) { Some((output, mut map, layer)) => {
-            if matches!(layer.layer(), Layer::Background | Layer::Bottom) {
-                EffectsFramebuffers::set_dirty(&output);
-            }
+            let map = layer_map_for_output(o);
+            let layer = map
+                .layers()
+                .find(|&layer| layer.layer_surface() == &surface)
+                .cloned();
+            layer.map(|layer| (o.clone(), map, layer))
+        }) {
+            Some((output, mut map, layer)) => {
+                if matches!(layer.layer(), Layer::Background | Layer::Bottom) {
+                    EffectsFramebuffers::set_dirty(&output);
+                }
 
-            map.unmap_layer(&layer);
-            self.niri.mapped_layer_surfaces.remove(&layer);
-            Some(output)
-        } _ => {
-            None
-        }};
+                map.unmap_layer(&layer);
+                self.niri.mapped_layer_surfaces.remove(&layer);
+                Some(output)
+            }
+            _ => None,
+        };
         if let Some(output) = output {
             self.niri.output_resized(&output);
         }

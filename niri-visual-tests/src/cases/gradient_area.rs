@@ -71,8 +71,12 @@ impl TestCase for GradientArea {
         let area = Rectangle::new(Point::from((a, b)), rect_size).to_f64();
 
         let g_size = Size::from((
-            (size.w as f32 / 8. + size.w as f32 / 8. * 7. * f).round() as i32,
-            (size.h as f32 / 8. + size.h as f32 / 8. * 7. * f).round() as i32,
+            (size.w as f32 / 8. * 7.)
+                .mul_add(f, size.w as f32 / 8.)
+                .round() as i32,
+            (size.h as f32 / 8. * 7.)
+                .mul_add(f, size.h as f32 / 8.)
+                .round() as i32,
         ));
         let g_loc = Point::from(((size.w - g_size.w) / 2, (size.h - g_size.h) / 2)).to_f64();
         let g_size = g_size.to_f64();

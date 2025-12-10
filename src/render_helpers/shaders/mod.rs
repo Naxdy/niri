@@ -244,10 +244,10 @@ pub fn set_custom_resize_program(renderer: &mut GlesRenderer, src: Option<&str>)
         None
     };
 
-    if let Some(prev) = Shaders::get(renderer).replace_custom_resize_program(program) {
-        if let Err(err) = prev.destroy(renderer) {
-            warn!("error destroying previous custom resize shader: {err:?}");
-        }
+    if let Some(prev) = Shaders::get(renderer).replace_custom_resize_program(program)
+        && let Err(err) = prev.destroy(renderer)
+    {
+        warn!("error destroying previous custom resize shader: {err:?}");
     }
 }
 
@@ -287,10 +287,10 @@ pub fn set_custom_close_program(renderer: &mut GlesRenderer, src: Option<&str>) 
         None
     };
 
-    if let Some(prev) = Shaders::get(renderer).replace_custom_close_program(program) {
-        if let Err(err) = prev.destroy(renderer) {
-            warn!("error destroying previous custom close shader: {err:?}");
-        }
+    if let Some(prev) = Shaders::get(renderer).replace_custom_close_program(program)
+        && let Err(err) = prev.destroy(renderer)
+    {
+        warn!("error destroying previous custom close shader: {err:?}");
     }
 }
 
@@ -330,10 +330,10 @@ pub fn set_custom_open_program(renderer: &mut GlesRenderer, src: Option<&str>) {
         None
     };
 
-    if let Some(prev) = Shaders::get(renderer).replace_custom_open_program(program) {
-        if let Err(err) = prev.destroy(renderer) {
-            warn!("error destroying previous custom open shader: {err:?}");
-        }
+    if let Some(prev) = Shaders::get(renderer).replace_custom_open_program(program)
+        && let Err(err) = prev.destroy(renderer)
+    {
+        warn!("error destroying previous custom open shader: {err:?}");
     }
 }
 

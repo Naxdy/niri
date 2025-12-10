@@ -10,17 +10,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{io, mem};
 
-use anyhow::{anyhow, bail, ensure, Context};
+use anyhow::{Context, anyhow, bail, ensure};
 use bytemuck::cast_slice_mut;
 use drm_ffi::drm_mode_modeinfo;
 use libc::dev_t;
 use niri_config::output::Modeline;
 use niri_config::{Config, OutputName};
 use niri_ipc::{HSyncPolarity, VSyncPolarity};
+use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
-use smithay::backend::allocator::Fourcc;
 use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::{
@@ -43,8 +43,8 @@ use smithay::reexports::calloop::{Dispatcher, LoopHandle, RegistrationToken};
 use smithay::reexports::drm::control::atomic::AtomicModeReq;
 use smithay::reexports::drm::control::dumbbuffer::DumbBuffer;
 use smithay::reexports::drm::control::{
-    self, connector, crtc, plane, property, AtomicCommitFlags, Device, Mode as DrmMode, ModeFlags,
-    ModeTypeFlags, PlaneType, ResourceHandle,
+    self, AtomicCommitFlags, Device, Mode as DrmMode, ModeFlags, ModeTypeFlags, PlaneType,
+    ResourceHandle, connector, crtc, plane, property,
 };
 use smithay::reexports::gbm::Modifier;
 use smithay::reexports::input::Libinput;
@@ -69,8 +69,8 @@ use crate::render_helpers::blur::EffectsFramebuffers;
 use crate::render_helpers::debug::draw_damage;
 use crate::render_helpers::render_data::RendererData;
 use crate::render_helpers::renderer::AsGlesRenderer;
-use crate::render_helpers::{resources, shaders, RenderTarget};
-use crate::utils::{get_monotonic_time, is_laptop_panel, logical_output, PanelOrientation};
+use crate::render_helpers::{RenderTarget, resources, shaders};
+use crate::utils::{PanelOrientation, get_monotonic_time, is_laptop_panel, logical_output};
 
 const SUPPORTED_COLOR_FORMATS: [Fourcc; 4] = [
     Fourcc::Xrgb8888,
@@ -259,10 +259,10 @@ impl OutputDevice {
                 if let Some(enc) = info.current_encoder() {
                     match self.drm.get_encoder(enc) {
                         Ok(enc) => {
-                            if let Some(current_crtc) = enc.crtc() {
-                                if current_crtc != crtc {
-                                    has_different_crtc = true;
-                                }
+                            if let Some(current_crtc) = enc.crtc()
+                                && current_crtc != crtc
+                            {
+                                has_different_crtc = true;
                             }
                         }
                         Err(err) => {
@@ -520,15 +520,18 @@ impl Tty {
         match udev
             .device_list()
             .find(|&(device_id, _)| device_id == self.primary_node.dev_id())
-        { Some((primary_device_id, primary_device_path)) => {
-            if let Err(err) = self.device_added(primary_device_id, primary_device_path, niri) {
-                warn!(
-                    "error adding primary node device, display-only devices may not work: {err:?}"
-                );
+        {
+            Some((primary_device_id, primary_device_path)) => {
+                if let Err(err) = self.device_added(primary_device_id, primary_device_path, niri) {
+                    warn!(
+                        "error adding primary node device, display-only devices may not work: {err:?}"
+                    );
+                }
             }
-        } _ => {
-            warn!("primary node is missing, display-only devices may not work");
-        }};
+            _ => {
+                warn!("primary node is missing, display-only devices may not work");
+            }
+        };
 
         for (device_id, path) in udev.device_list() {
             if device_id == self.primary_node.dev_id() {
@@ -661,15 +664,15 @@ impl Tty {
                     // Apply pending gamma changes and restore our existing gamma.
                     let device = self.devices.get_mut(&node).unwrap();
                     for (crtc, surface) in device.surfaces.iter_mut() {
-                        match ConnectorProperties::try_new(&device.drm, surface.connector)
-                        { Ok(props) => {
-                            match reset_hdr(&props) {
+                        match ConnectorProperties::try_new(&device.drm, surface.connector) {
+                            Ok(props) => match reset_hdr(&props) {
                                 Ok(()) => (),
                                 Err(err) => debug!("couldn't reset HDR properties: {err:?}"),
+                            },
+                            _ => {
+                                warn!("failed to get connector properties");
                             }
-                        } _ => {
-                            warn!("failed to get connector properties");
-                        }};
+                        };
 
                         if let Some(ramp) = surface.pending_gamma_change.take() {
                             let ramp = ramp.as_deref();
@@ -681,10 +684,10 @@ impl Tty {
                             if let Err(err) = res {
                                 warn!("error applying pending gamma change: {err:?}");
                             }
-                        } else if let Some(gamma_props) = &surface.gamma_props {
-                            if let Err(err) = gamma_props.restore_gamma(&device.drm) {
-                                warn!("error restoring gamma: {err:?}");
-                            }
+                        } else if let Some(gamma_props) = &surface.gamma_props
+                            && let Err(err) = gamma_props.restore_gamma(&device.drm)
+                        {
+                            warn!("error restoring gamma: {err:?}");
                         }
                     }
                 }
@@ -1250,21 +1253,24 @@ impl Tty {
         debug!("picking mode: {mode:?}");
 
         let mut orientation = None;
-        match ConnectorProperties::try_new(&device.drm, connector.handle()) { Ok(props) => {
-            match reset_hdr(&props) {
-                Ok(()) => (),
-                Err(err) => debug!("couldn't reset HDR properties: {err:?}"),
-            }
+        match ConnectorProperties::try_new(&device.drm, connector.handle()) {
+            Ok(props) => {
+                match reset_hdr(&props) {
+                    Ok(()) => (),
+                    Err(err) => debug!("couldn't reset HDR properties: {err:?}"),
+                }
 
-            match get_panel_orientation(&props) {
-                Ok(x) => orientation = Some(x),
-                Err(err) => {
-                    trace!("couldn't get panel orientation: {err:?}");
+                match get_panel_orientation(&props) {
+                    Ok(x) => orientation = Some(x),
+                    Err(err) => {
+                        trace!("couldn't get panel orientation: {err:?}");
+                    }
                 }
             }
-        } _ => {
-            warn!("failed to get connector properties");
-        }};
+            _ => {
+                warn!("failed to get connector properties");
+            }
+        };
 
         let mut gamma_props = GammaProps::new(&device.drm, crtc)
             .map_err(|err| debug!("couldn't get gamma properties: {err:?}"))
@@ -1454,10 +1460,10 @@ impl Tty {
 
         // Some buggy monitors replug upon powering off, so powering on here would prevent such
         // monitors from powering off. Therefore, we avoid unconditionally powering on.
-        if !niri.monitors_active {
-            if let Err(err) = compositor.clear() {
-                warn!("error clearing drm surface: {err:?}");
-            }
+        if !niri.monitors_active
+            && let Err(err) = compositor.clear()
+        {
+            warn!("error clearing drm surface: {err:?}");
         }
 
         let vrr_enabled = compositor.vrr_enabled();
@@ -1884,12 +1890,10 @@ impl Tty {
                         .borrow()
                         .debug
                         .wait_for_frame_completion_before_queueing;
-                if needs_sync {
-                    if let PrimaryPlaneElement::Swapchain(element) = res.primary_element {
-                        let _span = tracy_client::span!("wait for completion");
-                        if let Err(err) = element.sync.wait() {
-                            warn!("error waiting for frame completion: {err:?}");
-                        }
+                if needs_sync && let PrimaryPlaneElement::Swapchain(element) = res.primary_element {
+                    let _span = tracy_client::span!("wait for completion");
+                    if let Err(err) = element.sync.wait() {
+                        warn!("error waiting for frame completion: {err:?}");
                     }
                 }
 
@@ -2657,10 +2661,10 @@ impl GammaProps {
                 })?;
         }
 
-        if let Some(blob) = mem::replace(&mut self.previous_blob, blob) {
-            if let Err(err) = device.destroy_property_blob(blob.get()) {
-                warn!("error destroying previous GAMMA_LUT blob: {err:?}");
-            }
+        if let Some(blob) = mem::replace(&mut self.previous_blob, blob)
+            && let Err(err) = device.destroy_property_blob(blob.get())
+        {
+            warn!("error destroying previous GAMMA_LUT blob: {err:?}");
         }
 
         Ok(())

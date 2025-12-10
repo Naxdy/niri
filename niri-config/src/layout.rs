@@ -2,9 +2,9 @@ use knuffel::errors::DecodeError;
 use niri_ipc::SizeChange;
 
 use crate::appearance::{
-    Border, FocusRing, InsertHint, Shadow, TabIndicator, DEFAULT_BACKGROUND_COLOR,
+    Border, DEFAULT_BACKGROUND_COLOR, FocusRing, InsertHint, Shadow, TabIndicator,
 };
-use crate::utils::{expect_only_children, Flag, MergeWith};
+use crate::utils::{Flag, MergeWith, expect_only_children};
 use crate::{
     Blur, BlurRule, BorderRule, Color, FloatOrInt, InsertHintPart, ShadowRule, TabIndicatorPart,
 };
@@ -87,11 +87,11 @@ impl MergeWith<LayoutPart> for Layout {
         }
 
         if self.preset_column_widths.is_empty() {
-            self.preset_column_widths = Layout::default().preset_column_widths;
+            self.preset_column_widths = Self::default().preset_column_widths;
         }
 
         if self.preset_window_heights.is_empty() {
-            self.preset_window_heights = Layout::default().preset_window_heights;
+            self.preset_window_heights = Self::default().preset_window_heights;
         }
     }
 }
@@ -139,8 +139,8 @@ pub enum PresetSize {
 impl From<PresetSize> for SizeChange {
     fn from(value: PresetSize) -> Self {
         match value {
-            PresetSize::Proportion(prop) => SizeChange::SetProportion(prop * 100.),
-            PresetSize::Fixed(fixed) => SizeChange::SetFixed(fixed),
+            PresetSize::Proportion(prop) => Self::SetProportion(prop * 100.),
+            PresetSize::Fixed(fixed) => Self::SetFixed(fixed),
         }
     }
 }

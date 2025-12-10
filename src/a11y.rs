@@ -39,7 +39,7 @@ enum Msg {
 }
 
 impl A11y {
-    pub fn new(event_loop: LoopHandle<'static, State>) -> Self {
+    pub const fn new(event_loop: LoopHandle<'static, State>) -> Self {
         Self {
             event_loop,
             focus: ID_ROOT,
@@ -118,22 +118,22 @@ impl Niri {
 
         let mut announcement = None;
         let ws_id = self.layout.active_workspace().map(|ws| ws.id());
-        if let Some(ws_id) = ws_id {
-            if self.a11y.workspace_id != Some(ws_id) {
-                let (_, idx, ws) = self
-                    .layout
-                    .workspaces()
-                    .find(|(_, _, ws)| ws.id() == ws_id)
-                    .unwrap();
+        if let Some(ws_id) = ws_id
+            && self.a11y.workspace_id != Some(ws_id)
+        {
+            let (_, idx, ws) = self
+                .layout
+                .workspaces()
+                .find(|(_, _, ws)| ws.id() == ws_id)
+                .unwrap();
 
-                let mut buf = format!("Workspace {}", idx + 1);
-                if let Some(name) = ws.name() {
-                    buf.push(' ');
-                    buf.push_str(name);
-                }
-
-                announcement = Some(buf);
+            let mut buf = format!("Workspace {}", idx + 1);
+            if let Some(name) = ws.name() {
+                buf.push(' ');
+                buf.push_str(name);
             }
+
+            announcement = Some(buf);
         }
         self.a11y.workspace_id = ws_id;
 
@@ -268,7 +268,7 @@ impl Niri {
         self.a11y_announce(self.hotkey_overlay.a11y_text());
     }
 
-    fn a11y_focus(&self) -> NodeId {
+    const fn a11y_focus(&self) -> NodeId {
         match self.keyboard_focus {
             KeyboardFocus::ScreenshotUi => ID_SCREENSHOT_UI,
             KeyboardFocus::ExitConfirmDialog => ID_EXIT_CONFIRM_DIALOG,

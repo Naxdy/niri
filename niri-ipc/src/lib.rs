@@ -1107,7 +1107,7 @@ pub enum ScaleToSet {
 }
 
 /// Output position to set.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[cfg_attr(feature = "clap", command(subcommand_value_name = "POSITION"))]
 #[cfg_attr(feature = "clap", command(subcommand_help_heading = "Position Values"))]
@@ -1122,7 +1122,7 @@ pub enum PositionToSet {
 }
 
 /// Output position as set in the config file.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 pub struct ConfiguredPosition {
@@ -1133,7 +1133,7 @@ pub struct ConfiguredPosition {
 }
 
 /// Output VRR to set.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 pub struct VrrToSet {
@@ -1173,7 +1173,7 @@ pub struct Output {
     ///
     /// `None` if the output is disabled.
     pub current_mode: Option<usize>,
-    /// Whether the current_mode is a custom mode.
+    /// Whether the `current_mode` is a custom mode.
     pub is_custom_mode: bool,
     /// Whether the output supports variable refresh rate.
     pub vrr_supported: bool,
@@ -1186,7 +1186,7 @@ pub struct Output {
 }
 
 /// Output mode.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 pub struct Mode {
     /// Width in physical pixels.
@@ -1574,7 +1574,7 @@ pub enum Event {
 
 impl From<Duration> for Timestamp {
     fn from(value: Duration) -> Self {
-        Timestamp {
+        Self {
             secs: value.as_secs(),
             nanos: value.subsec_nanos(),
         }
@@ -1583,7 +1583,7 @@ impl From<Duration> for Timestamp {
 
 impl From<Timestamp> for Duration {
     fn from(value: Timestamp) -> Self {
-        Duration::new(value.secs, value.nanos)
+        Self::new(value.secs, value.nanos)
     }
 }
 
@@ -1609,37 +1609,34 @@ impl FromStr for SizeChange {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.split_once('%') {
-            Some((value, empty)) => {
-                if !empty.is_empty() {
-                    return Err("trailing characters after '%' are not allowed");
-                }
-
-                match value.bytes().next() {
-                    Some(b'-' | b'+') => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::AdjustProportion(value))
-                    }
-                    Some(_) => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::SetProportion(value))
-                    }
-                    None => Err("value is missing"),
-                }
+        if let Some((value, empty)) = s.split_once('%') {
+            if !empty.is_empty() {
+                return Err("trailing characters after '%' are not allowed");
             }
-            None => {
-                let value = s;
-                match value.bytes().next() {
-                    Some(b'-' | b'+') => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::AdjustFixed(value))
-                    }
-                    Some(_) => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::SetFixed(value))
-                    }
-                    None => Err("value is missing"),
+
+            match value.bytes().next() {
+                Some(b'-' | b'+') => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::AdjustProportion(value))
                 }
+                Some(_) => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::SetProportion(value))
+                }
+                None => Err("value is missing"),
+            }
+        } else {
+            let value = s;
+            match value.bytes().next() {
+                Some(b'-' | b'+') => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::AdjustFixed(value))
+                }
+                Some(_) => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::SetFixed(value))
+                }
+                None => Err("value is missing"),
             }
         }
     }
@@ -1649,37 +1646,34 @@ impl FromStr for PositionChange {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.split_once('%') {
-            Some((value, empty)) => {
-                if !empty.is_empty() {
-                    return Err("trailing characters after '%' are not allowed");
-                }
-
-                match value.bytes().next() {
-                    Some(b'-' | b'+') => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::AdjustProportion(value))
-                    }
-                    Some(_) => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::SetProportion(value))
-                    }
-                    None => Err("value is missing"),
-                }
+        if let Some((value, empty)) = s.split_once('%') {
+            if !empty.is_empty() {
+                return Err("trailing characters after '%' are not allowed");
             }
-            None => {
-                let value = s;
-                match value.bytes().next() {
-                    Some(b'-' | b'+') => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::AdjustFixed(value))
-                    }
-                    Some(_) => {
-                        let value = value.parse().map_err(|_| "error parsing value")?;
-                        Ok(Self::SetFixed(value))
-                    }
-                    None => Err("value is missing"),
+
+            match value.bytes().next() {
+                Some(b'-' | b'+') => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::AdjustProportion(value))
                 }
+                Some(_) => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::SetProportion(value))
+                }
+                None => Err("value is missing"),
+            }
+        } else {
+            let value = s;
+            match value.bytes().next() {
+                Some(b'-' | b'+') => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::AdjustFixed(value))
+                }
+                Some(_) => {
+                    let value = value.parse().map_err(|_| "error parsing value")?;
+                    Ok(Self::SetFixed(value))
+                }
+                None => Err("value is missing"),
             }
         }
     }
@@ -1811,7 +1805,7 @@ impl OutputAction {
     /// Validates some required constraints on the modeline and custom mode.
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            OutputAction::Modeline {
+            Self::Modeline {
                 hdisplay,
                 hsync_start,
                 hsync_end,
@@ -1862,16 +1856,16 @@ impl OutputAction {
                 ensure!(0 < *vtotal, "vtotal {} must be > 0", vtotal);
                 Ok(())
             }
-            OutputAction::CustomMode {
+            Self::CustomMode {
                 mode: ConfiguredMode { refresh, .. },
             } => {
                 if refresh.is_none() {
                     return Err("refresh rate is required for custom modes".to_string());
                 }
-                if let Some(refresh) = refresh {
-                    if *refresh <= 0. {
-                        return Err(format!("custom mode refresh rate {refresh} must be > 0"));
-                    }
+                if let Some(refresh) = refresh
+                    && *refresh <= 0.
+                {
+                    return Err(format!("custom mode refresh rate {refresh} must be > 0"));
                 }
                 Ok(())
             }

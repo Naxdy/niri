@@ -62,7 +62,7 @@ where
 }
 
 impl<'frame, 'buffer> AsGlesFrame<'frame, 'buffer> for GlesFrame<'frame, 'buffer> {
-    fn as_gles_frame(&mut self) -> &mut GlesFrame<'frame, 'buffer> {
+    fn as_gles_frame(&mut self) -> &mut Self {
         self
     }
 }

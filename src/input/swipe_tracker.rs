@@ -18,7 +18,7 @@ struct Event {
 
 impl SwipeTracker {
     #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             history: VecDeque::new(),
             pos: 0.,
@@ -29,14 +29,14 @@ impl SwipeTracker {
     pub fn push(&mut self, delta: f64, timestamp: Duration) {
         // For the events that we care about, timestamps should always increase
         // monotonically.
-        if let Some(last) = self.history.back() {
-            if timestamp < last.timestamp {
-                trace!(
-                    "ignoring event with timestamp {timestamp:?} earlier than last {:?}",
-                    last.timestamp
-                );
-                return;
-            }
+        if let Some(last) = self.history.back()
+            && timestamp < last.timestamp
+        {
+            trace!(
+                "ignoring event with timestamp {timestamp:?} earlier than last {:?}",
+                last.timestamp
+            );
+            return;
         }
 
         self.history.push_back(Event { delta, timestamp });
@@ -46,7 +46,7 @@ impl SwipeTracker {
     }
 
     /// Returns the current gesture position.
-    pub fn pos(&self) -> f64 {
+    pub const fn pos(&self) -> f64 {
         self.pos
     }
 

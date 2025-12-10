@@ -19,11 +19,11 @@ use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::layout::SizingMode;
 use crate::niri_render_elements;
+use crate::render_helpers::RenderTarget;
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
-use crate::render_helpers::RenderTarget;
-use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::utils::ResizeEdge;
+use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::window::ResolvedWindowRules;
 
 /// Amount of touchpad movement to scroll the view for the width of one working area.
@@ -262,7 +262,7 @@ pub enum WindowHeight {
 ///
 /// As operations often have a symmetrical counterpart, e.g. focus-right/focus-left, methods
 /// on `Scrolling` can sometimes be factored using the direction of the operation as a parameter.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollDirection {
     Left,
     Right,
@@ -335,10 +335,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     pub fn advance_animations(&mut self) {
-        if let ViewOffset::Animation(anim) = &self.view_offset {
-            if anim.is_done() {
-                self.view_offset = ViewOffset::Static(anim.to());
-            }
+        if let ViewOffset::Animation(anim) = &self.view_offset
+            && anim.is_done()
+        {
+            self.view_offset = ViewOffset::Static(anim.to());
         }
 
         if let ViewOffset::Gesture(gesture) = &mut self.view_offset {
@@ -359,10 +359,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 }
             }
 
-            if let Some(anim) = &mut gesture.animation {
-                if anim.is_done() {
-                    gesture.animation = None;
-                }
+            if let Some(anim) = &mut gesture.animation
+                && anim.is_done()
+            {
+                gesture.animation = None;
             }
         }
 
@@ -419,7 +419,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         })
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.columns.is_empty()
     }
 
@@ -495,7 +495,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             0
         };
 
-        let mut full_height = self.working_area.size.h - self.options.layout.gaps * 2.;
+        let mut full_height = self
+            .options
+            .layout
+            .gaps
+            .mul_add(-2., self.working_area.size.h);
         if !border.off {
             full_height -= border.width * 2.;
         }
@@ -637,13 +641,16 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
                 // NOTE: This logic won't work entirely correctly with small fixed-size maximized
                 // windows (they have a different area and padding).
-                let total_width = if source_col_x < target_col_x {
-                    // Source is left from target.
-                    target_col_x - source_col_x + target_col_width
-                } else {
-                    // Source is right from target.
-                    source_col_x - target_col_x + source_col_width
-                } + self.options.layout.gaps * 2.;
+                let total_width = self.options.layout.gaps.mul_add(
+                    2.,
+                    if source_col_x < target_col_x {
+                        // Source is left from target.
+                        target_col_x - source_col_x + target_col_width
+                    } else {
+                        // Source is right from target.
+                        source_col_x - target_col_x + source_col_width
+                    },
+                );
 
                 // If it fits together, do a normal animation, otherwise center the new column.
                 if total_width <= self.working_area.size.w {
@@ -1046,17 +1053,17 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
 
         // If one window is left, reset its weight to 1.
-        if column.data.len() == 1 {
-            if let WindowHeight::Auto { weight } = &mut column.data[0].height {
-                *weight = 1.;
-            }
+        if column.data.len() == 1
+            && let WindowHeight::Auto { weight } = &mut column.data[0].height
+        {
+            *weight = 1.;
         }
 
         // Stop interactive resize.
-        if let Some(resize) = &self.interactive_resize {
-            if tile.focused_window().id() == &resize.window {
-                self.interactive_resize = None;
-            }
+        if let Some(resize) = &self.interactive_resize
+            && tile.focused_window().id() == &resize.window
+        {
+            self.interactive_resize = None;
         }
 
         let tile = RemovedTile {
@@ -1129,14 +1136,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         self.data.remove(column_idx);
 
         // Stop interactive resize.
-        if let Some(resize) = &self.interactive_resize {
-            if column
+        if let Some(resize) = &self.interactive_resize
+            && column
                 .tiles
                 .iter()
                 .any(|tile| tile.focused_window().id() == &resize.window)
-            {
-                self.interactive_resize = None;
-            }
+        {
+            self.interactive_resize = None;
         }
 
         if column_idx + 1 == self.active_column_idx {
@@ -2521,7 +2527,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             } = self.remove_tile_by_idx(
                 adjusted_target_column_idx,
                 target_tile_idx + 1,
-                transaction.clone(),
+                transaction,
                 None,
             );
 
@@ -2814,7 +2820,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 if column_index == 0 || column_index == self.columns.len() {
                     let size = Size::from((
                         300.,
-                        self.working_area.size.h - self.options.layout.gaps * 2.,
+                        self.options
+                            .layout
+                            .gaps
+                            .mul_add(-2., self.working_area.size.h),
                     ));
                     let mut loc = Point::from((
                         self.column_x(column_index),
@@ -2830,7 +2839,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 } else {
                     let size = Size::from((
                         300.,
-                        self.working_area.size.h - self.options.layout.gaps * 2.,
+                        self.options
+                            .layout
+                            .gaps
+                            .mul_add(-2., self.working_area.size.h),
                     ));
                     let loc = Point::from((
                         self.column_x(column_index) - size.w / 2. - self.options.layout.gaps / 2.,
@@ -3954,10 +3966,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub fn refresh(&mut self, is_active: bool, is_focused: bool) {
         for (col_idx, col) in self.columns.iter_mut().enumerate() {
             let mut col_resize_data = None;
-            if let Some(resize) = &self.interactive_resize {
-                if col.contains(&resize.window) {
-                    col_resize_data = Some(resize.data);
-                }
+            if let Some(resize) = &self.interactive_resize
+                && col.contains(&resize.window)
+            {
+                col_resize_data = Some(resize.data);
             }
 
             // If transactions are disabled, also disable combined throttling, for more intuitive
@@ -4111,9 +4123,9 @@ impl ViewOffset {
     /// Returns the current view offset.
     pub fn current(&self) -> f64 {
         match self {
-            ViewOffset::Static(offset) => *offset,
-            ViewOffset::Animation(anim) => anim.value(),
-            ViewOffset::Gesture(gesture) => {
+            Self::Static(offset) => *offset,
+            Self::Animation(anim) => anim.value(),
+            Self::Gesture(gesture) => {
                 gesture.current_view_offset
                     + gesture.animation.as_ref().map_or(0., |anim| anim.value())
             }
@@ -4121,52 +4133,52 @@ impl ViewOffset {
     }
 
     /// Returns the target view offset suitable for computing the new view offset.
-    pub fn target(&self) -> f64 {
+    pub const fn target(&self) -> f64 {
         match self {
-            ViewOffset::Static(offset) => *offset,
-            ViewOffset::Animation(anim) => anim.to(),
+            Self::Static(offset) => *offset,
+            Self::Animation(anim) => anim.to(),
             // This can be used for example if a gesture is interrupted.
-            ViewOffset::Gesture(gesture) => gesture.current_view_offset,
+            Self::Gesture(gesture) => gesture.current_view_offset,
         }
     }
 
     /// Returns a view offset value suitable for saving and later restoration.
     ///
     /// This means that it shouldn't return an in-progress animation or gesture value.
-    fn stationary(&self) -> f64 {
+    const fn stationary(&self) -> f64 {
         match self {
-            ViewOffset::Static(offset) => *offset,
+            Self::Static(offset) => *offset,
             // For animations we can return the final value.
-            ViewOffset::Animation(anim) => anim.to(),
-            ViewOffset::Gesture(gesture) => gesture.stationary_view_offset,
+            Self::Animation(anim) => anim.to(),
+            Self::Gesture(gesture) => gesture.stationary_view_offset,
         }
     }
 
-    pub fn is_static(&self) -> bool {
+    pub const fn is_static(&self) -> bool {
         matches!(self, Self::Static(_))
     }
 
-    pub fn is_gesture(&self) -> bool {
+    pub const fn is_gesture(&self) -> bool {
         matches!(self, Self::Gesture(_))
     }
 
-    pub fn is_dnd_scroll(&self) -> bool {
-        matches!(&self, ViewOffset::Gesture(gesture) if gesture.dnd_last_event_time.is_some())
+    pub const fn is_dnd_scroll(&self) -> bool {
+        matches!(&self, Self::Gesture(gesture) if gesture.dnd_last_event_time.is_some())
     }
 
-    pub fn is_animation_ongoing(&self) -> bool {
+    pub const fn is_animation_ongoing(&self) -> bool {
         match self {
-            ViewOffset::Static(_) => false,
-            ViewOffset::Animation(_) => true,
-            ViewOffset::Gesture(gesture) => gesture.animation.is_some(),
+            Self::Static(_) => false,
+            Self::Animation(_) => true,
+            Self::Gesture(gesture) => gesture.animation.is_some(),
         }
     }
 
     pub fn offset(&mut self, delta: f64) {
         match self {
-            ViewOffset::Static(offset) => *offset += delta,
-            ViewOffset::Animation(anim) => anim.offset(delta),
-            ViewOffset::Gesture(gesture) => {
+            Self::Static(offset) => *offset += delta,
+            Self::Animation(anim) => anim.offset(delta),
+            Self::Gesture(gesture) => {
                 gesture.stationary_view_offset += delta;
                 gesture.delta_from_tracker += delta;
                 gesture.current_view_offset += delta;
@@ -4175,13 +4187,13 @@ impl ViewOffset {
     }
 
     pub fn cancel_gesture(&mut self) {
-        if let ViewOffset::Gesture(gesture) = self {
-            *self = ViewOffset::Static(gesture.current_view_offset);
+        if let Self::Gesture(gesture) = self {
+            *self = Self::Static(gesture.current_view_offset);
         }
     }
 
     pub fn stop_anim_and_gesture(&mut self) {
-        *self = ViewOffset::Static(self.current());
+        *self = Self::Static(self.current());
     }
 }
 
@@ -4358,10 +4370,10 @@ impl<W: LayoutElement> Column<W> {
     }
 
     pub fn advance_animations(&mut self) {
-        if let Some(move_) = &mut self.move_animation {
-            if move_.anim.is_done() {
-                self.move_animation = None;
-            }
+        if let Some(move_) = &mut self.move_animation
+            && move_.anim.is_done()
+        {
+            self.move_animation = None;
         }
 
         for tile in &mut self.tiles {
@@ -4388,15 +4400,15 @@ impl<W: LayoutElement> Column<W> {
         }
     }
 
-    pub fn is_pending_fullscreen(&self) -> bool {
+    pub const fn is_pending_fullscreen(&self) -> bool {
         self.is_pending_fullscreen
     }
 
-    pub fn is_pending_maximized(&self) -> bool {
+    pub const fn is_pending_maximized(&self) -> bool {
         self.is_pending_maximized
     }
 
-    pub fn pending_sizing_mode(&self) -> SizingMode {
+    pub const fn pending_sizing_mode(&self) -> SizingMode {
         if self.is_pending_fullscreen {
             SizingMode::Fullscreen
         } else if self.is_pending_maximized {
@@ -4642,7 +4654,9 @@ impl<W: LayoutElement> Column<W> {
         let gaps = self.options.layout.gaps;
 
         match width {
-            ColumnWidth::Proportion(proportion) => (working_size.w - gaps) * proportion - gaps,
+            ColumnWidth::Proportion(proportion) => {
+                (working_size.w - gaps).mul_add(proportion, -gaps)
+            }
             ColumnWidth::Fixed(width) => width,
         }
     }
@@ -4714,31 +4728,30 @@ impl<W: LayoutElement> Column<W> {
 
         let width = self.resolve_column_width(width);
         let width = f64::max(f64::min(width, max_width), min_width);
-        let max_tile_height = working_size.h - self.options.layout.gaps * 2.;
+        let max_tile_height = self.options.layout.gaps.mul_add(-2., working_size.h);
 
         // If there are multiple windows in a column, clamp the non-auto window's height according
         // to other windows' min sizes.
         let mut max_non_auto_window_height = None;
-        if self.tiles.len() > 1 {
-            if let Some(non_auto_idx) = self
+        if self.tiles.len() > 1
+            && let Some(non_auto_idx) = self
                 .data
                 .iter()
                 .position(|data| !matches!(data.height, WindowHeight::Auto { .. }))
-            {
-                let min_height_taken = min_size
-                    .iter()
-                    .enumerate()
-                    .filter(|(idx, _)| *idx != non_auto_idx)
-                    .map(|(_, min_size)| min_size.h + self.options.layout.gaps)
-                    .sum::<f64>();
+        {
+            let min_height_taken = min_size
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| *idx != non_auto_idx)
+                .map(|(_, min_size)| min_size.h + self.options.layout.gaps)
+                .sum::<f64>();
 
-                let tile = &self.tiles[non_auto_idx];
-                let height_left = max_tile_height - min_height_taken;
-                max_non_auto_window_height = Some(f64::max(
-                    1.,
-                    tile.window_height_for_tile_height(height_left).round(),
-                ));
-            }
+            let tile = &self.tiles[non_auto_idx];
+            let height_left = max_tile_height - min_height_taken;
+            max_non_auto_window_height = Some(f64::max(
+                1.,
+                tile.window_height_for_tile_height(height_left).round(),
+            ));
         }
 
         // Compute the tile heights. Start by converting window heights to tile heights.
@@ -5126,13 +5139,13 @@ impl<W: LayoutElement> Column<W> {
         let mut window_height = match change {
             SizeChange::SetFixed(fixed) => f64::from(fixed),
             SizeChange::SetProportion(proportion) => {
-                let tile_height = (working_size - gaps) * (proportion / 100.) - gaps;
+                let tile_height = (working_size - gaps).mul_add(proportion / 100., -gaps);
                 tile.window_height_for_tile_height(tile_height)
             }
             SizeChange::AdjustFixed(delta) => current_window_px + f64::from(delta),
             SizeChange::AdjustProportion(delta) => {
                 let proportion = current_prop + delta / 100.;
-                let tile_height = (working_size - gaps) * proportion - gaps;
+                let tile_height = (working_size - gaps).mul_add(proportion, -gaps);
                 tile.window_height_for_tile_height(tile_height)
             }
         };
@@ -5421,13 +5434,13 @@ impl<W: LayoutElement> Column<W> {
         }
 
         let tile_count = self.tiles.len();
-        if tile_count == 1 {
-            if let WindowHeight::Auto { weight } = self.data[0].height {
-                assert_eq!(
-                    weight, 1.,
-                    "auto height weight must reset to 1 for a single window"
-                );
-            }
+        if tile_count == 1
+            && let WindowHeight::Auto { weight } = self.data[0].height
+        {
+            assert_eq!(
+                weight, 1.,
+                "auto height weight must reset to 1 for a single window"
+            );
         }
 
         let working_size = self.working_area.size;
@@ -5579,8 +5592,8 @@ fn compute_toplevel_bounds(
     }
 
     Size::from((
-        f64::max(working_area_size.w - gaps * 2. - border, 1.),
-        f64::max(working_area_size.h - gaps * 2. - border, 1.),
+        f64::max(gaps.mul_add(-2., working_area_size.w) - border, 1.),
+        f64::max(gaps.mul_add(-2., working_area_size.h) - border, 1.),
     ))
     .to_i32_floor()
 }
@@ -5589,10 +5602,10 @@ fn cancel_resize_for_column<W: LayoutElement>(
     interactive_resize: &mut Option<InteractiveResize<W>>,
     column: &mut Column<W>,
 ) {
-    if let Some(resize) = interactive_resize {
-        if column.contains(&resize.window) {
-            *interactive_resize = None;
-        }
+    if let Some(resize) = interactive_resize
+        && column.contains(&resize.window)
+    {
+        *interactive_resize = None;
     }
 
     for tile in &mut column.tiles {
@@ -5602,9 +5615,9 @@ fn cancel_resize_for_column<W: LayoutElement>(
 
 fn resolve_preset_size(preset: PresetSize, options: &Options, view_size: f64) -> ResolvedSize {
     match preset {
-        PresetSize::Proportion(proportion) => {
-            ResolvedSize::Tile((view_size - options.layout.gaps) * proportion - options.layout.gaps)
-        }
+        PresetSize::Proportion(proportion) => ResolvedSize::Tile(
+            (view_size - options.layout.gaps).mul_add(proportion, -options.layout.gaps),
+        ),
         PresetSize::Fixed(width) => ResolvedSize::Window(f64::from(width)),
     }
 }

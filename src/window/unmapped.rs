@@ -79,7 +79,7 @@ pub enum InitialConfigureState {
 
 impl Unmapped {
     /// Wraps a newly created window that hasn't been initially configured yet.
-    pub fn new(window: Window) -> Self {
+    pub const fn new(window: Window) -> Self {
         Self {
             window,
             state: InitialConfigureState::NotConfigured {
@@ -90,7 +90,7 @@ impl Unmapped {
         }
     }
 
-    pub fn needs_initial_configure(&self) -> bool {
+    pub const fn needs_initial_configure(&self) -> bool {
         matches!(self.state, InitialConfigureState::NotConfigured { .. })
     }
 

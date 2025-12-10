@@ -2,11 +2,11 @@ use std::ops::{Mul, MulAssign};
 use std::str::FromStr;
 
 use knuffel::errors::DecodeError;
-use miette::{miette, IntoDiagnostic as _};
+use miette::{IntoDiagnostic as _, miette};
 use smithay::backend::renderer::Color32F;
 
-use crate::utils::{Flag, MergeWith};
 use crate::FloatOrInt;
+use crate::utils::{Flag, MergeWith};
 
 pub const DEFAULT_BACKGROUND_COLOR: Color = Color::from_array_unpremul([0.25, 0.25, 0.25, 1.]);
 pub const DEFAULT_BACKDROP_COLOR: Color = Color::from_array_unpremul([0.15, 0.15, 0.15, 1.]);
@@ -52,7 +52,7 @@ impl Color {
         Self::from_array_premul(color.components())
     }
 
-    pub fn to_array_unpremul(self) -> [f32; 4] {
+    pub const fn to_array_unpremul(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
 
@@ -79,7 +79,7 @@ impl MulAssign<f32> for Color {
 
 impl From<Color> for Color32F {
     fn from(value: Color) -> Self {
-        Color32F::from(value.to_array_premul())
+        Self::from(value.to_array_premul())
     }
 }
 
@@ -116,7 +116,7 @@ pub enum GradientRelativeTo {
     WorkspaceView,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GradientInterpolation {
     pub color_space: GradientColorSpace,
     pub hue_interpolation: HueInterpolation,
@@ -334,7 +334,7 @@ impl MergeWith<BorderRule> for FocusRing {
     fn merge_with(&mut self, part: &BorderRule) {
         let mut x = Border::from(*self);
         x.merge_with(part);
-        *self = FocusRing::from(x);
+        *self = Self::from(x);
     }
 }
 
@@ -622,7 +622,7 @@ pub struct TabIndicatorLength {
     pub total_proportion: Option<f64>,
 }
 
-#[derive(knuffel::DecodeScalar, Debug, Clone, Copy, PartialEq)]
+#[derive(knuffel::DecodeScalar, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabIndicatorPosition {
     Top,
     Bottom,
@@ -837,7 +837,7 @@ impl FromStr for GradientInterpolation {
             x => {
                 return Err(miette!(
                     "invalid color space {x}; can be srgb, srgb-linear, oklab or oklch"
-                ))
+                ));
             }
         };
 
@@ -862,7 +862,7 @@ impl FromStr for GradientInterpolation {
                         return Err(miette!(
                             "invalid hue interpolation {x}; \
                              can be shorter, longer, increasing, decreasing"
-                        ))
+                        ));
                     }
                 }
             }
@@ -946,10 +946,10 @@ where
         let rv = match *val.literal {
             // If it's a string, use FromStr.
             knuffel::ast::Literal::String(ref s) => {
-                Color::from_str(s).map_err(|e| DecodeError::conversion(&val.literal, e))
+                Self::from_str(s).map_err(|e| DecodeError::conversion(&val.literal, e))
             }
             // Otherwise, fall back to the 4-argument RGBA form.
-            _ => return ColorRgba::decode_node(node, ctx).map(Color::from),
+            _ => return ColorRgba::decode_node(node, ctx).map(Self::from),
         }?;
 
         // Check for unexpected following arguments.
@@ -1050,7 +1050,7 @@ where
 
         let top_left = decode_radius(ctx, val);
 
-        let mut rv = CornerRadius {
+        let mut rv = Self {
             top_left,
             top_right: top_left,
             bottom_right: top_left,
@@ -1177,9 +1177,11 @@ mod tests {
         assert!("oklch shorter".parse::<GradientInterpolation>().is_err());
         assert!("oklch shorter h".parse::<GradientInterpolation>().is_err());
         assert!("oklch a hue".parse::<GradientInterpolation>().is_err());
-        assert!("oklch shorter hue a"
-            .parse::<GradientInterpolation>()
-            .is_err());
+        assert!(
+            "oklch shorter hue a"
+                .parse::<GradientInterpolation>()
+                .is_err()
+        );
     }
 
     #[test]

@@ -48,7 +48,7 @@ impl HotkeyOverlay {
         }
     }
 
-    pub fn show(&mut self) -> bool {
+    pub const fn show(&mut self) -> bool {
         if !self.is_open {
             self.is_open = true;
             true
@@ -57,7 +57,7 @@ impl HotkeyOverlay {
         }
     }
 
-    pub fn hide(&mut self) -> bool {
+    pub const fn hide(&mut self) -> bool {
         if self.is_open {
             self.is_open = false;
             true
@@ -66,7 +66,7 @@ impl HotkeyOverlay {
         }
     }
 
-    pub fn is_open(&self) -> bool {
+    pub const fn is_open(&self) -> bool {
         self.is_open
     }
 
@@ -92,12 +92,11 @@ impl HotkeyOverlay {
 
         // FIXME: should probably use the working area rather than view size.
         let weak = output.downgrade();
-        if let Some(rendered) = buffers.get(&weak) {
-            if let Some(buffer) = &rendered.buffer {
-                if buffer.texture_scale() != Scale::from(scale) {
-                    buffers.remove(&weak);
-                }
-            }
+        if let Some(rendered) = buffers.get(&weak)
+            && let Some(buffer) = &rendered.buffer
+            && buffer.texture_scale() != Scale::from(scale)
+        {
+            buffers.remove(&weak);
         }
 
         let rendered = buffers.entry(weak).or_insert_with(|| {

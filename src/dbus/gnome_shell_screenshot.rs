@@ -82,7 +82,7 @@ impl Screenshot {
 }
 
 impl Screenshot {
-    pub fn new(
+    pub const fn new(
         to_niri: calloop::channel::Sender<ScreenshotToNiri>,
         from_niri: async_channel::Receiver<NiriToScreenshot>,
     ) -> Self {

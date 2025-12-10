@@ -35,7 +35,7 @@ impl Default for SolidColorBuffer {
 
 impl SolidColorBuffer {
     pub fn new(size: impl Into<Size<f64, Logical>>, color: impl Into<Color32F>) -> Self {
-        SolidColorBuffer {
+        Self {
             id: Id::new(),
             color: color.into(),
             commit: CommitCounter::default(),
@@ -69,11 +69,11 @@ impl SolidColorBuffer {
         }
     }
 
-    pub fn color(&self) -> Color32F {
+    pub const fn color(&self) -> Color32F {
         self.color
     }
 
-    pub fn size(&self) -> Size<f64, Logical> {
+    pub const fn size(&self) -> Size<f64, Logical> {
         self.size
     }
 }
@@ -90,14 +90,14 @@ impl SolidColorRenderElement {
         Self::new(buffer.id.clone(), geo, buffer.commit, color, kind)
     }
 
-    pub fn new(
+    pub const fn new(
         id: Id,
         geometry: Rectangle<f64, Logical>,
         commit: CommitCounter,
         color: Color32F,
         kind: Kind,
     ) -> Self {
-        SolidColorRenderElement {
+        Self {
             id,
             geometry,
             commit,
@@ -106,11 +106,11 @@ impl SolidColorRenderElement {
         }
     }
 
-    pub fn color(&self) -> Color32F {
+    pub const fn color(&self) -> Color32F {
         self.color
     }
 
-    pub fn geo(&self) -> Rectangle<f64, Logical> {
+    pub const fn geo(&self) -> Rectangle<f64, Logical> {
         self.geometry
     }
 }

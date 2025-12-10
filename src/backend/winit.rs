@@ -22,7 +22,7 @@ use crate::niri::{Niri, RedrawState, State};
 use crate::render_helpers::blur::EffectsFramebuffers;
 use crate::render_helpers::debug::draw_damage;
 use crate::render_helpers::render_data::RendererData;
-use crate::render_helpers::{resources, shaders, RenderTarget};
+use crate::render_helpers::{RenderTarget, resources, shaders};
 use crate::utils::{get_monotonic_time, logical_output};
 
 pub struct Winit {

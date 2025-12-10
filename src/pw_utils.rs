@@ -9,17 +9,17 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use calloop::timer::{TimeoutAction, Timer};
 use calloop::RegistrationToken;
+use calloop::timer::{TimeoutAction, Timer};
 use pipewire::context::ContextRc;
 use pipewire::core::{CoreRc, PW_ID_CORE};
 use pipewire::main_loop::MainLoopRc;
 use pipewire::properties::PropertiesBox;
 use pipewire::spa::buffer::DataType;
+use pipewire::spa::param::ParamType;
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
 use pipewire::spa::param::format_utils::parse_format;
 use pipewire::spa::param::video::{VideoFormat, VideoInfoRaw};
-use pipewire::spa::param::ParamType;
 use pipewire::spa::pod::deserialize::PodDeserializer;
 use pipewire::spa::pod::serialize::PodSerializer;
 use pipewire::spa::pod::{self, ChoiceValue, Pod, PodPropFlags, Property, PropertyFlags};
@@ -169,10 +169,11 @@ impl PipeWire {
                 warn!(id, seq, res, message, "pw error");
 
                 // Reset PipeWire on connection errors.
-                if id == PW_ID_CORE && res == -32 {
-                    if let Err(err) = to_niri_.send(PwToNiri::FatalError) {
-                        warn!("error sending FatalError to niri: {err:?}");
-                    }
+                if id == PW_ID_CORE
+                    && res == -32
+                    && let Err(err) = to_niri_.send(PwToNiri::FatalError)
+                {
+                    warn!("error sending FatalError to niri: {err:?}");
                 }
             })
             .register();
@@ -588,7 +589,7 @@ impl PipeWire {
             })
             .add_buffer({
                 let inner = inner.clone();
-                let stop_cast = stop_cast.clone();
+                let stop_cast = stop_cast;
                 move |stream, (), buffer| {
                     let mut inner = inner.borrow_mut();
 
@@ -1065,19 +1066,19 @@ impl Cast {
 }
 
 impl CastState {
-    fn pending_size(&self) -> Option<Size<u32, Physical>> {
+    const fn pending_size(&self) -> Option<Size<u32, Physical>> {
         match self {
-            CastState::ResizePending { pending_size } => Some(*pending_size),
-            CastState::ConfirmationPending { size, .. } => Some(*size),
-            CastState::Ready { .. } => None,
+            Self::ResizePending { pending_size } => Some(*pending_size),
+            Self::ConfirmationPending { size, .. } => Some(*size),
+            Self::Ready { .. } => None,
         }
     }
 
-    fn expected_format_size(&self) -> Size<u32, Physical> {
+    const fn expected_format_size(&self) -> Size<u32, Physical> {
         match self {
-            CastState::ResizePending { pending_size } => *pending_size,
-            CastState::ConfirmationPending { size, .. } => *size,
-            CastState::Ready { size, .. } => *size,
+            Self::ResizePending { pending_size } => *pending_size,
+            Self::ConfirmationPending { size, .. } => *size,
+            Self::Ready { size, .. } => *size,
         }
     }
 }
@@ -1231,50 +1232,57 @@ fn allocate_dmabuf(
     Ok(dmabuf)
 }
 
-unsafe fn return_unused_buffer(stream: &Stream, pw_buffer: NonNull<pw_buffer>) { unsafe {
-    // pw_stream_return_buffer() requires too new PipeWire (1.4.0). So, mark as
-    // corrupted and queue.
-    let pw_buffer = pw_buffer.as_ptr();
-    let spa_buffer = (*pw_buffer).buffer;
-    let chunk = (*(*spa_buffer).datas).chunk;
-    // Some (older?) consumers will check for size == 0 instead of the CORRUPTED flag.
-    (*chunk).size = 0;
-    (*chunk).flags = SPA_CHUNK_FLAG_CORRUPTED as i32;
+unsafe fn return_unused_buffer(stream: &Stream, pw_buffer: NonNull<pw_buffer>) {
+    unsafe {
+        // pw_stream_return_buffer() requires too new PipeWire (1.4.0). So, mark as
+        // corrupted and queue.
+        let pw_buffer = pw_buffer.as_ptr();
+        let spa_buffer = (*pw_buffer).buffer;
+        let chunk = (*(*spa_buffer).datas).chunk;
+        // Some (older?) consumers will check for size == 0 instead of the CORRUPTED flag.
+        (*chunk).size = 0;
+        (*chunk).flags = SPA_CHUNK_FLAG_CORRUPTED as i32;
 
-    if let Some(header) = find_meta_header(spa_buffer) {
-        let header = header.as_ptr();
-        (*header).flags = SPA_META_HEADER_FLAG_CORRUPTED;
+        if let Some(header) = find_meta_header(spa_buffer) {
+            let header = header.as_ptr();
+            (*header).flags = SPA_META_HEADER_FLAG_CORRUPTED;
+        }
+
+        pw_stream_queue_buffer(stream.as_raw_ptr(), pw_buffer);
     }
+}
 
-    pw_stream_queue_buffer(stream.as_raw_ptr(), pw_buffer);
-}}
+unsafe fn mark_buffer_as_good(pw_buffer: NonNull<pw_buffer>, sequence: &mut u64) {
+    unsafe {
+        let pw_buffer = pw_buffer.as_ptr();
+        let spa_buffer = (*pw_buffer).buffer;
+        let chunk = (*(*spa_buffer).datas).chunk;
 
-unsafe fn mark_buffer_as_good(pw_buffer: NonNull<pw_buffer>, sequence: &mut u64) { unsafe {
-    let pw_buffer = pw_buffer.as_ptr();
-    let spa_buffer = (*pw_buffer).buffer;
-    let chunk = (*(*spa_buffer).datas).chunk;
-
-    // With DMA-BUFs, consumers should ignore the size field, and producers are allowed
-    // to set it to 0.
-    //
-    // https://docs.pipewire.org/page_dma_buf.html
-    //
-    // However, OBS checks for size != 0 as a workaround for old compositor versions,
-    // so we set it to 1.
-    (*chunk).size = 1;
-    // Clear the corrupted flag we may have set before.
-    (*chunk).flags = SPA_CHUNK_FLAG_NONE as i32;
-
-    *sequence = sequence.wrapping_add(1);
-    if let Some(header) = find_meta_header(spa_buffer) {
-        let header = header.as_ptr();
+        // With DMA-BUFs, consumers should ignore the size field, and producers are allowed
+        // to set it to 0.
+        //
+        // https://docs.pipewire.org/page_dma_buf.html
+        //
+        // However, OBS checks for size != 0 as a workaround for old compositor versions,
+        // so we set it to 1.
+        (*chunk).size = 1;
         // Clear the corrupted flag we may have set before.
-        (*header).flags = 0;
-        (*header).seq = *sequence;
-    }
-}}
+        (*chunk).flags = SPA_CHUNK_FLAG_NONE as i32;
 
-unsafe fn find_meta_header(buffer: *mut spa_buffer) -> Option<NonNull<spa_meta_header>> { unsafe {
-    let p = spa_buffer_find_meta_data(buffer, SPA_META_Header, size_of::<spa_meta_header>()).cast();
-    NonNull::new(p)
-}}
+        *sequence = sequence.wrapping_add(1);
+        if let Some(header) = find_meta_header(spa_buffer) {
+            let header = header.as_ptr();
+            // Clear the corrupted flag we may have set before.
+            (*header).flags = 0;
+            (*header).seq = *sequence;
+        }
+    }
+}
+
+unsafe fn find_meta_header(buffer: *mut spa_buffer) -> Option<NonNull<spa_meta_header>> {
+    unsafe {
+        let p =
+            spa_buffer_find_meta_data(buffer, SPA_META_Header, size_of::<spa_meta_header>()).cast();
+        NonNull::new(p)
+    }
+}

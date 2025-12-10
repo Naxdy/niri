@@ -3,16 +3,16 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use bitflags::bitflags;
-use knuffel::errors::DecodeError;
 use knuffel::DecodeScalar;
+use knuffel::errors::DecodeError;
 use miette::miette;
 use niri_ipc::{LayoutSwitchTarget, PositionChange, SizeChange, WorkspaceReferenceArg};
-use smithay::input::keyboard::keysyms::KEY_NoSymbol;
-use smithay::input::keyboard::xkb::{keysym_from_name, KEYSYM_CASE_INSENSITIVE, KEYSYM_NO_FLAGS};
 use smithay::input::keyboard::Keysym;
+use smithay::input::keyboard::keysyms::KEY_NoSymbol;
+use smithay::input::keyboard::xkb::{KEYSYM_CASE_INSENSITIVE, KEYSYM_NO_FLAGS, keysym_from_name};
 
 use crate::recent_windows::{MruDirection, MruFilter, MruScope};
-use crate::utils::{expect_only_children, MergeWith};
+use crate::utils::{MergeWith, expect_only_children};
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Binds(pub Vec<Bind>);
@@ -73,7 +73,7 @@ bitflags! {
     }
 }
 
-#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq, Eq)]
 pub struct SwitchBinds {
     #[knuffel(child)]
     pub lid_open: Option<SwitchAction>,
@@ -85,8 +85,8 @@ pub struct SwitchBinds {
     pub tablet_mode_off: Option<SwitchAction>,
 }
 
-impl MergeWith<SwitchBinds> for SwitchBinds {
-    fn merge_with(&mut self, part: &SwitchBinds) {
+impl MergeWith<Self> for SwitchBinds {
+    fn merge_with(&mut self, part: &Self) {
         merge_clone_opt!(
             (self, part),
             lid_open,
@@ -97,7 +97,7 @@ impl MergeWith<SwitchBinds> for SwitchBinds {
     }
 }
 
-#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+#[derive(knuffel::Decode, Debug, Clone, PartialEq, Eq)]
 pub struct SwitchAction {
     #[knuffel(child, unwrap(arguments))]
     pub spawn: Vec<String>,
@@ -712,7 +712,7 @@ pub enum WorkspaceReference {
 }
 
 impl From<WorkspaceReferenceArg> for WorkspaceReference {
-    fn from(reference: WorkspaceReferenceArg) -> WorkspaceReference {
+    fn from(reference: WorkspaceReferenceArg) -> Self {
         match reference {
             WorkspaceReferenceArg::Id(id) => Self::Id(id),
             WorkspaceReferenceArg::Index(i) => Self::Index(i),
@@ -738,14 +738,14 @@ impl<S: knuffel::traits::ErrorSpan> knuffel::DecodeScalar<S> for WorkspaceRefere
     fn raw_decode(
         val: &knuffel::span::Spanned<knuffel::ast::Literal, S>,
         ctx: &mut knuffel::decode::Context<S>,
-    ) -> Result<WorkspaceReference, DecodeError<S>> {
+    ) -> Result<Self, DecodeError<S>> {
         match &**val {
-            knuffel::ast::Literal::String(s) => Ok(WorkspaceReference::Name(s.clone().into())),
+            knuffel::ast::Literal::String(s) => Ok(Self::Name(s.clone().into())),
             knuffel::ast::Literal::Int(value) => match value.try_into() {
-                Ok(v) => Ok(WorkspaceReference::Index(v)),
+                Ok(v) => Ok(Self::Index(v)),
                 Err(e) => {
                     ctx.emit_error(DecodeError::conversion(val, e));
-                    Ok(WorkspaceReference::Index(0))
+                    Ok(Self::Index(0))
                 }
             },
             _ => {
@@ -753,7 +753,7 @@ impl<S: knuffel::traits::ErrorSpan> knuffel::DecodeScalar<S> for WorkspaceRefere
                     val,
                     "Unsupported value, only numbers and strings are recognized",
                 ));
-                Ok(WorkspaceReference::Index(0))
+                Ok(Self::Index(0))
             }
         }
     }
@@ -911,14 +911,14 @@ where
             }
             match Action::decode_node(child, ctx) {
                 Ok(action) => {
-                    if !matches!(action, Action::Spawn(_) | Action::SpawnSh(_)) {
-                        if let Some(node) = allow_when_locked_node {
-                            ctx.emit_error(DecodeError::unexpected(
-                                node,
-                                "property",
-                                "allow-when-locked can only be set on spawn binds",
-                            ));
-                        }
+                    if !matches!(action, Action::Spawn(_) | Action::SpawnSh(_))
+                        && let Some(node) = allow_when_locked_node
+                    {
+                        ctx.emit_error(DecodeError::unexpected(
+                            node,
+                            "property",
+                            "allow-when-locked can only be set on spawn binds",
+                        ));
                     }
 
                     // The toggle-inhibit action must always be uninhibitable.
@@ -1047,7 +1047,7 @@ impl FromStr for Key {
             Trigger::Keysym(keysym)
         };
 
-        Ok(Key { trigger, modifiers })
+        Ok(Self { trigger, modifiers })
     }
 }
 

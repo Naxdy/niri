@@ -33,7 +33,7 @@ impl ScrollTracker {
         ticks
     }
 
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.last = 0.;
         self.acc = 0.;
     }

@@ -1,4 +1,4 @@
-use smithay::backend::renderer::gles::{ffi, Capability, GlesFrame, GlesRenderer};
+use smithay::backend::renderer::gles::{Capability, GlesFrame, GlesRenderer, ffi};
 
 /// Extra renderer data used for custom drawing with gles FFI.
 ///
