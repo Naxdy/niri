@@ -13,12 +13,12 @@ use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::drm::DrmNode;
 use smithay::backend::input::{InputEvent, TabletToolDescriptor};
 use smithay::desktop::{PopupKind, PopupManager};
-use smithay::input::pointer::{CursorIcon, CursorImageStatus, PointerHandle};
+use smithay::input::dnd::{DnDGrab, DndGrabHandler};
+use smithay::input::pointer::{CursorIcon, CursorImageStatus, Focus, PointerHandle};
 use smithay::input::{keyboard, Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::rustix::fs::{fcntl_setfl, OFlags};
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
-use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource;
@@ -41,8 +41,7 @@ use smithay::wayland::security_context::{
     SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
 };
 use smithay::wayland::selection::data_device::{
-    set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
-    ServerDndGrabHandler,
+    set_data_device_focus, DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler,
 };
 use smithay::wayland::selection::ext_data_control::{
     DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState,
@@ -316,22 +315,59 @@ impl DataDeviceHandler for State {
     }
 }
 
-impl ClientDndGrabHandler for State {
-    fn started(
+impl WaylandDndGrabHandler for State {
+    fn dnd_requested<S: smithay::input::dnd::Source>(
         &mut self,
-        _source: Option<WlDataSource>,
+        source: S,
         icon: Option<WlSurface>,
-        _seat: Seat<Self>,
+        seat: Seat<Self>,
+        serial: smithay::utils::Serial,
+        type_: smithay::input::dnd::GrabType,
     ) {
         self.niri.dnd_icon = icon.map(|surface| DndIcon {
             surface,
             offset: Point::new(0, 0),
         });
+
+        match type_ {
+            smithay::input::dnd::GrabType::Pointer => {
+                let pointer = seat.get_pointer().expect("should have a pointer");
+                let start_data = pointer
+                    .grab_start_data()
+                    .expect("should have grab start data");
+                pointer.set_grab(
+                    self,
+                    DnDGrab::new_pointer(&self.niri.display_handle, start_data, source, seat),
+                    serial,
+                    Focus::Keep,
+                );
+            }
+            smithay::input::dnd::GrabType::Touch => {
+                let touch = seat.get_touch().expect("should have a touch");
+                let start_data = touch
+                    .grab_start_data()
+                    .expect("should have grab start data");
+                touch.set_grab(
+                    self,
+                    DnDGrab::new_touch(&self.niri.display_handle, start_data, source, seat),
+                    serial,
+                );
+            }
+        }
+
         // FIXME: more granular
         self.niri.queue_redraw_all();
     }
+}
 
-    fn dropped(&mut self, target: Option<WlSurface>, validated: bool, _seat: Seat<Self>) {
+impl DndGrabHandler for State {
+    fn dropped(
+        &mut self,
+        target: Option<smithay::input::dnd::DndTarget<'_, Self>>,
+        validated: bool,
+        _seat: Seat<Self>,
+        _location: Point<f64, Logical>,
+    ) {
         trace!("client dropped, target: {target:?}, validated: {validated}");
 
         // End DnD before activating a specific window below so that it takes precedence.
@@ -340,8 +376,13 @@ impl ClientDndGrabHandler for State {
         // Activate the target output, since that's how Firefox drag-tab-into-new-window works for
         // example. On successful drop, additionally activate the target window.
         let mut activate_output = true;
-        if let Some(target) = validated.then_some(target).flatten() {
-            let root = self.niri.find_root_shell_surface(&target);
+        if let Some(target) = validated.then_some(target.as_ref()).flatten() {
+            let target = match target {
+                smithay::input::dnd::DndTarget::Pointer(e) => e,
+                smithay::input::dnd::DndTarget::Touch(e) => e,
+            };
+
+            let root = self.niri.find_root_shell_surface(target);
             if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
                 let window = mapped.window.clone();
                 self.niri.layout.activate_window(&window);
@@ -352,13 +393,7 @@ impl ClientDndGrabHandler for State {
 
         if activate_output {
             // Find the output from cursor coordinates.
-            //
-            // FIXME: uhhh, we can't actually properly tell if the DnD comes from pointer or touch,
-            // and if it comes from touch, then what the coordinates are. Need to pass more
-            // parameters from Smithay I guess.
-            //
-            // Assume that hidden pointer means touch DnD.
-            if self.niri.pointer_visibility.is_visible() {
+            if matches!(target, Some(smithay::input::dnd::DndTarget::Pointer(_))) {
                 // We can't even get the current pointer location because it's locked (we're deep
                 // in the grab call stack here). So use the last known one.
                 if let Some(output) = &self.niri.pointer_contents.output {
@@ -372,8 +407,6 @@ impl ClientDndGrabHandler for State {
         self.niri.queue_redraw_all();
     }
 }
-
-impl ServerDndGrabHandler for State {}
 
 delegate_data_device!(State);
 
