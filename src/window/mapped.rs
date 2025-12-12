@@ -4,6 +4,7 @@ use std::time::Duration;
 use niri_config::{Color, CornerRadius, GradientInterpolation, WindowRule};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+use smithay::backend::renderer::element::utils::RelocateRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::space::SpaceElement as _;
 use smithay::desktop::{PopupManager, Window};
@@ -27,6 +28,7 @@ use crate::layout::{
     ConfigureIntent, InteractiveResizeData, LayoutElement, LayoutElementRenderElement,
     LayoutElementRenderSnapshot, SizingMode,
 };
+use crate::niri::OutputRenderElements;
 use crate::niri_render_elements;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::offscreen::OffscreenData;
@@ -195,6 +197,7 @@ niri_render_elements! {
         Layout = LayoutElementRenderElement<R>,
         // Blocked-out window with rounded corners.
         Border = BorderRenderElement,
+        RelocatedPointer = RelocateRenderElement<OutputRenderElements<R>>
     }
 }
 
@@ -1074,7 +1077,10 @@ impl LayoutElement for Mapped {
                 x => x,
             };
 
-            if matches!(self.request_size_once, Some(RequestSizeOnce::WaitingForConfigure)) {
+            if matches!(
+                self.request_size_once,
+                Some(RequestSizeOnce::WaitingForConfigure)
+            ) {
                 self.request_size_once = Some(RequestSizeOnce::WaitingForCommit(serial));
             }
 

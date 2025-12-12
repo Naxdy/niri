@@ -2061,7 +2061,7 @@ impl State {
 
                 // Use the cached output since it will be present even if the output was
                 // currently disconnected.
-                let Some(output) = self.niri.mapped_cast_output.get(&mapped.window) else {
+                let Some(output) = self.niri.mapped_cast_output.get(&mapped.window).cloned() else {
                     return;
                 };
 
@@ -2071,29 +2071,19 @@ impl State {
                     .bbox_with_popups()
                     .to_physical_precise_up(scale);
 
+                drop(windows);
+
                 match cast.ensure_size(bbox.size) {
-                    Ok(CastSizeChange::Ready) => (),
-                    Ok(CastSizeChange::Pending) => return,
+                    Ok(CastSizeChange::Ready) | Ok(CastSizeChange::Pending) => (),
                     Err(err) => {
                         warn!("error updating stream size, stopping screencast: {err:?}");
-                        drop(windows);
                         let session_id = cast.session_id;
                         self.niri.stop_cast(session_id);
                         return;
                     }
                 }
 
-                self.backend.with_primary_renderer(|renderer| {
-                    // FIXME: pointer.
-                    let elements = mapped
-                        .render_for_screen_cast(renderer, scale)
-                        .rev()
-                        .collect::<Vec<_>>();
-
-                    if cast.dequeue_buffer_and_render(renderer, &elements, bbox.size, scale) {
-                        cast.last_frame_time = get_monotonic_time();
-                    }
-                });
+                self.niri.queue_redraw(&output);
             }
         }
     }
@@ -5285,6 +5275,104 @@ impl Niri {
     }
 
     #[cfg(feature = "xdp-gnome-screencast")]
+    fn get_window_pointer_location(
+        &self,
+        mapped: &Mapped,
+        output: &Output,
+        scale: Scale<f64>,
+    ) -> Option<Point<f64, Logical>> {
+        if self.layout.is_overview_open() {
+            return None;
+        }
+
+        let (pointer_window, _) = self.pointer_contents.window.as_ref()?;
+
+        if pointer_window != &mapped.window {
+            return None;
+        }
+
+        let monitor = self.layout.monitor_for_output(output)?;
+
+        if monitor.are_transitions_ongoing() {
+            return None;
+        }
+
+        let ws = self.layout.workspaces().find_map(|(_, _, ws)| {
+            if ws.has_window(&mapped.window) {
+                Some(ws)
+            } else {
+                None
+            }
+        })?;
+
+        let (tile, tile_offset) =
+            ws.tiles_with_render_positions()
+                .find_map(|(tile, tile_offset, _)| {
+                    if tile.focused_window().id() == mapped.id() {
+                        Some((tile, tile_offset))
+                    } else {
+                        None
+                    }
+                })?;
+
+        let window_bbox = mapped.window.bbox_with_popups().loc.to_f64();
+        let window_offset =
+            tile_offset + tile.window_loc() + window_bbox + mapped.buf_loc().to_f64();
+
+        let pointer_location = self.seat.get_pointer()?.current_location();
+
+        Some((pointer_location - window_offset).upscale(scale))
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[cfg(feature = "xdp-gnome-screencast")]
+    fn get_window_pointer_element(
+        &self,
+        scale: Scale<f64>,
+        pointer_element: Vec<OutputRenderElements<GlesRenderer>>,
+        window_pointer_location: Point<f64, Logical>,
+    ) -> Option<(
+        impl Iterator<Item = RelocateRenderElement<OutputRenderElements<GlesRenderer>>>,
+        Point<i32, Physical>,
+    )> {
+        if pointer_element.is_empty() {
+            return None;
+        }
+
+        let pointer_geo = encompassing_geo(scale, pointer_element.iter());
+
+        let pointer = self.seat.get_pointer()?;
+
+        let hotspot_offset = (match self.cursor_manager.get_render_cursor(scale.x.ceil() as i32) {
+            RenderCursor::Hidden => Point::default(),
+            RenderCursor::Surface { hotspot, .. } => hotspot,
+            RenderCursor::Named { scale, cursor, .. } => {
+                let (_, frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
+                XCursor::hotspot(frame).to_logical(scale)
+            }
+        })
+        .to_f64()
+        .to_physical_precise_round(scale);
+
+        let pointer_hotspot = pointer.current_location().to_physical_precise_round(scale)
+            - pointer_geo.loc
+            - hotspot_offset;
+
+        Some((
+            pointer_element.into_iter().rev().map(move |e| {
+                RelocateRenderElement::from_element(
+                    e,
+                    window_pointer_location.to_physical_precise_round(scale)
+                        - pointer_geo.loc
+                        - hotspot_offset,
+                    Relocate::Relative,
+                )
+            }),
+            pointer_hotspot,
+        ))
+    }
+
+    #[cfg(feature = "xdp-gnome-screencast")]
     fn render_windows_for_screen_cast(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -5308,6 +5396,7 @@ impl Niri {
             };
 
             let mut windows = self.layout.windows_for_output(output);
+
             let Some(mapped) = windows.find(|win| win.id().get() == id) else {
                 continue;
             };
@@ -5330,13 +5419,32 @@ impl Niri {
                 continue;
             }
 
-            // FIXME: pointer.
-            let elements: Vec<_> = mapped.render_for_screen_cast(renderer, scale).collect();
+            let window_pointer_location = self.get_window_pointer_location(mapped, output, scale);
+
+            let pointer_elements = self.pointer_element(renderer, output);
+
+            let pointer_elements = window_pointer_location
+                .and_then(|window_pointer_location| {
+                    self.get_window_pointer_element(
+                        scale,
+                        pointer_elements,
+                        window_pointer_location,
+                    )
+                })
+                .map(|e| e.0)
+                .into_iter()
+                .flatten()
+                .map(Into::into);
+
+            let elements: Vec<_> = pointer_elements
+                .chain(mapped.render_for_screen_cast(renderer, scale))
+                .collect();
 
             if cast.dequeue_buffer_and_render(renderer, &elements, bbox.size, scale) {
                 cast.last_frame_time = target_presentation_time;
             }
         }
+
         self.casts = casts;
 
         for id in casts_to_stop {
