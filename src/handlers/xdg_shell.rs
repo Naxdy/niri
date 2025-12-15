@@ -860,9 +860,6 @@ impl XdgShellHandler for State {
                 .start_close_animation_for_window(renderer, &window, blocker);
         });
 
-        let active_window = self.niri.layout.focus().map(|m| &m.window);
-        let was_active = active_window == Some(&window);
-
         self.niri.window_mru_ui.remove_window(id);
         self.niri.layout.remove_window(&window, transaction.clone());
         self.add_default_dmabuf_pre_commit_hook(surface.wl_surface());
@@ -871,10 +868,6 @@ impl XdgShellHandler for State {
         // need to set the timer.
         if !transaction.is_last() {
             transaction.register_deadline_timer(&self.niri.event_loop);
-        }
-
-        if was_active {
-            self.maybe_warp_cursor_to_focus();
         }
 
         if let Some(output) = output {
