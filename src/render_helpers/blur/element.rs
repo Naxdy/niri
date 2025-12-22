@@ -133,6 +133,7 @@ impl Blur {
         mut true_blur: bool,
         render_loc: Point<f64, Logical>,
         overview_zoom: Option<f64>,
+        alpha: f32,
     ) -> Option<BlurRenderElement> {
         if !self.config.on || self.config.passes == 0 || self.config.radius.0 == 0. {
             return None;
@@ -191,6 +192,7 @@ impl Blur {
                     }
                 },
                 render_loc,
+                alpha,
             );
 
             *inner = Some(elem.clone());
@@ -242,6 +244,7 @@ impl Blur {
             && inner.scale == scale
             && inner.corner_radius == corner_radius
             && inner.render_loc == render_loc
+            && inner.alpha == alpha
             && !variant_needs_reconfigure
         {
             if variant_needs_rerender {
@@ -265,6 +268,7 @@ impl Blur {
             BlurVariant::Optimized { texture } => *texture = fx_buffers.optimized_blur.clone(),
         }
 
+        inner.alpha = alpha;
         inner.render_loc = render_loc;
         inner.sample_area = sample_area;
         inner.destination_area = destination_area;
@@ -291,6 +295,7 @@ pub struct BlurRenderElement {
     geometry: Rectangle<f64, Logical>,
     variant: BlurVariant,
     render_loc: Point<f64, Logical>,
+    alpha: f32,
 }
 
 impl BlurRenderElement {
@@ -314,6 +319,7 @@ impl BlurRenderElement {
         alpha_tex: Option<GlesTexture>,
         variant: BlurVariant,
         render_loc: Point<f64, Logical>,
+        alpha: f32,
     ) -> Self {
         let mut this = Self {
             id: Id::new(),
@@ -327,6 +333,7 @@ impl BlurRenderElement {
             commit: CommitCounter::default(),
             variant,
             render_loc,
+            alpha,
         };
 
         this.update_uniforms(fx_buffers, &config);
@@ -365,6 +372,7 @@ impl BlurRenderElement {
             * Mat3::from_translation(-src_loc / buf_size);
 
         self.uniforms = vec![
+            Uniform::new("alpha", self.alpha),
             Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
             Uniform::new("geo_size", geo_size.to_array()),
             Uniform::new("niri_scale", self.scale as f32),

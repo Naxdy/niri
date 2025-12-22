@@ -19,7 +19,6 @@ use crate::niri_render_elements;
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::blur::element::{Blur, BlurRenderElement, CommitTracker};
 use crate::render_helpers::clipped_surface::ClippedSurfaceRenderElement;
-use crate::render_helpers::offscreen::{OffscreenBuffer, OffscreenRenderElement};
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
@@ -68,16 +67,10 @@ pub struct MappedLayer {
     unmap_tracker: RefCell<CommitTracker>,
 
     /// The alpha animation for this layer surface.
-    alpha_animation: Option<AlphaAnimation>,
+    alpha_animation: Option<Animation>,
 
     /// Configuration for the alpha animation.
     alpha_cfg: niri_config::Animation,
-}
-
-#[derive(Debug)]
-struct AlphaAnimation {
-    anim: Animation,
-    offscreen: OffscreenBuffer,
 }
 
 niri_render_elements! {
@@ -87,7 +80,6 @@ niri_render_elements! {
         Shadow = ShadowRenderElement,
         Blur = BlurRenderElement,
         ClippedBlur = ClippedSurfaceRenderElement<BlurRenderElement>,
-        Offscreen = OffscreenRenderElement,
     }
 }
 
@@ -128,7 +120,7 @@ impl MappedLayer {
 
     pub fn advance_animations(&mut self) {
         if let Some(alpha) = &mut self.alpha_animation
-            && alpha.anim.is_done()
+            && alpha.is_done()
         {
             self.alpha_animation = None;
         }
@@ -226,10 +218,13 @@ impl MappedLayer {
     }
 
     pub fn start_fade_in_animation(&mut self) {
-        self.alpha_animation = Some(AlphaAnimation {
-            anim: Animation::new(self.clock.clone(), 0., 1., 0., self.alpha_cfg),
-            offscreen: OffscreenBuffer::default(),
-        })
+        self.alpha_animation = Some(Animation::new(
+            self.clock.clone(),
+            0.,
+            self.rules.opacity.unwrap_or(1.) as f64,
+            0.,
+            self.alpha_cfg,
+        ))
     }
 
     pub fn render<R: NiriRenderer>(
@@ -239,47 +234,14 @@ impl MappedLayer {
         target: RenderTarget,
         fx_buffers: Option<EffectsFramebuffersUserData>,
     ) -> SplitElements<LayerSurfaceRenderElement<R>> {
-        if let Some(alpha) = &self.alpha_animation {
-            let renderer = renderer.as_gles_renderer();
-            let elements =
-                self.render_inner(renderer, Point::default(), location, target, fx_buffers);
-
-            alpha
-                .offscreen
-                .render(renderer, self.scale.into(), &elements.normal)
-                .inspect_err(|e| {
-                    warn!("failed to render layer to offscreen for alpha animation: {e:?}")
-                })
-                .map(|(elem, _sync, _data)| {
-                    let offset = elem.offset();
-
-                    SplitElements {
-                        normal: vec![
-                            elem.with_alpha(alpha.anim.clamped_value() as f32)
-                                .with_offset(location + offset)
-                                .into(),
-                        ],
-                        popups: vec![],
-                    }
-                })
-                .unwrap_or_default()
-        } else {
-            self.render_inner(renderer, location, location, target, fx_buffers)
-        }
-    }
-
-    fn render_inner<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-        real_location: Point<f64, Logical>,
-        target: RenderTarget,
-        fx_buffers: Option<EffectsFramebuffersUserData>,
-    ) -> SplitElements<LayerSurfaceRenderElement<R>> {
         let mut rv = SplitElements::default();
 
         let scale = Scale::from(self.scale);
-        let alpha = self.rules.opacity.unwrap_or(1.).clamp(0., 1.);
+        let alpha = if let Some(alpha) = &self.alpha_animation {
+            alpha.clamped_value() as f32
+        } else {
+            self.rules.opacity.unwrap_or(1.).clamp(0., 1.)
+        };
         let location = location + self.bob_offset();
 
         // Normal surface elements used to render a texture for the ignore alpha pass inside the
@@ -387,7 +349,7 @@ impl MappedLayer {
                 }
             }
 
-            let blur_sample_area = Rectangle::new(real_location, self.geo.size).to_i32_round();
+            let blur_sample_area = Rectangle::new(location, self.geo.size).to_i32_round();
 
             let geo = Rectangle::new(location, blur_sample_area.size.to_f64());
 
@@ -403,6 +365,7 @@ impl MappedLayer {
                         !self.rules.blur.x_ray.unwrap_or_default(),
                         blur_sample_area.loc.to_f64(),
                         None,
+                        alpha,
                     )
                     .map(Into::into),
             )
@@ -419,11 +382,13 @@ impl MappedLayer {
             let mut tracker = self.unmap_tracker.borrow_mut();
             let elem_tracker = CommitTracker::from_elements(rv.normal.iter());
 
-            if should_try_update_snapshot && *tracker != elem_tracker {
+            if should_try_update_snapshot
+                && (*tracker != elem_tracker || self.unmap_snapshot.borrow().is_none())
+            {
                 *tracker = elem_tracker;
                 drop(tracker);
 
-                self.try_update_unmap_snapshot(renderer.as_gles_renderer(), real_location);
+                self.try_update_unmap_snapshot(renderer.as_gles_renderer());
             }
         }
 
@@ -442,12 +407,8 @@ impl MappedLayer {
         }
     }
 
-    fn try_update_unmap_snapshot(
-        &self,
-        renderer: &mut GlesRenderer,
-        location: Point<f64, Logical>,
-    ) {
-        if let Some(snapshot) = self.render_snapshot(renderer, location) {
+    fn try_update_unmap_snapshot(&self, renderer: &mut GlesRenderer) {
+        if let Some(snapshot) = self.render_snapshot(renderer) {
             let mut cell = self.unmap_snapshot.borrow_mut();
             *cell = Some(snapshot);
         }
@@ -457,20 +418,10 @@ impl MappedLayer {
         self.unmap_snapshot.take()
     }
 
-    fn render_snapshot(
-        &self,
-        renderer: &mut GlesRenderer,
-        location: Point<f64, Logical>,
-    ) -> Option<LayerRenderSnapshot> {
+    fn render_snapshot(&self, renderer: &mut GlesRenderer) -> Option<LayerRenderSnapshot> {
         let _span = tracy_client::span!("MappedLayer::render_snapshot");
 
-        let contents = self.render_inner(
-            renderer,
-            Point::default(),
-            location,
-            RenderTarget::Output,
-            None,
-        );
+        let contents = self.render(renderer, Point::default(), RenderTarget::Output, None);
 
         let blocked_out_contents = self.render(
             renderer,
@@ -482,7 +433,7 @@ impl MappedLayer {
         // Right before layer destruction, some shells may commit without any render elements, in
         // which case we do _not_ want to update our snapshot, since that would prevent us from
         // rendering a fade-out animation.
-        if contents.normal.is_empty() || blocked_out_contents.normal.is_empty() {
+        if contents.normal.is_empty() {
             None
         } else {
             Some(RenderSnapshot {

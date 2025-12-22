@@ -1936,6 +1936,7 @@ impl<W: LayoutElement> Tile<W> {
                             && !self.focused_window().rules().blur.x_ray.unwrap_or_default(),
                         window_render_loc,
                         overview_zoom,
+                        1.,
                     )
                     .map(Into::into)
             })
