@@ -21,8 +21,11 @@ where
     program: GlesTexProgram,
     corner_radius: CornerRadius,
     geometry: Rectangle<f64, Logical>,
-    uniforms: Vec<Uniform<'static>>,
     alpha_tex: Option<GlesTexture>,
+    scale: Scale<f64>,
+    ignore_alpha: f64,
+    view_src: Rectangle<f64, Logical>,
+    buf_size: Size<i32, Logical>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -47,27 +50,42 @@ where
         alpha_tex: Option<GlesTexture>,
         ignore_alpha: f64,
     ) -> Self {
-        let elem_geo = elem.geometry(scale);
+        Self {
+            inner: elem,
+            program,
+            corner_radius,
+            geometry,
+            alpha_tex,
+            scale,
+            ignore_alpha,
+            view_src,
+            buf_size,
+        }
+    }
+
+    fn compute_uniforms(&self) -> Vec<Uniform<'static>> {
+        let elem_geo = self.inner.geometry(self.scale);
 
         let elem_geo_loc = Vec2::new(elem_geo.loc.x as f32, elem_geo.loc.y as f32);
         let elem_geo_size = Vec2::new(elem_geo.size.w as f32, elem_geo.size.h as f32);
 
-        let geo = geometry.to_physical_precise_round(scale);
+        let geo = self.geometry.to_physical_precise_round(self.scale);
         let geo_loc = Vec2::new(geo.loc.x, geo.loc.y);
         let geo_size = Vec2::new(geo.size.w, geo.size.h);
 
-        let buf_size = Vec2::new(buf_size.w as f32, buf_size.h as f32);
+        let buf_size = Vec2::new(self.buf_size.w as f32, self.buf_size.h as f32);
 
-        let src_loc = Vec2::new(view_src.loc.x as f32, view_src.loc.y as f32);
-        let src_size = Vec2::new(view_src.size.w as f32, view_src.size.h as f32);
+        let src_loc = Vec2::new(self.view_src.loc.x as f32, self.view_src.loc.y as f32);
+        let src_size = Vec2::new(self.view_src.size.w as f32, self.view_src.size.h as f32);
 
-        let transform = elem.transform();
+        let transform = self.inner.transform();
         // HACK: ??? for some reason flipped ones are fine.
         let transform = match transform {
             Transform::_90 => Transform::_270,
             Transform::_270 => Transform::_90,
             x => x,
         };
+
         let transform_matrix = Mat3::from_translation(Vec2::new(0.5, 0.5))
             * Mat3::from_cols_array(transform.matrix().as_ref())
             * Mat3::from_translation(-Vec2::new(0.5, 0.5));
@@ -80,25 +98,21 @@ where
             * Mat3::from_translation(-src_loc / buf_size);
 
         let mut uniforms = vec![
-            Uniform::new("niri_scale", scale.x as f32),
-            Uniform::new("geo_size", (geometry.size.w as f32, geometry.size.h as f32)),
-            Uniform::new("corner_radius", <[f32; 4]>::from(corner_radius)),
+            Uniform::new("niri_scale", self.scale.x as f32),
+            Uniform::new(
+                "geo_size",
+                (self.geometry.size.w as f32, self.geometry.size.h as f32),
+            ),
+            Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
             mat3_uniform("input_to_geo", input_to_geo),
         ];
 
-        if alpha_tex.is_some() && ignore_alpha > 0. {
+        if self.alpha_tex.is_some() && self.ignore_alpha > 0. {
             uniforms.push(Uniform::new("alpha_tex", 1));
-            uniforms.push(Uniform::new("ignore_alpha", ignore_alpha as f32));
+            uniforms.push(Uniform::new("ignore_alpha", self.ignore_alpha as f32));
         }
 
-        Self {
-            inner: elem,
-            program,
-            corner_radius,
-            geometry,
-            uniforms,
-            alpha_tex,
-        }
+        uniforms
     }
 
     pub fn will_clip(
@@ -241,7 +255,7 @@ where
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), GlesError> {
-        frame.override_default_tex_program(self.program.clone(), self.uniforms.clone());
+        frame.override_default_tex_program(self.program.clone(), self.compute_uniforms());
 
         if let Some(alpha_tex) = &self.alpha_tex {
             frame.with_context(|gl| unsafe {
@@ -278,7 +292,7 @@ where
     ) -> Result<(), TtyRendererError<'render>> {
         frame
             .as_gles_frame()
-            .override_default_tex_program(self.program.clone(), self.uniforms.clone());
+            .override_default_tex_program(self.program.clone(), self.compute_uniforms());
 
         if let Some(alpha_tex) = &self.alpha_tex {
             frame.as_gles_frame().with_context(|gl| unsafe {
