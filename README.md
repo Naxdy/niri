@@ -11,8 +11,9 @@ the project (hence the fork).
 
 If you are on NixOS, an easy way to try out this fork is using the provided flake (more at the bottom of this readme).
 
-This readme outlines the differences between this fork and upstream niri. For more info on upstream's version, check out
-the [original readme](./README_orig.md).
+This readme outlines the main differences between this fork and upstream niri. For more info on upstream's version,
+check out the [original readme](./README_orig.md). For more info on what changes are planned and already implemented in
+this fork, refer to [this tracking issue](https://github.com/Naxdy/niri/issues/30).
 
 ## New Features
 
