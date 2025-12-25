@@ -80,6 +80,7 @@ use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderEleme
 use crate::render_helpers::texture::TextureBuffer;
 use crate::render_helpers::{BakedBuffer, RenderTarget, SplitElements};
 use crate::rubber_band::RubberBand;
+use crate::utils::region::Region;
 use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::utils::{
     ResizeEdge, ensure_min_max_size_maybe_zero, output_matches_name, output_size,
@@ -296,6 +297,10 @@ pub trait LayoutElement {
 
     fn wants_blur(&self) -> bool {
         false
+    }
+
+    fn blur_preferred_region(&self) -> Option<Region<i32, Logical>> {
+        None
     }
 }
 

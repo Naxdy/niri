@@ -23,6 +23,7 @@ use crate::render_helpers::blur::{EffectsFramebuffersUserData, get_rerender_at};
 use crate::render_helpers::render_data::RendererData;
 use crate::render_helpers::renderer::AsGlesFrame;
 use crate::render_helpers::shaders::{Shaders, mat3_uniform};
+use crate::utils::region::Region;
 
 use super::{CurrentBuffer, EffectsFramebuffers};
 
@@ -67,7 +68,7 @@ impl CommitTracker {
 #[derive(Debug)]
 pub struct Blur {
     config: niri_config::Blur,
-    inner: RefCell<Option<BlurRenderElement>>,
+    inner: RefCell<Vec<BlurRenderElement>>,
     alpha_tex: RefCell<Option<GlesTexture>>,
     commit_tracker: RefCell<CommitTracker>,
 }
@@ -93,7 +94,7 @@ impl Blur {
 
     pub fn update_config(&mut self, config: niri_config::Blur) {
         if self.config != config {
-            self.inner.set(None);
+            self.inner.set(vec![]);
         }
 
         self.config = config;
@@ -102,10 +103,11 @@ impl Blur {
     // TODO: the alpha tex methods can probably do better / without clearing `self.inner` entirely
 
     pub fn clear_alpha_tex(&self) {
-        if let Some(inner) = self.inner.borrow_mut().as_mut()
-            && self.alpha_tex.borrow().is_some()
-        {
-            inner.damage_all();
+        if self.alpha_tex.borrow().is_some() {
+            self.inner
+                .borrow_mut()
+                .iter_mut()
+                .for_each(BlurRenderElement::damage_all);
         }
 
         self.alpha_tex.set(None);
@@ -113,7 +115,7 @@ impl Blur {
 
     pub fn set_alpha_tex(&self, alpha_tex: GlesTexture) {
         self.alpha_tex.set(Some(alpha_tex));
-        self.inner.set(None);
+        self.inner.set(vec![]);
     }
 
     pub const fn update_render_elements(&mut self, is_active: bool) {
@@ -126,17 +128,18 @@ impl Blur {
         &self,
         renderer: &mut GlesRenderer,
         fx_buffers: EffectsFramebuffersUserData,
-        destination_area: Rectangle<i32, Logical>,
+        destination_region: &Region<i32, Logical>,
         corner_radius: CornerRadius,
         scale: f64,
         geometry: Rectangle<f64, Logical>,
         mut true_blur: bool,
-        render_loc: Point<f64, Logical>,
+        // used for elements that are rendered offscreen (e.g. tiles that are being dragged)
+        render_loc: Option<Point<f64, Logical>>,
         overview_zoom: Option<f64>,
         alpha: f32,
-    ) -> Option<BlurRenderElement> {
+    ) -> Vec<BlurRenderElement> {
         if !self.config.on || self.config.passes == 0 || self.config.radius.0 == 0. {
-            return None;
+            return vec![];
         }
 
         // FIXME: true blur is broken on 90/270 transformed monitors
@@ -147,16 +150,25 @@ impl Blur {
             true_blur = false;
         }
 
-        let sample_area = if let (Some(zoom), true) = (overview_zoom, true_blur) {
-            let mut sample_area = destination_area.to_f64().upscale(zoom);
-            let center =
-                (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.).to_point();
-            sample_area.loc.x = (center.x - destination_area.loc.x as f64).mul_add(-zoom, center.x);
-            sample_area.loc.y = (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
-            sample_area.to_i32_round()
-        } else {
-            destination_area
-        };
+        let sample_region = destination_region
+            .rects()
+            .iter()
+            .map(|destination_area| {
+                if let (Some(zoom), true) = (overview_zoom, true_blur) {
+                    let mut sample_area = destination_area.to_f64().upscale(zoom);
+
+                    let center = (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.)
+                        .to_point();
+                    sample_area.loc.x =
+                        (center.x - destination_area.loc.x as f64).mul_add(-zoom, center.x);
+                    sample_area.loc.y =
+                        (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
+                    sample_area.to_i32_round()
+                } else {
+                    *destination_area
+                }
+            })
+            .collect::<Region<_, _>>();
 
         let mut tex_buffer = || {
             renderer
@@ -169,58 +181,10 @@ impl Blur {
 
         let mut inner = self.inner.borrow_mut();
 
-        let Some(inner) = inner.as_mut() else {
-            let elem = BlurRenderElement::new(
-                &fx_buffers.borrow(),
-                sample_area,
-                destination_area,
-                corner_radius,
-                scale,
-                self.config,
-                geometry,
-                self.alpha_tex.borrow().clone(),
-                if true_blur {
-                    BlurVariant::True {
-                        fx_buffers: fx_buffers.clone(),
-                        config: self.config,
-                        texture: tex_buffer()?,
-                        rerender_at: Default::default(),
-                    }
-                } else {
-                    BlurVariant::Optimized {
-                        texture: fx_buffers.borrow().optimized_blur.clone(),
-                    }
-                },
-                render_loc,
-                alpha,
-            );
-
-            *inner = Some(elem.clone());
-
-            return Some(elem);
-        };
-
-        if true_blur != matches!(&inner.variant, BlurVariant::True { .. }) {
-            inner.variant = if true_blur {
-                BlurVariant::True {
-                    fx_buffers: fx_buffers.clone(),
-                    config: self.config,
-                    texture: tex_buffer()?,
-                    rerender_at: Default::default(),
-                }
-            } else {
-                BlurVariant::Optimized {
-                    texture: fx_buffers.borrow().optimized_blur.clone(),
-                }
-            };
-
-            inner.damage_all();
-        }
-
-        let fx_buffers = fx_buffers.borrow();
-
-        let variant_needs_rerender = match &inner.variant {
+        let variant_needs_rerender = inner.iter().any(|inner| match &inner.variant {
             BlurVariant::Optimized { texture } => {
+                let fx_buffers = fx_buffers.borrow();
+
                 texture.size().w != fx_buffers.output_size().w
                     || texture.size().h != fx_buffers.output_size().h
             }
@@ -228,57 +192,86 @@ impl Blur {
                 // TODO: damage tracking of other render elements should happen here
                 rerender_at.borrow().is_none_or(|r| r < Instant::now())
             }
-        };
+        });
 
-        let variant_needs_reconfigure = match &inner.variant {
+        let variant_needs_reconfigure = inner.iter().any(|inner| match &inner.variant {
             BlurVariant::Optimized { texture } => {
-                texture.tex_id() != fx_buffers.optimized_blur.tex_id()
+                texture.tex_id() != fx_buffers.borrow().optimized_blur.tex_id()
             }
             _ => false,
-        };
+        });
 
-        // if nothing about our geometry changed, we don't need to re-render blur
-        if inner.sample_area == sample_area
-            && inner.destination_area == destination_area
-            && inner.geometry == geometry
-            && inner.scale == scale
-            && inner.corner_radius == corner_radius
-            && inner.render_loc == render_loc
-            && inner.alpha == alpha
-            && !variant_needs_reconfigure
-        {
-            if variant_needs_rerender {
-                // FIXME: currently, true blur only gets damaged on a fixed timer,
-                // which causes some artifacts for blur that is rendered above frequently
-                // updating surfaces (e.g. video, animated background). although this is preferable
-                // to re-rendering on every frame, the best solution would be to track "global
-                // output damage up to the point we're rendering", to find out whether or not we
-                // need to re-render true blur.
-                inner.damage_all();
-            }
+        let changed_any = destination_region.rects().len() != inner.len()
+            || inner
+                .iter_mut()
+                .zip(destination_region.rects())
+                .zip(sample_region.rects())
+                .any(|((inner, destination_area), sample_area)| {
+                    // if nothing about our geometry changed, we don't need to re-render blur
+                    if inner.sample_area == *sample_area
+                        && inner.destination_area == *destination_area
+                        && inner.geometry == geometry
+                        && inner.scale == scale
+                        && inner.corner_radius == corner_radius
+                        && inner.render_loc
+                            == render_loc.unwrap_or_else(|| destination_area.loc.to_f64())
+                        && inner.alpha == alpha
+                        && true_blur == matches!(&inner.variant, BlurVariant::True { .. })
+                        && !variant_needs_reconfigure
+                    {
+                        if variant_needs_rerender {
+                            // FIXME: currently, true blur only gets damaged on a fixed timer,
+                            // which causes some artifacts for blur that is rendered above frequently
+                            // updating surfaces (e.g. video, animated background). although this is preferable
+                            // to re-rendering on every frame, the best solution would be to track "global
+                            // output damage up to the point we're rendering", to find out whether or not we
+                            // need to re-render true blur.
+                            inner.damage_all();
+                        }
 
-            return Some(inner.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+
+        if !changed_any {
+            return inner.clone();
         }
 
-        match &mut inner.variant {
-            BlurVariant::True { rerender_at, .. } => {
-                // force an immediate redraw of true blur on geometry changes
-                rerender_at.set(None);
-            }
-            BlurVariant::Optimized { texture } => *texture = fx_buffers.optimized_blur.clone(),
-        }
+        *inner = destination_region
+            .rects()
+            .iter()
+            .zip(sample_region.rects().iter())
+            .filter_map(|(destination_area, sample_area)| {
+                Some(BlurRenderElement::new(
+                    &fx_buffers.borrow(),
+                    *sample_area,
+                    *destination_area,
+                    corner_radius,
+                    scale,
+                    self.config,
+                    geometry,
+                    self.alpha_tex.borrow().clone(),
+                    if true_blur {
+                        BlurVariant::True {
+                            fx_buffers: fx_buffers.clone(),
+                            config: self.config,
+                            texture: tex_buffer()?,
+                            rerender_at: Default::default(),
+                        }
+                    } else {
+                        BlurVariant::Optimized {
+                            texture: fx_buffers.borrow().optimized_blur.clone(),
+                        }
+                    },
+                    render_loc.unwrap_or_else(|| destination_area.loc.to_f64()),
+                    alpha,
+                ))
+            })
+            .collect();
 
-        inner.alpha = alpha;
-        inner.render_loc = render_loc;
-        inner.sample_area = sample_area;
-        inner.destination_area = destination_area;
-        inner.alpha_tex = self.alpha_tex.borrow().clone();
-        inner.scale = scale;
-        inner.geometry = geometry;
-        inner.damage_all();
-        inner.update_uniforms(&fx_buffers, &self.config);
-
-        Some(inner.clone())
+        inner.clone()
     }
 }
 

@@ -35,6 +35,7 @@ use crate::render_helpers::shaders::Shaders;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
+use crate::utils::region::Region;
 use crate::utils::transaction::Transaction;
 use crate::utils::{
     baba_is_float_offset, round_logical_in_physical, round_logical_in_physical_max1,
@@ -1923,24 +1924,26 @@ impl<W: LayoutElement> Tile<W> {
         let rv = rv.chain(elem.into_iter().flatten());
 
         let blur_elem = fx_buffers
-            .and_then(|fx_buffers| {
+            .map(|fx_buffers| {
                 self.blur
                     .render(
                         renderer.as_gles_renderer(),
                         fx_buffers,
-                        blur_sample_area.to_i32_round(),
+                        &Region::from_rects(std::iter::once(blur_sample_area.to_i32_round())),
                         radius,
                         self.scale,
                         animated_geo,
                         self.focused_window().is_floating()
                             && !self.focused_window().rules().blur.x_ray.unwrap_or_default(),
-                        window_render_loc,
+                        Some(window_render_loc),
                         overview_zoom,
                         1.,
                     )
+                    .into_iter()
                     .map(Into::into)
             })
-            .into_iter();
+            .into_iter()
+            .flatten();
 
         let elem = (expanded_progress < 1.)
             .then(|| self.shadow.render(renderer, location).map(Into::into));
