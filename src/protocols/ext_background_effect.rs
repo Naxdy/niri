@@ -4,7 +4,8 @@ use smithay::reexports::{
         ext_background_effect_surface_v1::{self, ExtBackgroundEffectSurfaceV1},
     },
     wayland_server::{
-        Client, Dispatch, DisplayHandle, GlobalDispatch, protocol::wl_surface::WlSurface,
+        Client, Dispatch, DisplayHandle, GlobalDispatch,
+        protocol::{wl_region::WlRegion, wl_surface::WlSurface},
     },
 };
 
@@ -39,6 +40,7 @@ pub trait ExtBackgroundEffectManagerHandler {
     fn ext_background_effect_manager_state(&mut self) -> &mut ExtBackgroundEffectManagerState;
     fn enable_blur(&mut self, surface: &WlSurface);
     fn disable_blur(&mut self, surface: &WlSurface);
+    fn set_blur_region(&mut self, surface: &WlSurface, region: Option<WlRegion>);
 }
 
 pub struct ExtBackgroundEffectManagerGlobalData {
@@ -119,9 +121,11 @@ where
                 state.disable_blur(&data.surface);
             }
             ext_background_effect_surface_v1::Request::SetBlurRegion { region } => {
-                // We currently only have "all or nothing" blur, meaning if the region is not
-                // `NULL`, we enable it, otherwise we disable it.
-                if region.is_some() {
+                let should_blur = region.is_some();
+
+                state.set_blur_region(&data.surface, region);
+
+                if should_blur {
                     state.enable_blur(&data.surface);
                 } else {
                     state.disable_blur(&data.surface);

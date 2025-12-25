@@ -1,6 +1,6 @@
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
-    protocol::wl_surface::WlSurface,
+    protocol::{wl_region::WlRegion, wl_surface::WlSurface},
 };
 use wayland_protocols_plasma::blur::server::{
     org_kde_kwin_blur::OrgKdeKwinBlur, org_kde_kwin_blur_manager::OrgKdeKwinBlurManager,
@@ -41,6 +41,7 @@ pub trait OrgKdeKwinBlurManagerHandler {
     fn org_kde_kwin_blur_manager_state(&mut self) -> &mut OrgKdeKwinBlurManagerState;
     fn enable_blur(&mut self, surface: &WlSurface);
     fn disable_blur(&mut self, surface: &WlSurface);
+    fn set_blur_region(&mut self, surface: &WlSurface, region: Option<WlRegion>);
 }
 
 impl<D> GlobalDispatch<OrgKdeKwinBlurManager, OrgKdeKwinBlurManagerGlobalData, D>
@@ -119,9 +120,9 @@ where
                 state.enable_blur(&data.surface);
             }
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::SetRegion {
-                region: _,
+                region,
             } => {
-                // setting blur on a specific WlRegion is not yet supported
+                state.set_blur_region(&data.surface, region);
             }
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::Release => {}
             e => {
