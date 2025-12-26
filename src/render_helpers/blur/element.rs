@@ -475,11 +475,16 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
     ) -> Result<(), GlesError> {
         let _span = trace_span!("blur_draw_gles").entered();
 
-        let downscaled_dst = Rectangle::new(
+        let src = Rectangle::new(
+            src.loc,
+            Size::new(src.size.w * self.scale, src.size.h * self.scale),
+        );
+
+        let scaled_dst = Rectangle::new(
             dst.loc,
             Size::from((
-                (dst.size.w as f64 / self.scale) as i32,
-                (dst.size.h as f64 / self.scale) as i32,
+                (dst.size.w as f64 * self.scale) as i32,
+                (dst.size.h as f64 * self.scale) as i32,
             )),
         );
 
@@ -501,7 +506,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
             BlurVariant::Optimized { texture } => gles_frame.render_texture_from_to(
                 texture,
                 src,
-                downscaled_dst,
+                scaled_dst,
                 damage,
                 opaque_regions,
                 Transform::Normal,
@@ -545,7 +550,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                             &vbos,
                             debug,
                             supports_instancing,
-                            downscaled_dst,
+                            scaled_dst,
                             texture,
                             self.alpha_tex.as_ref(),
                         )
@@ -557,7 +562,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                 gles_frame.render_texture_from_to(
                     texture,
                     src,
-                    downscaled_dst,
+                    scaled_dst,
                     damage,
                     opaque_regions,
                     fx_buffers.transform(),
