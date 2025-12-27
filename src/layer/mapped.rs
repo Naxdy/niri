@@ -24,6 +24,7 @@ use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::{RenderTarget, SplitElements, render_to_texture};
+use crate::utils::region::Region;
 use crate::utils::{baba_is_float_offset, round_logical_in_physical};
 
 type LayerRenderSnapshot = RenderSnapshot<
@@ -71,6 +72,9 @@ pub struct MappedLayer {
 
     /// Configuration for the alpha animation.
     alpha_cfg: niri_config::Animation,
+
+    /// Blur region as specified by the KDE blur / background effect protocols.
+    blur_region: Option<Region<i32, Logical>>,
 }
 
 niri_render_elements! {
@@ -115,6 +119,7 @@ impl MappedLayer {
             unmap_tracker: RefCell::new(CommitTracker::default()),
             alpha_animation: None,
             alpha_cfg: config.animations.layer_open.anim,
+            blur_region: None,
         }
     }
 
@@ -356,26 +361,32 @@ impl MappedLayer {
 
             let geo = Rectangle::new(location, blur_sample_area.size.to_f64());
 
+            let blur_region = self.blur_region.as_ref().map_or_else(
+                || Region::from_rects(std::iter::once(blur_sample_area)),
+                |r| r.with_offset(location.to_i32_round()),
+            );
+
             Some(
                 self.blur
                     .render(
                         renderer.as_gles_renderer(),
                         fx_buffers,
-                        blur_sample_area,
+                        &blur_region,
                         self.rules.geometry_corner_radius.unwrap_or_default(),
                         self.scale,
                         geo,
                         !self.rules.blur.x_ray.unwrap_or_default(),
-                        blur_sample_area.loc.to_f64(),
+                        None,
                         None,
                         alpha,
                     )
+                    .into_iter()
                     .map(Into::into),
             )
         })
+        .into_iter()
         .flatten()
-        .flatten()
-        .into_iter();
+        .flatten();
 
         let location = location.to_physical_precise_round(scale).to_logical(scale);
         rv.normal
@@ -410,6 +421,10 @@ impl MappedLayer {
         if !self.rules.blur.off {
             self.rules.blur.on = new_blurred;
         }
+    }
+
+    pub fn set_blur_region(&mut self, region: Option<Region<i32, Logical>>) {
+        self.blur_region = region;
     }
 
     fn try_update_unmap_snapshot(&self, renderer: &mut GlesRenderer) {

@@ -23,7 +23,7 @@ use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle};
-use smithay::wayland::compositor::{get_parent, with_states};
+use smithay::wayland::compositor::{get_parent, get_region_attributes, with_states};
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 use smithay::wayland::drm_lease::{
     DrmLease, DrmLeaseBuilder, DrmLeaseHandler, DrmLeaseRequest, DrmLeaseState, LeaseRejected,
@@ -90,6 +90,7 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerInputBackend, VirtualPointerManagerState, VirtualPointerMotionAbsoluteEvent,
     VirtualPointerMotionEvent,
 };
+use crate::utils::region::Region;
 use crate::utils::{output_size, send_scale_transform};
 use crate::{
     delegate_ext_background_effect, delegate_ext_workspace, delegate_foreign_toplevel,
@@ -903,6 +904,28 @@ impl OrgKdeKwinBlurManagerHandler for State {
             trace!("tried to un-blur unmapped surface: {}", surface.id());
         }
     }
+
+    fn set_blur_region(
+        &mut self,
+        surface: &WlSurface,
+        region: Option<smithay::reexports::wayland_server::protocol::wl_region::WlRegion>,
+    ) {
+        if let Some(layer) = self
+            .niri
+            .mapped_layer_surfaces
+            .values_mut()
+            .find(|l| l.surface().wl_surface() == surface)
+        {
+            layer.set_blur_region(
+                region.map(|region| Region::from_region_attributes(get_region_attributes(&region))),
+            );
+        } else {
+            trace!(
+                "tried to set blur region on un-mapped or unsupported surface: {}",
+                surface.id()
+            );
+        }
+    }
 }
 delegate_org_kde_kwin_blur!(State);
 
@@ -919,6 +942,14 @@ impl ExtBackgroundEffectManagerHandler for State {
 
     fn disable_blur(&mut self, surface: &WlSurface) {
         <Self as OrgKdeKwinBlurManagerHandler>::disable_blur(self, surface);
+    }
+
+    fn set_blur_region(
+        &mut self,
+        surface: &WlSurface,
+        region: Option<smithay::reexports::wayland_server::protocol::wl_region::WlRegion>,
+    ) {
+        <Self as OrgKdeKwinBlurManagerHandler>::set_blur_region(self, surface, region);
     }
 }
 delegate_ext_background_effect!(State);
