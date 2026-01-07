@@ -836,13 +836,13 @@ impl<W: LayoutElement> Workspace<W> {
         }
 
         if tile.remove_window(id) == 0 {
-            self.update_focus_floating_tiling_after_removing(from_floating);
-
             let removed = if from_floating {
                 self.floating.remove_tile(id)
             } else {
                 self.scrolling.remove_tile(id, transaction)
             };
+
+            self.update_focus_floating_tiling_after_removing(from_floating);
 
             Some(removed)
         } else {
