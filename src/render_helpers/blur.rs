@@ -57,7 +57,7 @@ pub struct EffectsFramebuffers {
     /// Contains the main buffer blurred contents
     optimized_blur: GlesTexture,
     /// Whether the optimizer blur buffer is dirty
-    optimized_blur_rerender_at: Option<Instant>,
+    optimized_blur_needs_rerender: bool,
     // /// Contains the original pixels before blurring to draw with in case of artifacts.
     // blur_saved_pixels: GlesTexture,
     // The blur algorithms (dual-kawase) swaps between these two whenever scaling the image
@@ -102,9 +102,7 @@ impl EffectsFramebuffers {
             return;
         };
 
-        if fx_buffers.optimized_blur_rerender_at.is_none() {
-            fx_buffers.optimized_blur_rerender_at = get_rerender_at();
-        }
+        fx_buffers.optimized_blur_needs_rerender = true;
     }
 
     /// Initialize the [`EffectsFramebuffers`] for an [`Output`].
@@ -129,7 +127,7 @@ impl EffectsFramebuffers {
 
         let this = Self {
             optimized_blur: create_buffer(renderer, texture_size).unwrap(),
-            optimized_blur_rerender_at: get_rerender_at(),
+            optimized_blur_needs_rerender: true,
             effects: create_buffer(renderer, texture_size).unwrap(),
             effects_swapped: create_buffer(renderer, texture_size).unwrap(),
             current_buffer: CurrentBuffer::Normal,
@@ -170,7 +168,7 @@ impl EffectsFramebuffers {
 
         *fx_buffers = Self {
             optimized_blur: create_buffer(renderer, texture_size)?,
-            optimized_blur_rerender_at: get_rerender_at(),
+            optimized_blur_needs_rerender: true,
             effects: create_buffer(renderer, texture_size)?,
             effects_swapped: create_buffer(renderer, texture_size)?,
             current_buffer: CurrentBuffer::Normal,
@@ -189,13 +187,11 @@ impl EffectsFramebuffers {
         scale: Scale<f64>,
         config: Blur,
     ) -> anyhow::Result<()> {
-        if self.optimized_blur_rerender_at.is_none()
-            || matches!(self.optimized_blur_rerender_at, Some(t) if t > Instant::now())
-        {
+        if !self.optimized_blur_needs_rerender {
             return Ok(());
         }
 
-        self.optimized_blur_rerender_at = None;
+        self.optimized_blur_needs_rerender = false;
 
         // first render layer shell elements
         // NOTE: We use Blur::DISABLED since we should not include blur with Background/Bottom
