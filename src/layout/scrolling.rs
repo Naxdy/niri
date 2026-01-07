@@ -2109,6 +2109,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                         target_col_idx += 1;
                     }
 
+                    let extra_x_offset = if target_col_idx <= source_col_idx {
+                        self.column_x(target_col_idx + 1) - self.column_x(target_col_idx)
+                    } else {
+                        0.
+                    };
+
                     let width = ColumnWidth::Fixed(new_tile.focused_window().size().w as f64);
 
                     self.add_tile(
@@ -2126,8 +2132,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
                     let inserted_tile =
                         &mut self.columns[target_col_idx].tiles[final_target_tile_idx];
-                    inserted_tile
-                        .animate_move_from(source_position - target_position + extra_offset);
+                    inserted_tile.animate_move_from(
+                        source_position - target_position
+                            + extra_offset
+                            + Point::new(extra_x_offset, 0.),
+                    );
 
                     if source_col_idx != target_col_idx {
                         self.columns[source_col_idx].update_tile_sizes(false);
