@@ -6261,6 +6261,8 @@ impl Niri {
             .send(Ok(KwinImageData {
                 width: size.w as u32,
                 height: size.h as u32,
+                scale: output.current_scale().fractional_scale(),
+                screen: Some(output.name()),
             }))
             .is_err()
         {

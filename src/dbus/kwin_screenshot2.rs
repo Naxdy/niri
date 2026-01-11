@@ -11,17 +11,13 @@ use crate::dbus::Start;
 
 pub struct KwinScreenshot2 {
     to_niri: calloop::channel::Sender<KwinScreenshot2ToNiri>,
-
-    // Spectacle screenshoting utility is obtaining output list from elsewhere,
-    // and winit niri doesn't know about DP-1 etc outputs, this option overrides all the queries with winit output instead.
-    fake_session: bool,
 }
 
 pub struct KwinImageData {
     pub width: u32,
     pub height: u32,
-    // For proper region capture it also needs scaling and monitor positions,
-    // but then rgba8888 format is not suitable
+    pub screen: Option<String>,
+    pub scale: f64,
 }
 
 pub enum KwinScreenshot2ToNiri {
@@ -35,6 +31,37 @@ pub enum KwinScreenshot2ToNiri {
 }
 
 const QIMAGE_FORMAT_RGBA8888: u32 = 17;
+
+fn image_data_to_dbus(data: KwinImageData) -> HashMap<String, OwnedValue> {
+    let mut out = HashMap::new();
+    out.insert(
+        "type".to_owned(),
+        OwnedValue::try_from(Value::from("raw")).unwrap(),
+    );
+    out.insert(
+        "width".to_owned(),
+        OwnedValue::try_from(Value::from(data.width)).unwrap(),
+    );
+    out.insert(
+        "height".to_owned(),
+        OwnedValue::try_from(Value::from(data.height)).unwrap(),
+    );
+    out.insert(
+        "scale".to_owned(),
+        OwnedValue::try_from(Value::from(data.scale)).unwrap(),
+    );
+    out.insert(
+        "format".to_owned(),
+        OwnedValue::try_from(Value::from(QIMAGE_FORMAT_RGBA8888)).unwrap(),
+    );
+    if let Some(screen) = data.screen {
+        out.insert(
+            "screen".to_owned(),
+            OwnedValue::try_from(Value::from(screen)).unwrap(),
+        );
+    }
+    out
+}
 
 async fn capture_screen(
     this: &KwinScreenshot2,
@@ -71,24 +98,7 @@ async fn capture_screen(
             )));
         }
     };
-    let mut out = HashMap::new();
-    out.insert(
-        "type".to_owned(),
-        OwnedValue::try_from(Value::from("raw")).unwrap(),
-    );
-    out.insert(
-        "width".to_owned(),
-        OwnedValue::try_from(Value::from(data.width)).unwrap(),
-    );
-    out.insert(
-        "height".to_owned(),
-        OwnedValue::try_from(Value::from(data.height)).unwrap(),
-    );
-    out.insert(
-        "format".to_owned(),
-        OwnedValue::try_from(Value::from(QIMAGE_FORMAT_RGBA8888)).unwrap(),
-    );
-    Ok(out)
+    Ok(image_data_to_dbus(data))
 }
 
 #[interface(name = "org.kde.KWin.ScreenShot2")]
@@ -106,26 +116,17 @@ impl KwinScreenshot2 {
     }
     async fn capture_screen(
         &self,
-        mut name: String,
+        name: String,
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        if self.fake_session {
-            name = "winit".to_owned();
-        }
         capture_screen(self, Some(name), options, pipe).await
     }
 }
 
 impl KwinScreenshot2 {
-    pub const fn new(
-        to_niri: calloop::channel::Sender<KwinScreenshot2ToNiri>,
-        fake_session: bool,
-    ) -> Self {
-        Self {
-            to_niri,
-            fake_session,
-        }
+    pub const fn new(to_niri: calloop::channel::Sender<KwinScreenshot2ToNiri>) -> Self {
+        Self { to_niri }
     }
 }
 

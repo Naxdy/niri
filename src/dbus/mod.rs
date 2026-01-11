@@ -55,7 +55,7 @@ impl DBusServers {
 
         let mut dbus = Self::default();
 
-        {
+        if is_session_instance {
             let (to_niri, from_kwin_screenshot2) = calloop::channel::channel();
             niri.event_loop
                 .insert_source(from_kwin_screenshot2, move |event, _, state| match event {
@@ -75,7 +75,7 @@ impl DBusServers {
                     calloop::channel::Event::Closed => (),
                 })
                 .unwrap();
-            let kwin_screenshot2 = KwinScreenshot2::new(to_niri, !is_session_instance);
+            let kwin_screenshot2 = KwinScreenshot2::new(to_niri);
 
             dbus.conn_kwin_screenshot2 = try_start(kwin_screenshot2);
         }
