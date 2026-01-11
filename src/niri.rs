@@ -4,9 +4,7 @@ use std::ffi::OsString;
 #[cfg(feature = "dbus")]
 use std::fs::File;
 #[cfg(feature = "dbus")]
-use std::io::{BufWriter, Write};
-#[cfg(feature = "dbus")]
-use std::os::fd::OwnedFd;
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::Rc;
