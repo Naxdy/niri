@@ -131,7 +131,7 @@ use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospe
 #[cfg(feature = "dbus")]
 use crate::dbus::gnome_shell_screenshot::{NiriToScreenshot, ScreenshotToNiri};
 #[cfg(feature = "dbus")]
-use crate::dbus::kwin_screenshot2::{KwinImageData};
+use crate::dbus::kwin_screenshot2::KwinImageData;
 #[cfg(feature = "xdp-gnome-screencast")]
 use crate::dbus::mutter_screen_cast::{self, ScreenCastToNiri};
 use crate::frame_clock::FrameClock;
@@ -6015,14 +6015,12 @@ impl Niri {
         })
     }
 
-    pub fn screenshot(
+    fn screenshot_raw(
         &mut self,
         renderer: &mut GlesRenderer,
         output: &Output,
-        write_to_disk: bool,
         include_pointer: bool,
-        path: Option<String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(Size<i32, Physical>, Scale<f64>, Vec<u8>)> {
         let _span = tracy_client::span!("Niri::screenshot");
 
         self.update_render_elements(Some(output));
@@ -6047,6 +6045,18 @@ impl Niri {
             Fourcc::Abgr8888,
             elements,
         )?;
+
+        Ok((size, scale, pixels))
+    }
+    pub fn screenshot(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        write_to_disk: bool,
+        include_pointer: bool,
+        path: Option<String>,
+    ) -> anyhow::Result<()> {
+        let (size, _, pixels) = self.screenshot_raw(renderer, output, include_pointer)?;
 
         self.save_screenshot(size, pixels, write_to_disk, path)
             .context("error saving screenshot")
@@ -6213,47 +6223,20 @@ impl Niri {
         include_pointer: bool,
         mut pipe: W,
     ) {
-        let _span = tracy_client::span!("Niri::screenshot_output");
-
-        self.update_render_elements(None);
-
         let output = match output {
             Some(name) => self.global_space.outputs().find(|o| o.name() == name),
             None => self.layout.active_output(),
         };
-        let Some(output) = output else {
+        let Some(output) = output.cloned() else {
             // Ignore if receiver is dead
             let _ = data_tx.send(Err(anyhow::anyhow!("unknown output: {output:?}")));
             return;
         };
 
-        let geom = self.global_space.output_geometry(&output).unwrap();
-
-        let output_scale = output.current_scale().integer_scale();
-        let geom = geom.to_physical(output_scale);
-
-        let size = geom.size;
-        let transform = output.current_transform();
-        let size = transform.transform_size(size);
-
-        let elements = self.render::<GlesRenderer>(
-            renderer,
-            &output,
-            include_pointer,
-            RenderTarget::ScreenCapture,
-        );
-        let elements = elements.iter().rev();
-        let pixels = match render_to_vec(
-            renderer,
-            size,
-            Scale::from(f64::from(output_scale)),
-            Transform::Normal,
-            Fourcc::Abgr8888,
-            elements,
-        ) {
-            Ok(p) => p,
+        let (size, scale, pixels) = match self.screenshot_raw(renderer, &output, include_pointer) {
+            Ok(v) => v,
             Err(e) => {
-                let _ = data_tx.send(Err(e.into()));
+                let _ = data_tx.send(Err(anyhow::anyhow!("failed to capture screenshot: {e:?}")));
                 return;
             }
         };
@@ -6261,7 +6244,8 @@ impl Niri {
             .send(Ok(KwinImageData {
                 width: size.w as u32,
                 height: size.h as u32,
-                scale: output.current_scale().fractional_scale(),
+                // x and y scales are equal for screens
+                scale: scale.x,
                 screen: Some(output.name()),
             }))
             .is_err()
