@@ -62,10 +62,12 @@ impl DBusServers {
                     calloop::channel::Event::Msg(msg) => match msg {
                         KwinScreenshot2ToNiri::CaptureScreen {
                             name,
+                            include_cursor,
                             data_tx,
                             pipe,
                         } => state.handle_kwin_screenshot2(
                             name.as_ref().map(String::as_str),
+                            include_cursor,
                             data_tx,
                             pipe,
                         ),
