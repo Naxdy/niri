@@ -2313,6 +2313,7 @@ impl State {
     pub fn handle_kwin_screenshot2(
         &mut self,
         output: Option<&str>,
+        include_cursor: bool,
         data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
         pipe: File,
     ) {
@@ -2321,7 +2322,7 @@ impl State {
 
         self.backend.with_primary_renderer(|renderer| {
             self.niri
-                .screenshot_output(renderer, output, data_tx, true, pipe)
+                .screenshot_output(renderer, output, data_tx, include_cursor, pipe)
         });
     }
 

@@ -56,6 +56,7 @@ pub enum KwinScreenshot2ToNiri {
     CaptureScreen {
         // None for current
         name: Option<String>,
+        include_cursor: bool,
         data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
         pipe: File,
     },
