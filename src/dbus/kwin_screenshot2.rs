@@ -1,6 +1,5 @@
-use std::{collections::HashMap, fs::File, io::Write, os::fd::OwnedFd, thread};
+use std::{collections::HashMap, fs::File};
 
-use anyhow::Context as _;
 use smithay::reexports::rustix;
 use zbus::{
     fdo::{self, RequestNameFlags},
@@ -9,33 +8,6 @@ use zbus::{
 };
 
 use crate::dbus::Start;
-
-async fn spawn_blocking<R, F>(f: F) -> R
-where
-    F: 'static + Send + FnOnce() -> R,
-    R: Send + 'static,
-{
-    // Why isn't there oneshot channels, at least?..
-    // I haven't found threadpool in any of the libraries either, and thread::spawn looks dirty...
-    let (tx, rx) = async_channel::bounded(1);
-    thread::spawn(move || {
-        tx.send_blocking(f())
-            .expect("capacity == 1, reader is alive");
-    });
-    rx.recv().await.expect("thread panicked")
-}
-
-fn delayed_task<F>(f: F)
-where
-    F: FnOnce() -> anyhow::Result<()>,
-    F: Send + 'static,
-{
-    thread::spawn(move || {
-        if let Err(e) = f() {
-            warn!("executing delayed task failed: {e:#}");
-        }
-    });
-}
 
 pub struct KwinScreenshot2 {
     to_niri: calloop::channel::Sender<KwinScreenshot2ToNiri>,
