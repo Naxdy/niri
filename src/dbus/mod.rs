@@ -1,6 +1,7 @@
 use zbus::blocking::Connection;
 use zbus::object_server::Interface;
 
+use crate::dbus::kwin_screenshot2::KwinScreenshot2ToNiri;
 use crate::niri::State;
 
 pub mod freedesktop_a11y;
@@ -9,6 +10,7 @@ pub mod freedesktop_login1;
 pub mod freedesktop_screensaver;
 pub mod gnome_shell_introspect;
 pub mod gnome_shell_screenshot;
+pub mod kwin_screenshot2;
 pub mod mutter_display_config;
 pub mod mutter_service_channel;
 
@@ -20,6 +22,7 @@ use mutter_screen_cast::ScreenCast;
 use self::freedesktop_a11y::KeyboardMonitor;
 use self::freedesktop_screensaver::ScreenSaver;
 use self::gnome_shell_introspect::Introspect;
+use self::kwin_screenshot2::KwinScreenshot2;
 use self::mutter_display_config::DisplayConfig;
 use self::mutter_service_channel::ServiceChannel;
 
@@ -39,6 +42,7 @@ pub struct DBusServers {
     pub conn_login1: Option<Connection>,
     pub conn_locale1: Option<Connection>,
     pub conn_keyboard_monitor: Option<Connection>,
+    pub conn_kwin_screenshot2: Option<Connection>,
 }
 
 impl DBusServers {
@@ -50,6 +54,29 @@ impl DBusServers {
         let config = niri.config.borrow();
 
         let mut dbus = Self::default();
+
+        {
+            let (to_niri, from_kwin_screenshot2) = calloop::channel::channel();
+            niri.event_loop
+                .insert_source(from_kwin_screenshot2, move |event, _, state| match event {
+                    calloop::channel::Event::Msg(msg) => match msg {
+                        KwinScreenshot2ToNiri::CaptureScreen {
+                            name,
+                            data_tx,
+                            pipe,
+                        } => state.handle_kwin_screenshot2(
+                            name.as_ref().map(String::as_str),
+                            data_tx,
+                            pipe,
+                        ),
+                    },
+                    calloop::channel::Event::Closed => (),
+                })
+                .unwrap();
+            let kwin_screenshot2 = KwinScreenshot2::new(to_niri, !is_session_instance);
+
+            dbus.conn_kwin_screenshot2 = try_start(kwin_screenshot2);
+        }
 
         if is_session_instance {
             let (to_niri, from_service_channel) = calloop::channel::channel();

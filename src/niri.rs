@@ -1,6 +1,12 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
+#[cfg(feature = "dbus")]
+use std::fs::File;
+#[cfg(feature = "dbus")]
+use std::io::{BufWriter, Write};
+#[cfg(feature = "dbus")]
+use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -126,6 +132,8 @@ use crate::dbus::freedesktop_login1::Login1ToNiri;
 use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospect};
 #[cfg(feature = "dbus")]
 use crate::dbus::gnome_shell_screenshot::{NiriToScreenshot, ScreenshotToNiri};
+#[cfg(feature = "dbus")]
+use crate::dbus::kwin_screenshot2::{KwinImageData};
 #[cfg(feature = "xdp-gnome-screencast")]
 use crate::dbus::mutter_screen_cast::{self, ScreenCastToNiri};
 use crate::frame_clock::FrameClock;
@@ -2299,6 +2307,22 @@ impl State {
                 self.handle_pick_color(tx);
             }
         }
+    }
+
+    #[cfg(feature = "dbus")]
+    pub fn handle_kwin_screenshot2(
+        &mut self,
+        output: Option<&str>,
+        data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
+        pipe: File,
+    ) {
+        let _span = tracy_client::span!("Kwin2Screenshot");
+        info!("capturing screen");
+
+        self.backend.with_primary_renderer(|renderer| {
+            self.niri
+                .screenshot_output(renderer, output, data_tx, true, pipe)
+        });
     }
 
     #[cfg(feature = "dbus")]
@@ -6178,6 +6202,80 @@ impl Niri {
         });
 
         Ok(())
+    }
+
+    /// Render output in RGBA8888 format, return width, height, and image data.
+    #[cfg(feature = "dbus")]
+    pub fn screenshot_output<W: Write + Send + 'static>(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        output: Option<&str>,
+        mut data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
+        include_pointer: bool,
+        mut pipe: W,
+    ) {
+        let _span = tracy_client::span!("Niri::screenshot_output");
+
+        self.update_render_elements(None);
+
+        let output = match output {
+            Some(name) => self.global_space.outputs().find(|o| o.name() == name),
+            None => self.layout.active_output(),
+        };
+        let Some(output) = output else {
+            // Ignore if receiver is dead
+            let _ = data_tx.send(Err(anyhow::anyhow!("unknown output: {output:?}")));
+            return;
+        };
+
+        let geom = self.global_space.output_geometry(&output).unwrap();
+
+        let output_scale = output.current_scale().integer_scale();
+        let geom = geom.to_physical(output_scale);
+
+        let size = geom.size;
+        let transform = output.current_transform();
+        let size = transform.transform_size(size);
+
+        let elements = self.render::<GlesRenderer>(
+            renderer,
+            &output,
+            include_pointer,
+            RenderTarget::ScreenCapture,
+        );
+        let elements = elements.iter().rev();
+        let pixels = match render_to_vec(
+            renderer,
+            size,
+            Scale::from(f64::from(output_scale)),
+            Transform::Normal,
+            Fourcc::Abgr8888,
+            elements,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = data_tx.send(Err(e.into()));
+                return;
+            }
+        };
+        if data_tx
+            .send(Ok(KwinImageData {
+                width: size.w as u32,
+                height: size.h as u32,
+            }))
+            .is_err()
+        {
+            // Receiver is dead
+            return;
+        }
+
+        thread::spawn(move || {
+            // TODO: render_to_vec can be reimplemented as render_to_writer
+            if let Err(e) = pipe.write_all(&pixels).and_then(|()| pipe.flush()) {
+                warn!("failed to write image data: {e:?}");
+                return;
+            }
+        });
     }
 
     #[cfg(feature = "dbus")]
