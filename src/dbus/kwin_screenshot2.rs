@@ -64,11 +64,73 @@ pub enum KwinScreenshot2ToNiri {
 
 const QIMAGE_FORMAT_RGBA8888: u32 = 17;
 
+async fn capture_screen(
+    this: &KwinScreenshot2,
+    name: Option<String>,
+    options: HashMap<String, OwnedValue>,
+    pipe: zbus::zvariant::OwnedFd,
+) -> fdo::Result<HashMap<String, OwnedValue>> {
+    let pipe = rustix::io::fcntl_dupfd_cloexec(pipe, 0)
+        .map_err(|e| fdo::Error::Failed(format!("failed to prepare pipe: {e:?}")))?;
+    let pipe = File::from(pipe);
+
+    let (data_tx, data_rx) = async_oneshot::oneshot();
+
+    let include_cursor = match options.get("include-cursor").map(bool::try_from) {
+        Some(Ok(v)) => v,
+        _ => false,
+    };
+
+    this.to_niri
+        .send(KwinScreenshot2ToNiri::CaptureScreen {
+            name,
+            include_cursor,
+            data_tx,
+            pipe,
+        })
+        .map_err(|e| fdo::Error::Failed(format!("failed to request screenshot: {e:?}")))?;
+
+    let data = match data_rx.await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return Err(fdo::Error::Failed(e.to_string())),
+        Err(e) => {
+            return Err(fdo::Error::Failed(format!(
+                "failed to request screenshot: {e:?}"
+            )));
+        }
+    };
+    let mut out = HashMap::new();
+    out.insert(
+        "type".to_owned(),
+        OwnedValue::try_from(Value::from("raw")).unwrap(),
+    );
+    out.insert(
+        "width".to_owned(),
+        OwnedValue::try_from(Value::from(data.width)).unwrap(),
+    );
+    out.insert(
+        "height".to_owned(),
+        OwnedValue::try_from(Value::from(data.height)).unwrap(),
+    );
+    out.insert(
+        "format".to_owned(),
+        OwnedValue::try_from(Value::from(QIMAGE_FORMAT_RGBA8888)).unwrap(),
+    );
+    Ok(out)
+}
+
 #[interface(name = "org.kde.KWin.ScreenShot2")]
 impl KwinScreenshot2 {
     #[zbus(property)]
     fn version(&self) -> u32 {
         4
+    }
+    async fn capture_active_screen(
+        &self,
+        options: HashMap<String, OwnedValue>,
+        pipe: zbus::zvariant::OwnedFd,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
+        capture_screen(self, None, options, pipe).await
     }
     async fn capture_screen(
         &self,
@@ -79,48 +141,7 @@ impl KwinScreenshot2 {
         if self.fake_session {
             name = "winit".to_owned();
         }
-
-        let pipe = rustix::io::fcntl_dupfd_cloexec(pipe, 0)
-            .map_err(|e| fdo::Error::Failed(format!("failed to prepare pipe: {e:?}")))?;
-        let pipe = File::from(pipe);
-
-        let (data_tx, data_rx) = async_oneshot::oneshot();
-
-        self.to_niri
-            .send(KwinScreenshot2ToNiri::CaptureScreen {
-                name: Some(name),
-                data_tx,
-                pipe,
-            })
-            .map_err(|e| fdo::Error::Failed(format!("failed to request screenshot: {e:?}")))?;
-
-        let data = match data_rx.await {
-            Ok(Ok(v)) => v,
-            Ok(Err(e)) => return Err(fdo::Error::Failed(e.to_string())),
-            Err(e) => {
-                return Err(fdo::Error::Failed(format!(
-                    "failed to request screenshot: {e:?}"
-                )));
-            }
-        };
-        let mut out = HashMap::new();
-        out.insert(
-            "type".to_owned(),
-            OwnedValue::try_from(Value::from("raw")).unwrap(),
-        );
-        out.insert(
-            "width".to_owned(),
-            OwnedValue::try_from(Value::from(data.width)).unwrap(),
-        );
-        out.insert(
-            "height".to_owned(),
-            OwnedValue::try_from(Value::from(data.height)).unwrap(),
-        );
-        out.insert(
-            "format".to_owned(),
-            OwnedValue::try_from(Value::from(QIMAGE_FORMAT_RGBA8888)).unwrap(),
-        );
-        Ok(out)
+        capture_screen(self, Some(name), options, pipe).await
     }
 }
 
