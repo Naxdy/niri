@@ -35,6 +35,7 @@ use crate::niri::ClientState;
 
 pub mod id;
 pub mod region;
+pub mod render;
 pub mod scale;
 pub mod signals;
 pub mod spawning;

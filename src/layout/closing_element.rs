@@ -17,12 +17,21 @@ use smithay::wayland::compositor::{Blocker, BlockerState};
 use crate::animation::Animation;
 use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
+use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shader_element::ShaderRenderElement;
 use crate::render_helpers::shaders::{ProgramType, Shaders, mat3_uniform};
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::{RenderTarget, render_to_encompassing_texture};
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::transaction::TransactionBlocker;
+
+#[derive(Clone, Copy, Debug)]
+pub struct ClosingElementRenderContext {
+    pub view_rect: Rectangle<f64, Logical>,
+    pub scale: Scale<f64>,
+    pub target: RenderTarget,
+}
 
 #[derive(Debug)]
 pub struct ClosingElement {
@@ -162,14 +171,26 @@ impl ClosingElement {
             AnimationState::Animating(anim) => !anim.is_done(),
         }
     }
+}
 
-    pub fn render(
-        &self,
-        renderer: &mut GlesRenderer,
-        view_rect: Rectangle<f64, Logical>,
-        scale: Scale<f64>,
-        target: RenderTarget,
-    ) -> ClosingElementRenderElement {
+impl<R> Render<'_, R> for ClosingElement
+where
+    R: NiriRenderer,
+{
+    type RenderContext = ClosingElementRenderContext;
+
+    type RenderElement = ClosingElementRenderElement;
+
+    fn render<C>(&'_ self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<Self::RenderElement, R>,
+    {
+        let ClosingElementRenderContext {
+            view_rect,
+            scale,
+            target,
+        } = context;
+
         let (buffer, offset) = if target.should_block_out(self.block_out_from) {
             (&self.blocked_out_buffer, self.blocked_out_buffer_offset)
         } else {
@@ -198,7 +219,9 @@ impl ClosingElement {
                     Relocate::Relative,
                 );
 
-                return elem.into();
+                collector.push_element(elem);
+
+                return;
             }
             AnimationState::Animating(anim) => anim,
         };
@@ -230,7 +253,7 @@ impl ClosingElement {
             let geo_to_tex =
                 Mat3::from_translation(-tex_loc / tex_size) * Mat3::from_scale(geo_size / tex_size);
 
-            return ShaderRenderElement::new(
+            let elem = ShaderRenderElement::new(
                 ProgramType::Close,
                 view_rect.size,
                 None,
@@ -247,8 +270,11 @@ impl ClosingElement {
                 HashMap::from([(String::from("niri_tex"), buffer.texture().clone())]),
                 Kind::Unspecified,
             )
-            .with_location(Point::from((0., 0.)))
-            .into();
+            .with_location(Point::from((0., 0.)));
+
+            collector.push_element(elem);
+
+            return;
         }
 
         let elem = TextureRenderElement::from_texture_buffer(
@@ -281,6 +307,6 @@ impl ClosingElement {
             Relocate::Relative,
         );
 
-        elem.into()
+        collector.push_element(elem);
     }
 }

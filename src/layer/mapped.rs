@@ -4,9 +4,7 @@ use niri_config::utils::MergeWith as _;
 use niri_config::{Config, LayerRule};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::Kind;
-use smithay::backend::renderer::element::surface::{
-    WaylandSurfaceRenderElement, render_elements_from_surface_tree,
-};
+use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{LayerSurface, PopupManager};
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
@@ -17,20 +15,31 @@ use crate::animation::{Animation, Clock};
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
-use crate::render_helpers::blur::element::{Blur, BlurRenderElement, CommitTracker};
+use crate::render_helpers::blur::element::{
+    Blur, BlurRenderContext, BlurRenderElement, CommitTracker,
+};
 use crate::render_helpers::clipped_surface::ClippedSurfaceRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
-use crate::render_helpers::{RenderTarget, SplitElements, render_to_texture};
+use crate::render_helpers::surface::push_elements_from_surface_tree;
+use crate::render_helpers::{RenderTarget, render_to_texture};
 use crate::utils::region::Region;
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::{baba_is_float_offset, round_logical_in_physical};
 
 type LayerRenderSnapshot = RenderSnapshot<
     LayerSurfaceRenderElement<GlesRenderer>,
     LayerSurfaceRenderElement<GlesRenderer>,
 >;
+
+#[derive(Clone, Debug)]
+pub struct LayerSurfaceRenderContext {
+    pub location: Point<f64, Logical>,
+    pub target: RenderTarget,
+    pub fx_buffers: Option<EffectsFramebuffersUserData>,
+}
 
 #[derive(Debug)]
 pub struct MappedLayer {
@@ -232,187 +241,6 @@ impl MappedLayer {
         ))
     }
 
-    pub fn render<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-        target: RenderTarget,
-        fx_buffers: Option<EffectsFramebuffersUserData>,
-    ) -> SplitElements<LayerSurfaceRenderElement<R>> {
-        let mut rv = SplitElements::default();
-
-        let scale = Scale::from(self.scale);
-        let alpha = if let Some(alpha) = &self.alpha_animation {
-            alpha.clamped_value() as f32
-        } else {
-            self.rules.opacity.unwrap_or(1.).clamp(0., 1.)
-        };
-        let location = location + self.bob_offset();
-
-        // Normal surface elements used to render a texture for the ignore alpha pass inside the
-        // blur shader.
-        let mut gles_elems: Option<Vec<LayerSurfaceRenderElement<GlesRenderer>>> = None;
-        let ignore_alpha = self.rules.blur.ignore_alpha.unwrap_or_default().0;
-        let mut update_alpha_tex = ignore_alpha > 0.;
-
-        // We only want to update the layer texture snapshot if we are in the main render pass.
-        // Currently, we can verify this by checking the presence of `fx_buffers`, since they are
-        // only passed for rendering blur, which is currently only rendered on output and output
-        // screencasts.
-        let should_try_update_snapshot = fx_buffers.is_some();
-
-        if target.should_block_out(self.rules.block_out_from) {
-            // Round to physical pixels.
-            let location = location.to_physical_precise_round(scale).to_logical(scale);
-
-            // FIXME: take geometry-corner-radius into account.
-            let elem = SolidColorRenderElement::from_buffer(
-                &self.block_out_buffer,
-                location,
-                alpha,
-                Kind::Unspecified,
-            );
-            rv.normal.push(elem.into());
-        } else {
-            // Layer surfaces don't have extra geometry like windows.
-            let buf_pos = location;
-
-            let surface = self.surface.wl_surface();
-            for (popup, popup_offset) in PopupManager::popups_for_surface(surface) {
-                // Layer surfaces don't have extra geometry like windows.
-                let offset = popup_offset - popup.geometry().loc;
-
-                rv.popups.extend(render_elements_from_surface_tree(
-                    renderer,
-                    popup.wl_surface(),
-                    (buf_pos + offset.to_f64()).to_physical_precise_round(scale),
-                    scale,
-                    alpha,
-                    Kind::ScanoutCandidate,
-                ));
-            }
-
-            rv.normal = render_elements_from_surface_tree(
-                renderer,
-                surface,
-                buf_pos.to_physical_precise_round(scale),
-                scale,
-                alpha,
-                Kind::ScanoutCandidate,
-            );
-
-            // If there's been an update to our render elements, we need to render them again for
-            // our blur ignore alpha pass.
-            if ignore_alpha > 0.
-                && self
-                    .blur
-                    .maybe_update_commit_tracker(CommitTracker::from_elements(rv.normal.iter()))
-            {
-                gles_elems = Some(render_elements_from_surface_tree(
-                    renderer.as_gles_renderer(),
-                    surface,
-                    buf_pos.to_physical_precise_round(scale),
-                    scale,
-                    // Elements for the alpha texture are always rendered at "final" opacity, so
-                    // the blur doesn't just "pop into existence" at some point during the fade in
-                    // animation.
-                    self.rules.opacity.unwrap_or(1.),
-                    Kind::ScanoutCandidate,
-                ));
-            } else {
-                update_alpha_tex = false;
-            }
-        };
-
-        let blur_elem = (matches!(self.surface.layer(), Layer::Top | Layer::Overlay)
-            && !target.should_block_out(self.rules.block_out_from))
-        .then(|| {
-            let fx_buffers = fx_buffers?;
-
-            // TODO: respect sync point?
-            let alpha_tex = gles_elems
-                .and_then(|gles_elems| {
-                    let fx_buffers = fx_buffers.borrow();
-
-                    let transform = fx_buffers.transform();
-
-                    render_to_texture(
-                        renderer.as_gles_renderer(),
-                        transform.transform_size(fx_buffers.output_size()),
-                        self.scale.into(),
-                        Transform::Normal,
-                        Fourcc::Abgr8888,
-                        gles_elems.into_iter(),
-                    )
-                    .inspect_err(|e| warn!("failed to render alpha tex for layer surface: {e:?}"))
-                    .ok()
-                })
-                .map(|r| r.0);
-
-            if update_alpha_tex {
-                if let Some(alpha_tex) = alpha_tex {
-                    self.blur.set_alpha_tex(alpha_tex);
-                } else {
-                    self.blur.clear_alpha_tex();
-                }
-            }
-
-            let blur_sample_area = Rectangle::new(location, self.geo.size).to_i32_round();
-
-            let geo = Rectangle::new(location, blur_sample_area.size.to_f64());
-
-            let blur_region = self.blur_region.as_ref().map_or_else(
-                || Region::from_rects(std::iter::once(blur_sample_area)),
-                |r| r.with_offset(location.to_i32_round()),
-            );
-
-            Some(
-                self.blur
-                    .render(
-                        renderer.as_gles_renderer(),
-                        fx_buffers,
-                        &blur_region,
-                        self.rules.geometry_corner_radius.unwrap_or_default(),
-                        self.scale,
-                        geo,
-                        !self.rules.blur.x_ray.unwrap_or_default(),
-                        None,
-                        None,
-                        alpha,
-                    )
-                    .into_iter()
-                    .map(Into::into),
-            )
-        })
-        .into_iter()
-        .flatten()
-        .flatten();
-
-        let location = location.to_physical_precise_round(scale).to_logical(scale);
-        rv.normal
-            .extend(self.shadow.render(renderer, location).map(Into::into));
-
-        {
-            let mut tracker = self.unmap_tracker.borrow_mut();
-            let elem_tracker = CommitTracker::from_elements(rv.normal.iter());
-
-            if should_try_update_snapshot
-                && (*tracker != elem_tracker
-                    || self.unmap_snapshot.borrow().is_none()
-                    || self.are_animations_ongoing())
-            {
-                *tracker = elem_tracker;
-                drop(tracker);
-
-                self.try_update_unmap_snapshot(renderer.as_gles_renderer());
-            }
-        }
-
-        rv.normal.extend(blur_elem);
-
-        rv
-    }
-
     pub fn geometry(&self) -> Rectangle<f64, Logical> {
         self.geo
     }
@@ -441,29 +269,279 @@ impl MappedLayer {
     fn render_snapshot(&self, renderer: &mut GlesRenderer) -> Option<LayerRenderSnapshot> {
         let _span = tracy_client::span!("MappedLayer::render_snapshot");
 
-        let contents = self.render(renderer, Point::default(), RenderTarget::Output, None);
+        let mut contents = Vec::new();
 
-        let blocked_out_contents = self.render(
+        self.render(
             renderer,
-            Point::from((0., 0.)),
-            RenderTarget::Screencast,
-            None,
+            LayerSurfaceRenderContext {
+                location: Point::default(),
+                target: RenderTarget::Output,
+                fx_buffers: None,
+            },
+            &mut contents,
+        );
+
+        let mut blocked_out_contents = Vec::new();
+
+        self.render(
+            renderer,
+            LayerSurfaceRenderContext {
+                location: Point::default(),
+                target: RenderTarget::Screencast,
+                fx_buffers: None,
+            },
+            &mut blocked_out_contents,
         );
 
         // Right before layer destruction, some shells may commit without any render elements, in
         // which case we do _not_ want to update our snapshot, since that would prevent us from
         // rendering a fade-out animation.
-        if contents.normal.is_empty() {
+        if contents.is_empty() {
             None
         } else {
             Some(RenderSnapshot {
-                contents: contents.normal,
-                blocked_out_contents: blocked_out_contents.normal,
+                contents,
+                blocked_out_contents,
                 block_out_from: self.rules().block_out_from,
                 size: self.geo.size,
                 texture: Default::default(),
                 blocked_out_texture: Default::default(),
             })
         }
+    }
+
+    pub fn render_popups<R, C>(
+        &self,
+        renderer: &mut R,
+        context: LayerSurfaceRenderContext,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        let LayerSurfaceRenderContext {
+            location, target, ..
+        } = context;
+
+        let scale = Scale::from(self.scale);
+        let alpha = self.rules.opacity.unwrap_or(1.).clamp(0., 1.);
+        let location = location + self.bob_offset();
+
+        if target.should_block_out(self.rules.block_out_from) {
+            return;
+        }
+
+        // Layer surfaces don't have extra geometry like windows.
+
+        let buf_pos = location;
+
+        let surface = self.surface.wl_surface();
+
+        for (popup, popup_offset) in PopupManager::popups_for_surface(surface) {
+            // Layer surfaces don't have extra geometry like windows.
+
+            let offset = popup_offset - popup.geometry().loc;
+
+            push_elements_from_surface_tree(
+                renderer,
+                popup.wl_surface(),
+                (buf_pos + offset.to_f64()).to_physical_precise_round(scale),
+                scale,
+                alpha,
+                Kind::ScanoutCandidate,
+                &mut collector.as_child(),
+            );
+        }
+    }
+
+    pub fn render_normal<R, C>(
+        &self,
+        renderer: &mut R,
+        context: LayerSurfaceRenderContext,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        let LayerSurfaceRenderContext {
+            location,
+            target,
+            fx_buffers,
+        } = context;
+
+        let scale = Scale::from(self.scale);
+        let alpha = if let Some(alpha) = &self.alpha_animation {
+            alpha.clamped_value() as f32
+        } else {
+            self.rules.opacity.unwrap_or(1.).clamp(0., 1.)
+        };
+        let location = location + self.bob_offset();
+
+        // Normal surface elements used to render a texture for the ignore alpha pass inside the
+        // blur shader.
+        let mut gles_elems: Vec<LayerSurfaceRenderElement<GlesRenderer>> = vec![];
+        let mut new_unmap_tracker = CommitTracker::new();
+        let ignore_alpha = self.rules.blur.ignore_alpha.unwrap_or_default().0;
+        let mut update_alpha_tex = ignore_alpha > 0.;
+
+        // We only want to update the layer texture snapshot if we are in the main render pass.
+        // Currently, we can verify this by checking the presence of `fx_buffers`, since they are
+        // only passed for rendering blur, which is currently only rendered on output and output
+        // screencasts.
+        let should_try_update_snapshot = fx_buffers.is_some();
+
+        if target.should_block_out(self.rules.block_out_from) {
+            // Round to physical pixels.
+            let location = location.to_physical_precise_round(scale).to_logical(scale);
+
+            // FIXME: take geometry-corner-radius into account.
+            let elem = SolidColorRenderElement::from_buffer(
+                &self.block_out_buffer,
+                location,
+                alpha,
+                Kind::Unspecified,
+            );
+            new_unmap_tracker.insert_from_elem(&elem);
+            collector.push_element(elem);
+        } else {
+            // Layer surfaces don't have extra geometry like windows.
+            let buf_pos = location;
+
+            let surface = self.surface.wl_surface();
+
+            let mut our_tracker = CommitTracker::new();
+
+            push_elements_from_surface_tree(
+                renderer,
+                surface,
+                buf_pos.to_physical_precise_round(scale),
+                scale,
+                alpha,
+                Kind::ScanoutCandidate,
+                &mut |elem| {
+                    our_tracker.insert_from_elem(&elem);
+                    new_unmap_tracker.insert_from_elem(&elem);
+                    collector.push_element(elem);
+                },
+            );
+
+            // If there's been an update to our render elements, we need to render them again for
+            // our blur ignore alpha pass.
+            if ignore_alpha > 0. && self.blur.maybe_update_commit_tracker(our_tracker) {
+                push_elements_from_surface_tree(
+                    renderer.as_gles_renderer(),
+                    surface,
+                    buf_pos.to_physical_precise_round(scale),
+                    scale,
+                    // Elements for the alpha texture are always rendered at "final" opacity, so
+                    // the blur doesn't just "pop into existence" at some point during the fade in
+                    // animation.
+                    self.rules.opacity.unwrap_or(1.),
+                    Kind::ScanoutCandidate,
+                    &mut gles_elems.as_child(),
+                );
+            } else {
+                update_alpha_tex = false;
+            }
+        };
+
+        if let Some(fx_buffers) = fx_buffers
+            && (matches!(self.surface.layer(), Layer::Top | Layer::Overlay)
+                && !target.should_block_out(self.rules.block_out_from))
+        {
+            let alpha_tex = (!gles_elems.is_empty())
+                .then(|| {
+                    let fx_buffers = fx_buffers.borrow();
+
+                    let transform = fx_buffers.transform();
+
+                    render_to_texture(
+                        renderer.as_gles_renderer(),
+                        transform.transform_size(fx_buffers.output_size()),
+                        self.scale.into(),
+                        Transform::Normal,
+                        Fourcc::Abgr8888,
+                        gles_elems.into_iter(),
+                    )
+                    .inspect_err(|e| warn!("failed to render alpha tex for layer surface: {e:?}"))
+                    .ok()
+                })
+                .flatten();
+
+            if update_alpha_tex {
+                if let Some((alpha_tex, sync_point)) = alpha_tex {
+                    if let Err(e) = sync_point.wait() {
+                        warn!("failed to wait for sync point: {e:?}");
+                    }
+                    self.blur.set_alpha_tex(alpha_tex);
+                } else {
+                    self.blur.clear_alpha_tex();
+                }
+            }
+
+            let blur_sample_area = Rectangle::new(location, self.geo.size).to_i32_round();
+
+            let geo = Rectangle::new(location, blur_sample_area.size.to_f64());
+
+            let blur_region = self.blur_region.as_ref().map_or_else(
+                || Region::from_rects(std::iter::once(blur_sample_area)),
+                |r| r.with_offset(location.to_i32_round()),
+            );
+
+            self.blur.render(
+                renderer,
+                BlurRenderContext {
+                    fx_buffers,
+                    destination_region: &blur_region,
+                    corner_radius: self.rules.geometry_corner_radius.unwrap_or_default(),
+                    scale: self.scale,
+                    geometry: geo,
+                    true_blur: !self.rules.blur.x_ray.unwrap_or_default(),
+                    render_loc: None,
+                    overview_zoom: None,
+                    alpha,
+                },
+                &mut |elem| {
+                    new_unmap_tracker.insert_from_elem(&elem);
+                    collector.push_element(elem);
+                },
+            );
+        }
+
+        let location = location.to_physical_precise_round(scale).to_logical(scale);
+        self.shadow.render(renderer, location, &mut |elem| {
+            new_unmap_tracker.insert_from_elem(&elem);
+            collector.push_element(elem);
+        });
+
+        let mut tracker = self.unmap_tracker.borrow_mut();
+
+        if should_try_update_snapshot
+            && (*tracker != new_unmap_tracker
+                || self.unmap_snapshot.borrow().is_none()
+                || self.are_animations_ongoing())
+        {
+            *tracker = new_unmap_tracker;
+            drop(tracker);
+
+            self.try_update_unmap_snapshot(renderer.as_gles_renderer());
+        }
+    }
+}
+
+impl<R> Render<'_, R> for MappedLayer
+where
+    R: NiriRenderer,
+{
+    type RenderContext = LayerSurfaceRenderContext;
+
+    type RenderElement = LayerSurfaceRenderElement<R>;
+
+    fn render<C>(&self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<Self::RenderElement, R>,
+    {
+        self.render_popups(renderer, context.clone(), collector);
+        self.render_normal(renderer, context, collector);
     }
 }

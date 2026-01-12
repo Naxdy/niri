@@ -26,7 +26,9 @@ use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::animation::{Animation, Clock};
 use crate::layout::focus_ring::{FocusRing, FocusRingRenderElement};
-use crate::layout::{Layout, LayoutElement as _, LayoutElementRenderElement};
+use crate::layout::{
+    Layout, LayoutElement as _, LayoutElementRenderContext, LayoutElementRenderElement,
+};
 use crate::niri::Niri;
 use crate::niri_render_elements;
 use crate::render_helpers::RenderTarget;
@@ -39,6 +41,7 @@ use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shaders::Shaders;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::{
     baba_is_float_offset, output_size, round_logical_in_physical, to_physical_precise_round,
     with_toplevel_role,
@@ -140,6 +143,11 @@ enum UiState {
     },
 }
 
+struct InnerRenderContext<'a> {
+    niri: &'a Niri,
+    target: RenderTarget,
+}
+
 /// State of an opened MRU UI.
 struct Inner {
     /// List of Window Ids to display in the MRU UI.
@@ -202,6 +210,17 @@ struct TitleTexture {
 struct ScopePanel {
     scale: f64,
     textures: Option<Option<[MruTexture; 3]>>,
+}
+
+#[derive(Debug)]
+pub struct ThumbnailRenderContext<'a> {
+    pub config: &'a niri_config::RecentWindows,
+    pub mapped: &'a Mapped,
+    pub preview_geo: Rectangle<f64, Logical>,
+    pub scale: f64,
+    pub is_active: bool,
+    pub bob_y: f64,
+    pub target: RenderTarget,
 }
 
 #[derive(Debug)]
@@ -336,19 +355,29 @@ impl Thumbnail {
                 .and_then(|title| self.title_texture.borrow_mut().get(renderer, title, scale))
         })
     }
+}
 
-    #[allow(clippy::too_many_arguments)]
-    fn render<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        config: &niri_config::RecentWindows,
-        mapped: &Mapped,
-        preview_geo: Rectangle<f64, Logical>,
-        scale: f64,
-        is_active: bool,
-        bob_y: f64,
-        target: RenderTarget,
-    ) -> impl Iterator<Item = WindowMruUiRenderElement<R>> + use<R> {
+impl<'a, R> Render<'a, R> for Thumbnail
+where
+    R: NiriRenderer,
+{
+    type RenderContext = ThumbnailRenderContext<'a>;
+    type RenderElement = WindowMruUiRenderElement<R>;
+
+    fn render<C>(&'a self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<Self::RenderElement, R>,
+    {
+        let ThumbnailRenderContext {
+            config,
+            mapped,
+            preview_geo,
+            scale,
+            is_active,
+            bob_y,
+            target,
+        } = context;
+
         let _span = tracy_client::span!("Thumbnail::render");
 
         let round = move |logical: f64| round_logical_in_physical(scale, logical);
@@ -370,11 +399,6 @@ impl Thumbnail {
         };
         let bob_offset = Point::new(0., bob_y);
 
-        // FIXME: this could use mipmaps, for that it should be rendered through an offscreen.
-        let elems = mapped
-            .render_normal(renderer, Point::new(0., 0.), s, preview_alpha, target)
-            .into_iter();
-
         // Clip thumbnails to their geometry.
         let radius = if mapped.sizing_mode().is_normal() {
             mapped.rules().geometry_corner_radius
@@ -387,7 +411,7 @@ impl Thumbnail {
         let clip_shader = Shaders::get(renderer).clipped_surface.clone();
         let geo = Rectangle::from_size(self.size.to_f64());
         // FIXME: deduplicate code with Tile::render_inner()
-        let elems = elems.map(move |elem| match elem {
+        let clip = move |elem| match elem {
             LayoutElementRenderElement::Wayland(elem) => {
                 if let Some(shader) = clip_shader.clone()
                     && ClippedSurfaceRenderElement::will_clip(&elem, s, geo, radius)
@@ -431,9 +455,9 @@ impl Thumbnail {
                 // Otherwise, render the solid color as is.
                 LayoutElementRenderElement::SolidColor(elem).into()
             }
-        });
+        };
 
-        let elems = elems.map(move |elem| {
+        let downscale = move |elem| {
             let thumb_scale = Scale {
                 x: preview_geo.size.w / geo.size.w,
                 y: preview_geo.size.h / geo.size.h,
@@ -450,7 +474,23 @@ impl Thumbnail {
                 Relocate::Relative,
             );
             WindowMruUiRenderElement::Thumbnail(elem)
-        });
+        };
+
+        // FIXME: this could use mipmaps, for that it should be rendered through an offscreen.
+        mapped.render_normal(
+            renderer,
+            LayoutElementRenderContext {
+                location: Point::default(),
+                scale: s,
+                alpha: preview_alpha,
+                target,
+            },
+            &mut |elem| {
+                let elem = clip(elem);
+                let elem = downscale(elem);
+                collector.push_element(elem);
+            },
+        );
 
         let mut title_size = None;
         let title_texture = self.title_texture(renderer.as_gles_renderer(), mapped, scale);
@@ -467,7 +507,7 @@ impl Thumbnail {
         let should_block_out = target.should_block_out(mapped.rules().block_out_from);
         let title_texture = title_texture.filter(|_| !should_block_out);
 
-        let title_elems = title_texture.map(|(texture, size)| {
+        if let Some((texture, size)) = title_texture {
             // Clip from the right if it doesn't fit.
             let src = Rectangle::from_size(size);
 
@@ -490,17 +530,17 @@ impl Thumbnail {
             match GradientFadeTextureRenderElement::shader(renderer) {
                 Some(program) => {
                     let elem = GradientFadeTextureRenderElement::new(texture, program);
-                    WindowMruUiRenderElement::GradientFadeElem(elem)
+                    collector.push_element(WindowMruUiRenderElement::GradientFadeElem(elem));
                 }
                 _ => {
                     let elem = PrimaryGpuTextureRenderElement(texture);
-                    WindowMruUiRenderElement::TextureElement(elem)
+                    collector.push_element(WindowMruUiRenderElement::TextureElement(elem));
                 }
             }
-        });
+        }
 
         let is_urgent = mapped.is_urgent();
-        let background_elems = (is_active || is_urgent).then(|| {
+        if is_active || is_urgent {
             let padding = Point::new(padding, padding);
 
             let mut size = preview_geo.size;
@@ -540,9 +580,7 @@ impl Thumbnail {
                 scale,
                 0.5,
             );
-            let bg_elems = background
-                .render(renderer, loc)
-                .map(WindowMruUiRenderElement::FocusRing);
+            background.render(renderer, loc, &mut collector.as_child());
 
             let mut border = self.border.borrow_mut();
             let mut config = *border.config();
@@ -562,15 +600,8 @@ impl Thumbnail {
                 1.,
             );
 
-            let border_elems = border
-                .render(renderer, loc)
-                .map(WindowMruUiRenderElement::FocusRing);
-
-            bg_elems.chain(border_elems)
-        });
-        let background_elems = background_elems.into_iter().flatten();
-
-        elems.chain(title_elems).chain(background_elems)
+            border.render(renderer, loc, &mut collector.as_child());
+        }
     }
 }
 
@@ -1099,26 +1130,30 @@ impl WindowMruUi {
         }
     }
 
-    pub fn render_output<'a, R: NiriRenderer>(
+    pub fn render_output<'a, R, C>(
         &'a self,
         niri: &'a Niri,
         output: &Output,
         renderer: &'a mut R,
         target: RenderTarget,
-    ) -> Option<impl Iterator<Item = WindowMruUiRenderElement<R>> + 'a + use<'a, R>> {
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<WindowMruUiRenderElement<R>, R>,
+    {
         let (inner, progress) = match &self.state {
-            UiState::Closed { .. } => return None,
+            UiState::Closed { .. } => return,
             UiState::Closing { inner, anim } => (inner, anim.clamped_value()),
             UiState::Open(inner) => {
                 if inner.is_fully_open() {
                     (inner, 1.)
                 } else {
-                    return None;
+                    return;
                 }
             }
         };
 
-        let span = tracy_client::span!("mru render");
+        let _span = tracy_client::span!("WindowMruUi::render_output");
 
         let alpha = progress.clamp(0., 1.) as f32;
 
@@ -1139,9 +1174,12 @@ impl WindowMruUi {
         };
 
         // During the closing fade, use an offscreen to avoid transparent compositing artifacts.
-        let offscreen_elem = if *output == inner.output && alpha < 1. {
+        let mut pushed_offscreen = false;
+
+        if *output == inner.output && alpha < 1. {
             let renderer = renderer.as_gles_renderer();
-            let mut elems = Vec::from_iter(inner.render(niri, renderer, target));
+            let mut elems = Vec::new();
+            inner.render(renderer, InnerRenderContext { niri, target }, &mut elems);
             elems.push(WindowMruUiRenderElement::SolidColor(render_backdrop(1.)));
 
             let scale = output.current_scale().fractional_scale();
@@ -1157,39 +1195,28 @@ impl WindowMruUi {
                     // itself).
                     //
                     // Anyhow, this is not very noticeable since Alt-Tab closing happens quickly.
-                    Some(WindowMruUiRenderElement::Offscreen(elem.with_alpha(alpha)))
+                    collector
+                        .push_element(WindowMruUiRenderElement::Offscreen(elem.with_alpha(alpha)));
+                    pushed_offscreen = true;
                 }
                 Err(err) => {
                     warn!("error rendering MRU to offscreen for fade-out: {err:?}");
-                    None
                 }
             }
-        } else {
-            None
-        };
+        }
 
         // When alpha is 1., render everything directly, without an offscreen.
         //
         // This is not used as fallback when offscreen fails to render because it looks better to
         // hide the previews immediately than to render them with alpha = 1. during a fade-out.
-        let normal_elems =
-            (*output == inner.output && alpha == 1.).then(|| inner.render(niri, renderer, target));
-        let normal_elems = normal_elems.into_iter().flatten();
+        if *output == inner.output && alpha == 1. {
+            inner.render(renderer, InnerRenderContext { niri, target }, collector);
+        }
 
         // This is used for both normal elems and for other outputs.
-        let backdrop_elem = (offscreen_elem.is_none())
-            .then(|| WindowMruUiRenderElement::SolidColor(render_backdrop(alpha)));
-
-        // Make sure the span includes consuming the iterator.
-        let drop_span = std::iter::once(span).filter_map(|_| None);
-
-        Some(
-            offscreen_elem
-                .into_iter()
-                .chain(normal_elems)
-                .chain(backdrop_elem)
-                .chain(drop_span),
-        )
+        if !pushed_offscreen {
+            collector.push_element(WindowMruUiRenderElement::SolidColor(render_backdrop(alpha)));
+        }
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
@@ -1562,65 +1589,6 @@ impl Inner {
         })
     }
 
-    fn render<'a, R: NiriRenderer>(
-        &'a self,
-        niri: &'a Niri,
-        renderer: &'a mut R,
-        target: RenderTarget,
-    ) -> impl Iterator<Item = WindowMruUiRenderElement<R>> + 'a {
-        let output_size = output_size(&self.output);
-        let scale = self.output.current_scale().fractional_scale();
-
-        let panel_texture =
-            self.scope_panel
-                .borrow_mut()
-                .get(renderer.as_gles_renderer(), scale, self.wmru.scope);
-        let panel = panel_texture.map(move |texture| {
-            let padding = round_logical_in_physical(scale, f64::from(PANEL_PADDING));
-
-            let size = texture.logical_size();
-            let location = Point::new((output_size.w - size.w) / 2., padding * 2.);
-            let elem = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
-                texture,
-                location,
-                1.,
-                None,
-                None,
-                Kind::Unspecified,
-            ));
-            WindowMruUiRenderElement::TextureElement(elem)
-        });
-        let panel = panel.into_iter();
-
-        let current_id = self.wmru.current_id;
-
-        let bob_y = baba_is_float_offset(self.clock.now(), output_size.h);
-        let bob_y = round_logical_in_physical(scale, bob_y);
-
-        let config = self.config.borrow();
-
-        let thumbnails = self
-            .thumbnails_in_view_render()
-            .filter_map(move |(thumbnail, geo)| {
-                let id = thumbnail.id;
-                let Some((_, mapped)) = niri.layout.windows().find(|(_, m)| m.id() == id) else {
-                    error!("window in the MRU must be present in the layout");
-                    return None;
-                };
-
-                let config = &config.recent_windows;
-
-                let is_active = Some(id) == current_id;
-                let elems = thumbnail.render(
-                    renderer, config, mapped, geo, scale, is_active, bob_y, target,
-                );
-                Some(elems)
-            });
-        let thumbnails = thumbnails.flatten();
-
-        panel.chain(thumbnails)
-    }
-
     fn thumbnail_under(&self, pos: Point<f64, Logical>) -> Option<MappedId> {
         let scale = self.output.current_scale().fractional_scale();
         let round = move |logical: f64| round_logical_in_physical(scale, logical);
@@ -1649,6 +1617,77 @@ impl Inner {
         }
 
         None
+    }
+}
+
+impl<'a, R> Render<'a, R> for Inner
+where
+    R: NiriRenderer,
+{
+    type RenderContext = InnerRenderContext<'a>;
+    type RenderElement = WindowMruUiRenderElement<R>;
+
+    fn render<C>(&'a self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<WindowMruUiRenderElement<R>, R>,
+    {
+        let InnerRenderContext { niri, target } = context;
+
+        let output_size = output_size(&self.output);
+        let scale = self.output.current_scale().fractional_scale();
+
+        let panel_texture =
+            self.scope_panel
+                .borrow_mut()
+                .get(renderer.as_gles_renderer(), scale, self.wmru.scope);
+        if let Some(texture) = panel_texture {
+            let padding = round_logical_in_physical(scale, f64::from(PANEL_PADDING));
+
+            let size = texture.logical_size();
+            let location = Point::new((output_size.w - size.w) / 2., padding * 2.);
+            let elem = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
+                texture,
+                location,
+                1.,
+                None,
+                None,
+                Kind::Unspecified,
+            ));
+            collector.push_element(elem);
+        };
+
+        let current_id = self.wmru.current_id;
+
+        let bob_y = baba_is_float_offset(self.clock.now(), output_size.h);
+        let bob_y = round_logical_in_physical(scale, bob_y);
+
+        let config = self.config.borrow();
+
+        self.thumbnails_in_view_render()
+            .for_each(move |(thumbnail, geo)| {
+                let id = thumbnail.id;
+                let Some((_, mapped)) = niri.layout.windows().find(|(_, m)| m.id() == id) else {
+                    error!("window in the MRU must be present in the layout");
+                    return;
+                };
+
+                let config = &config.recent_windows;
+
+                let is_active = Some(id) == current_id;
+                thumbnail.render(
+                    renderer,
+                    ThumbnailRenderContext {
+                        config,
+                        mapped,
+                        preview_geo: geo,
+                        scale,
+                        is_active,
+                        bob_y,
+                        target,
+                    },
+                    collector,
+                );
+            });
     }
 }
 

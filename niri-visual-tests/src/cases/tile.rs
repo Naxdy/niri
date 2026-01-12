@@ -2,7 +2,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use niri::layout::Options;
+use niri::layout::tile::TileRenderContext;
 use niri::render_helpers::RenderTarget;
+use niri::utils::render::Render;
 use niri_config::Color;
 use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
@@ -119,9 +121,20 @@ impl TestCase for Tile {
             true,
             Rectangle::new(Point::from((-location.x, -location.y)), size.to_logical(1.)),
         );
-        self.tile
-            .render(renderer, location, true, RenderTarget::Output, None, None)
-            .map(|elem| Box::new(elem) as _)
-            .collect()
+        let mut elements = Vec::new();
+
+        self.tile.render(
+            renderer,
+            TileRenderContext {
+                location,
+                focus_ring: true,
+                target: RenderTarget::Output,
+                fx_buffers: None,
+                overview_zoom: None,
+            },
+            &mut |elem| elements.push(Box::new(elem) as _),
+        );
+
+        elements
     }
 }

@@ -16,10 +16,13 @@ use super::{
     ConfigureIntent, InteractiveResizeData, LayoutElement, Options, RemovedTile, SizeFrac,
 };
 use crate::animation::{Animation, Clock};
+use crate::layout::closing_element::ClosingElementRenderContext;
+use crate::layout::tile::TileRenderContext;
 use crate::niri_render_elements;
 use crate::render_helpers::RenderTarget;
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::transaction::TransactionBlocker;
 use crate::utils::{
     ResizeEdge, center_preferring_top_left_in_area, clamp_preferring_top_left_in_area,
@@ -29,6 +32,15 @@ use crate::window::ResolvedWindowRules;
 
 /// By how many logical pixels the directional move commands move floating windows.
 pub const DIRECTIONAL_MOVE_PX: f64 = 50.;
+
+#[derive(Debug)]
+pub struct FloatingSpaceRenderContext {
+    pub view_rect: Rectangle<f64, Logical>,
+    pub target: RenderTarget,
+    pub focus_ring: bool,
+    pub fx_buffers: Option<EffectsFramebuffersUserData>,
+    pub overview_zoom: f64,
+}
 
 /// Space for floating windows.
 #[derive(Debug)]
@@ -1135,48 +1147,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         true
     }
 
-    pub fn render_elements<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        view_rect: Rectangle<f64, Logical>,
-        target: RenderTarget,
-        focus_ring: bool,
-        fx_buffers: Option<EffectsFramebuffersUserData>,
-        overview_zoom: f64,
-    ) -> Vec<FloatingSpaceRenderElement<R>> {
-        let mut rv = Vec::new();
-
-        let scale = Scale::from(self.scale);
-
-        // Draw the closing windows on top of the other windows.
-        //
-        // FIXME: I guess this should rather preserve the stacking order when the window is closed.
-        for closing in self.closing_windows.iter().rev() {
-            let elem = closing.render(renderer.as_gles_renderer(), view_rect, scale, target);
-            rv.push(elem.into());
-        }
-
-        let active = self.active_window_id.clone();
-        for (tile, tile_pos) in self.tiles_with_render_positions() {
-            // For the active tile, draw the focus ring.
-            let focus_ring = focus_ring && Some(tile.focused_window().id()) == active.as_ref();
-
-            rv.extend(
-                tile.render(
-                    renderer,
-                    tile_pos,
-                    focus_ring,
-                    target,
-                    fx_buffers.clone(),
-                    Some(overview_zoom),
-                )
-                .map(Into::into),
-            );
-        }
-
-        rv
-    }
-
     pub fn interactive_resize_begin(&mut self, window: W::Id, edges: ResizeEdge) -> bool {
         if self.interactive_resize.is_some() {
             return false;
@@ -1524,5 +1494,62 @@ fn resolve_preset_size(preset: PresetSize, view_size: f64) -> ResolvedSize {
     match preset {
         PresetSize::Proportion(proportion) => ResolvedSize::Tile(view_size * proportion),
         PresetSize::Fixed(width) => ResolvedSize::Window(f64::from(width)),
+    }
+}
+
+impl<R, W> Render<'_, R> for FloatingSpace<W>
+where
+    R: NiriRenderer,
+    W: LayoutElement,
+{
+    type RenderElement = FloatingSpaceRenderElement<R>;
+    type RenderContext = FloatingSpaceRenderContext;
+
+    fn render<C>(&'_ self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<Self::RenderElement, R>,
+    {
+        let FloatingSpaceRenderContext {
+            view_rect,
+            target,
+            focus_ring,
+            fx_buffers,
+            overview_zoom,
+        } = context;
+
+        let scale = Scale::from(self.scale);
+
+        // Draw the closing windows on top of the other windows.
+        //
+        // FIXME: I guess this should rather preserve the stacking order when the window is closed.
+        for closing in self.closing_windows.iter().rev() {
+            closing.render(
+                renderer,
+                ClosingElementRenderContext {
+                    view_rect,
+                    scale,
+                    target,
+                },
+                &mut collector.as_child(),
+            );
+        }
+
+        let active = self.active_window_id.clone();
+        for (tile, tile_pos) in self.tiles_with_render_positions() {
+            // For the active tile, draw the focus ring.
+            let focus_ring = focus_ring && Some(tile.focused_window().id()) == active.as_ref();
+
+            tile.render(
+                renderer,
+                TileRenderContext {
+                    location: tile_pos,
+                    focus_ring,
+                    target,
+                    fx_buffers: fx_buffers.clone(),
+                    overview_zoom: Some(overview_zoom),
+                },
+                &mut collector.as_child(),
+            );
+        }
     }
 }

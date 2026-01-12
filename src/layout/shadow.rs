@@ -5,6 +5,7 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
+use crate::utils::render::{PushRenderElement, Render};
 
 #[derive(Debug)]
 pub struct Shadow {
@@ -161,24 +162,33 @@ impl Shadow {
             self.shader_rects[0].loc += offset;
         }
     }
+}
 
-    pub fn render<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-    ) -> impl Iterator<Item = ShadowRenderElement> + '_ + use<'_, R> {
+impl<R> Render<'_, R> for Shadow
+where
+    R: NiriRenderer,
+{
+    type RenderContext = Point<f64, Logical>;
+    type RenderElement = ShadowRenderElement;
+
+    fn render<C>(&'_ self, renderer: &mut R, render_context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<ShadowRenderElement, R>,
+    {
+        let location = render_context;
+
         if !self.config.on {
-            return None.into_iter().flatten();
+            return;
         }
 
         let has_shadow_shader = ShadowRenderElement::has_shader(renderer);
+
         if !has_shadow_shader {
-            return None.into_iter().flatten();
+            return;
         }
 
-        let rv = zip(&self.shaders, &self.shader_rects)
-            .map(move |(shader, rect)| shader.clone().with_location(location + rect.loc));
-
-        Some(rv).into_iter().flatten()
+        zip(&self.shaders, &self.shader_rects)
+            .map(move |(shader, rect)| shader.clone().with_location(location + rect.loc))
+            .for_each(|e| collector.push_element(e));
     }
 }

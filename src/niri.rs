@@ -139,11 +139,15 @@ use crate::input::{
 };
 use crate::ipc::server::IpcServer;
 use crate::layer::MappedLayer;
-use crate::layer::mapped::LayerSurfaceRenderElement;
-use crate::layout::closing_element::{ClosingElement, ClosingElementRenderElement};
+use crate::layer::mapped::{LayerSurfaceRenderContext, LayerSurfaceRenderElement};
+use crate::layout::closing_element::{
+    ClosingElement, ClosingElementRenderContext, ClosingElementRenderElement,
+};
 use crate::layout::tile::TileRenderElement;
 use crate::layout::workspace::{Workspace, WorkspaceId};
-use crate::layout::{HitType, Layout, LayoutElement as _, MonitorRenderElement};
+use crate::layout::{
+    HitType, Layout, LayoutElement as _, LayoutElementRenderContext, MonitorRenderElement,
+};
 use crate::niri_render_elements;
 use crate::protocols::ext_background_effect::ExtBackgroundEffectManagerState;
 use crate::protocols::ext_workspace::{self, ExtWorkspaceManagerState};
@@ -162,10 +166,11 @@ use crate::render_helpers::debug::draw_opaque_regions;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
+use crate::render_helpers::surface::push_elements_from_surface_tree;
 use crate::render_helpers::texture::TextureBuffer;
 use crate::render_helpers::{
-    RenderTarget, SplitElements, encompassing_geo, render_to_dmabuf,
-    render_to_encompassing_texture, render_to_shm, render_to_texture, render_to_vec, shaders,
+    RenderTarget, encompassing_geo, render_to_dmabuf, render_to_encompassing_texture,
+    render_to_shm, render_to_texture, render_to_vec, shaders,
 };
 use crate::ui::config_error_notification::ConfigErrorNotification;
 use crate::ui::exit_confirm_dialog::{ExitConfirmDialog, ExitConfirmDialogRenderElement};
@@ -173,6 +178,7 @@ use crate::ui::hotkey_overlay::HotkeyOverlay;
 use crate::ui::mru::{MruCloseRequest, WindowMruUi, WindowMruUiRenderElement};
 use crate::ui::screen_transition::{self, ScreenTransition};
 use crate::ui::screenshot_ui::{OutputScreenshot, ScreenshotUi, ScreenshotUiRenderElement};
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::scale::{closest_representable_scale, guess_monitor_scale};
 use crate::utils::spawning::{CHILD_DISPLAY, CHILD_ENV};
 use crate::utils::transaction::{Transaction, TransactionBlocker};
@@ -3875,13 +3881,13 @@ impl Niri {
         }
     }
 
-    pub fn pointer_element<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        output: &Output,
-    ) -> Vec<OutputRenderElements<R>> {
+    pub fn render_pointer<R, C>(&self, renderer: &mut R, output: &Output, collector: &mut C)
+    where
+        R: NiriRenderer,
+        C: PushRenderElement<PointerRenderElements<R>, R>,
+    {
         if !self.pointer_visibility.is_visible() {
-            return vec![];
+            return;
         }
 
         let _span = tracy_client::span!("Niri::render_pointer");
@@ -3900,20 +3906,21 @@ impl Niri {
 
         let output_scale = Scale::from(output.current_scale().fractional_scale());
 
-        let mut pointer_elements = match render_cursor {
-            RenderCursor::Hidden => vec![],
+        match render_cursor {
+            RenderCursor::Hidden => {}
             RenderCursor::Surface { surface, hotspot } => {
                 let pointer_pos =
                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
 
-                render_elements_from_surface_tree(
+                push_elements_from_surface_tree(
                     renderer,
                     &surface,
                     pointer_pos,
                     output_scale,
                     1.,
                     Kind::Cursor,
-                )
+                    &mut collector.as_child(),
+                );
             }
             RenderCursor::Named {
                 icon,
@@ -3926,8 +3933,7 @@ impl Niri {
                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
 
                 let texture = self.cursor_texture_cache.get(icon, scale, &cursor, idx);
-                let mut pointer_elements = vec![];
-                let pointer_element = match MemoryRenderBufferRenderElement::from_buffer(
+                match MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
                     pointer_pos,
                     &texture,
@@ -3936,34 +3942,27 @@ impl Niri {
                     None,
                     Kind::Cursor,
                 ) {
-                    Ok(element) => Some(element),
+                    Ok(element) => collector.push_element(element),
                     Err(err) => {
                         warn!("error importing a cursor texture: {err:?}");
-                        None
                     }
                 };
-                if let Some(element) = pointer_element {
-                    pointer_elements.push(OutputRenderElements::NamedPointer(element));
-                }
-
-                pointer_elements
             }
         };
 
         if let Some(dnd_icon) = self.dnd_icon.as_ref() {
             let pointer_pos =
                 (pointer_pos + dnd_icon.offset.to_f64()).to_physical_precise_round(output_scale);
-            pointer_elements.extend(render_elements_from_surface_tree(
+            push_elements_from_surface_tree(
                 renderer,
                 &dnd_icon.surface,
                 pointer_pos,
                 output_scale,
                 1.,
                 Kind::ScanoutCandidate,
-            ));
+                &mut collector.as_child(),
+            );
         }
-
-        pointer_elements
     }
 
     pub fn refresh_pointer_outputs(&mut self) {
@@ -4334,7 +4333,7 @@ impl Niri {
         // The pointer goes on the top.
         let mut elements = vec![];
         if include_pointer {
-            elements = self.pointer_element(renderer, output);
+            self.render_pointer(renderer, output, &mut elements.as_child());
         }
 
         // Next, the screen transition texture.
@@ -4423,13 +4422,8 @@ impl Niri {
         }
 
         // Then, the Alt-Tab switcher.
-        let mru_elements = self
-            .window_mru_ui
-            .render_output(self, output, renderer, target)
-            .into_iter()
-            .flatten()
-            .map(OutputRenderElements::from);
-        elements.extend(mru_elements);
+        self.window_mru_ui
+            .render_output(self, output, renderer, target, &mut elements.as_child());
 
         // Don't draw the focus ring on the workspaces while interactively moving above those
         // workspaces, since the interactively-moved window already has a focus ring.
@@ -4438,159 +4432,207 @@ impl Niri {
         // Get monitor elements.
         let mon = self.layout.monitor_for_output(output).unwrap();
         let zoom = mon.overview_zoom();
-        let monitor_elements = Vec::from_iter(
-            mon.render_elements(renderer, target, focus_ring)
-                .map(|(geo, bg, iter)| (geo, bg, Vec::from_iter(iter))),
-        );
-        let workspace_shadow_elements = Vec::from_iter(mon.render_workspace_shadows(renderer));
-        let insert_hint_elements = mon.render_insert_hint_between_workspaces(renderer);
-        let int_move_elements: Vec<_> = self
-            .layout
-            .render_interactive_move_for_output(renderer, output, target)
-            .collect();
 
         // Render closing layers
-        elements.extend(self.closing_layers.iter().filter_map(|layer| {
-            let mode = output.current_mode()?;
-
-            Some(
-                layer
-                    .render(
-                        renderer.as_gles_renderer(),
-                        Rectangle::new(
+        if let Some(mode) = output.current_mode() {
+            self.closing_layers.iter().for_each(|layer| {
+                layer.render(
+                    renderer,
+                    ClosingElementRenderContext {
+                        view_rect: Rectangle::new(
                             output.current_location().to_f64(),
                             mode.size
                                 .to_f64()
                                 .to_logical(output.current_scale().fractional_scale()),
                         ),
-                        output.current_scale().fractional_scale().into(),
-                        RenderTarget::Output,
-                    )
-                    .into(),
-            )
-        }));
+                        scale: output.current_scale().fractional_scale().into(),
+                        target: RenderTarget::Output,
+                    },
+                    &mut elements.as_child(),
+                );
+            });
+        }
 
         // Get layer-shell elements.
         let layer_map = layer_map_for_output(output);
         let fx_buffers = EffectsFramebuffers::get_user_data(output);
-        let mut extend_from_layer =
-            |elements: &mut SplitElements<LayerSurfaceRenderElement<R>>, layer, for_backdrop| {
-                self.render_layer(
-                    renderer,
-                    target,
-                    &layer_map,
-                    layer,
-                    elements,
-                    for_backdrop,
-                    fx_buffers.clone(),
-                );
-            };
 
-        // The overlay layer elements go next.
-        let mut layer_elems = SplitElements::default();
-        extend_from_layer(&mut layer_elems, Layer::Overlay, false);
-        elements.extend(layer_elems.into_iter().map(OutputRenderElements::from));
-
-        // Collect the top layer elements.
-        let mut layer_elems = SplitElements::default();
-        extend_from_layer(&mut layer_elems, Layer::Top, false);
-        let top_layer = layer_elems;
+        // Overlay is rendered first
+        self.render_layer(
+            renderer,
+            target,
+            &layer_map,
+            Layer::Overlay,
+            false,
+            fx_buffers.clone(),
+            &mut elements.as_child(),
+        );
 
         // When rendering above the top layer, we put the regular monitor elements first.
         // Otherwise, we will render all layer-shell pop-ups and the top layer on top.
         if mon.render_above_top_layer() {
-            // Collect all other layer-shell elements.
-            let mut layer_elems = SplitElements::default();
-            extend_from_layer(&mut layer_elems, Layer::Bottom, false);
-            extend_from_layer(&mut layer_elems, Layer::Background, false);
-
-            elements.extend(
-                int_move_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
+            self.layout.render_interactive_move_for_output(
+                renderer,
+                output,
+                target,
+                &mut elements.as_child(),
             );
-            elements.extend(
-                insert_hint_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
+            mon.render_insert_hint_between_workspaces(renderer, &mut elements.as_child());
+            mon.render_workspaces(renderer, target, focus_ring, &mut elements.as_child());
 
-            let mut ws_background = None;
-            elements.extend(
-                monitor_elements
-                    .into_iter()
-                    .flat_map(|(_ws_geo, ws_bg, iter)| {
-                        ws_background = Some(ws_bg);
-                        iter
-                    })
-                    .map(OutputRenderElements::from),
+            self.render_layer(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Top,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
             );
 
-            elements.extend(top_layer.into_iter().map(OutputRenderElements::from));
-            elements.extend(layer_elems.into_iter().map(OutputRenderElements::from));
+            // popups go above surfaces
+            self.render_layer_popups(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Bottom,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
+            self.render_layer_popups(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Background,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
 
-            if let Some(ws_background) = ws_background {
-                elements.push(OutputRenderElements::from(ws_background));
+            self.render_layer_normal(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Bottom,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
+            self.render_layer_normal(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Background,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
+
+            // We don't expect more than one workspace when render_above_top_layer().
+            if let Some((ws, _)) = mon.workspaces_with_render_geo().next() {
+                elements.push(ws.render_background().into());
             }
-
-            elements.extend(
-                workspace_shadow_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
         } else {
-            elements.extend(top_layer.into_iter().map(OutputRenderElements::from));
-
-            elements.extend(
-                int_move_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
-
-            elements.extend(
-                insert_hint_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
-
-            for (ws_geo, ws_background, ws_elements) in monitor_elements {
-                // Collect all other layer-shell elements.
-                let mut layer_elems = SplitElements::default();
-                extend_from_layer(&mut layer_elems, Layer::Bottom, false);
-                extend_from_layer(&mut layer_elems, Layer::Background, false);
-
-                elements.extend(
-                    layer_elems
-                        .popups
-                        .into_iter()
-                        .filter_map(|elem| scale_relocate_crop(elem, output_scale, zoom, ws_geo))
-                        .map(OutputRenderElements::from),
-                );
-
-                elements.extend(ws_elements.into_iter().map(OutputRenderElements::from));
-
-                elements.extend(
-                    layer_elems
-                        .normal
-                        .into_iter()
-                        .filter_map(|elem| scale_relocate_crop(elem, output_scale, zoom, ws_geo))
-                        .map(OutputRenderElements::from),
-                );
-
-                elements.push(OutputRenderElements::from(ws_background));
+            /// Returns a closure that accepts a render element and scales it by the specified
+            /// geometry before pushing it to the collector.
+            fn scale_then_push<'a, R, C>(
+                geo: Rectangle<f64, Logical>,
+                output_scale: Scale<f64>,
+                zoom: f64,
+                collector: &'a mut C,
+            ) -> impl FnMut(LayerSurfaceRenderElement<R>) + 'a
+            where
+                R: NiriRenderer,
+                C: PushRenderElement<OutputRenderElements<R>, R>,
+            {
+                move |elem: LayerSurfaceRenderElement<R>| {
+                    if let Some(elem) = scale_relocate_crop(elem, output_scale, zoom, geo) {
+                        collector.push_element(elem);
+                    }
+                }
             }
 
-            elements.extend(
-                workspace_shadow_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
+            self.render_layer(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Top,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
             );
+
+            self.layout.render_interactive_move_for_output(
+                renderer,
+                output,
+                target,
+                &mut elements.as_child(),
+            );
+
+            mon.render_insert_hint_between_workspaces(renderer, &mut elements.as_child());
+
+            for (_ws, geo) in mon.workspaces_with_render_geo() {
+                // Collect all other layer-shell elements.
+                self.render_layer_popups(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Bottom,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+                self.render_layer_popups(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Background,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+            }
+
+            mon.render_workspaces(renderer, target, focus_ring, &mut elements.as_child());
+
+            for (ws, geo) in mon.workspaces_with_render_geo() {
+                self.render_layer_normal(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Bottom,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+                self.render_layer_normal(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Background,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+
+                scale_then_push(geo, output_scale, zoom, &mut elements)(
+                    ws.render_background().into(),
+                );
+            }
         }
 
-        // Then the backdrop.
-        let mut layer_elems = SplitElements::default();
-        extend_from_layer(&mut layer_elems, Layer::Background, true);
-        elements.extend(layer_elems.into_iter().map(OutputRenderElements::from));
+        mon.render_workspace_shadows(renderer, &mut elements.as_child());
+
+        self.render_layer(
+            renderer,
+            target,
+            &layer_map,
+            Layer::Background,
+            true,
+            fx_buffers,
+            &mut elements.as_child(),
+        );
 
         elements.push(backdrop);
 
@@ -4616,32 +4658,111 @@ impl Niri {
         elements
     }
 
+    fn layers_in_render_order<'a>(
+        &'a self,
+        layer_map: &'a LayerMap,
+        layer: Layer,
+        for_backdrop: bool,
+    ) -> impl Iterator<Item = (&'a MappedLayer, Rectangle<i32, Logical>)> {
+        // LayerMap returns layers in reverse stacking order.
+        layer_map.layers_on(layer).rev().filter_map(move |surface| {
+            let mapped = self.mapped_layer_surfaces.get(surface)?;
+
+            if for_backdrop != mapped.place_within_backdrop() {
+                return None;
+            }
+
+            let geo = layer_map.layer_geometry(surface)?;
+            Some((mapped, geo))
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn render_layer<R: NiriRenderer>(
+    fn render_layer<R, C>(
         &self,
         renderer: &mut R,
         target: RenderTarget,
         layer_map: &LayerMap,
         layer: Layer,
-        elements: &mut SplitElements<LayerSurfaceRenderElement<R>>,
         for_backdrop: bool,
         fx_buffers: Option<EffectsFramebuffersUserData>,
-    ) {
-        // LayerMap returns layers in reverse stacking order.
-        layer_map
-            .layers_on(layer)
-            .rev()
-            .filter_map(|surface| {
-                let mapped = self.mapped_layer_surfaces.get(surface)?;
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        self.render_layer_popups(
+            renderer,
+            target,
+            layer_map,
+            layer,
+            for_backdrop,
+            fx_buffers.clone(),
+            collector,
+        );
+        self.render_layer_normal(
+            renderer,
+            target,
+            layer_map,
+            layer,
+            for_backdrop,
+            fx_buffers,
+            collector,
+        );
+    }
 
-                if for_backdrop != mapped.place_within_backdrop() {
-                    return None;
-                }
+    #[allow(clippy::too_many_arguments)]
+    fn render_layer_normal<R, C>(
+        &self,
+        renderer: &mut R,
+        target: RenderTarget,
+        layer_map: &LayerMap,
+        layer: Layer,
+        for_backdrop: bool,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        for (mapped, geo) in self.layers_in_render_order(layer_map, layer, for_backdrop) {
+            mapped.render_normal(
+                renderer,
+                LayerSurfaceRenderContext {
+                    location: geo.loc.to_f64(),
+                    target,
+                    fx_buffers: fx_buffers.clone(),
+                },
+                collector,
+            );
+        }
+    }
 
-                let geo = layer_map.layer_geometry(surface)?;
-                Some(mapped.render(renderer, geo.loc.to_f64(), target, fx_buffers.clone()))
-            })
-            .for_each(|l| elements.extend(l));
+    #[allow(clippy::too_many_arguments)]
+    fn render_layer_popups<R, C>(
+        &self,
+        renderer: &mut R,
+        target: RenderTarget,
+        layer_map: &LayerMap,
+        layer: Layer,
+        for_backdrop: bool,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        for (mapped, geo) in self.layers_in_render_order(layer_map, layer, for_backdrop) {
+            mapped.render_popups(
+                renderer,
+                LayerSurfaceRenderContext {
+                    location: geo.loc.to_f64(),
+                    target,
+                    fx_buffers: fx_buffers.clone(),
+                },
+                collector,
+            );
+        }
     }
 
     fn advance_layer_animations(&mut self) {
@@ -5422,10 +5543,10 @@ impl Niri {
     fn get_window_pointer_element(
         &self,
         scale: Scale<f64>,
-        pointer_element: Vec<OutputRenderElements<GlesRenderer>>,
+        pointer_element: Vec<PointerRenderElements<GlesRenderer>>,
         window_pointer_location: Point<f64, Logical>,
     ) -> Option<(
-        impl Iterator<Item = RelocateRenderElement<OutputRenderElements<GlesRenderer>>>,
+        impl Iterator<Item = RelocateRenderElement<PointerRenderElements<GlesRenderer>>>,
         Point<i32, Physical>,
     )> {
         if pointer_element.is_empty() {
@@ -5514,24 +5635,24 @@ impl Niri {
 
             let window_pointer_location = self.get_window_pointer_location(mapped, output, scale);
 
-            let pointer_elements = self.pointer_element(renderer, output);
+            let mut elements = Vec::new();
+
+            self.render_pointer(renderer, output, &mut elements);
 
             let pointer_elements = window_pointer_location
                 .and_then(|window_pointer_location| {
-                    self.get_window_pointer_element(
-                        scale,
-                        pointer_elements,
-                        window_pointer_location,
-                    )
+                    self.get_window_pointer_element(scale, elements, window_pointer_location)
                 })
                 .map(|e| e.0)
                 .into_iter()
                 .flatten()
                 .map(Into::into);
 
-            let elements: Vec<_> = pointer_elements
-                .chain(mapped.render_for_screen_cast(renderer, scale))
-                .collect();
+            let mut surface_elements = Vec::new();
+
+            mapped.render_for_screen_cast(renderer, scale, &mut surface_elements);
+
+            let elements = pointer_elements.chain(surface_elements).collect::<Vec<_>>();
 
             if cast.dequeue_buffer_and_render(renderer, &elements, bbox.size, scale) {
                 cast.last_frame_time = target_presentation_time;
@@ -5833,7 +5954,9 @@ impl Niri {
                 }
                 let res_output = res.ok();
 
-                let pointer = self.pointer_element(renderer, &output);
+                let mut pointer = Vec::new();
+                self.render_pointer(renderer, &output, &mut pointer);
+
                 let res_pointer = if pointer.is_empty() {
                     None
                 } else {
@@ -5924,12 +6047,17 @@ impl Niri {
                 mapped.rules().opacity.unwrap_or(1.).clamp(0., 1.)
             };
         // FIXME: pointer.
-        let elements = mapped.render(
+        let mut elements = Vec::new();
+        mapped.render(
             renderer,
-            mapped.window.geometry().loc.to_f64(),
-            scale,
-            alpha,
-            RenderTarget::ScreenCapture,
+            LayoutElementRenderContext {
+                location: mapped.window.geometry().loc.to_f64(),
+
+                scale,
+                alpha,
+                target: RenderTarget::ScreenCapture,
+            },
+            &mut elements,
         );
         let geo = encompassing_geo(scale, elements.iter());
         let elements = elements.iter().rev().map(|elem| {
@@ -6791,6 +6919,12 @@ fn scale_relocate_crop<E: Element>(
     let elem = RelocateRenderElement::from_element(elem, ws_geo.loc, Relocate::Relative);
     CropRenderElement::from_element(elem, output_scale, ws_geo)
 }
+niri_render_elements! {
+    PointerRenderElements<R> => {
+        Wayland = WaylandSurfaceRenderElement<R>,
+        NamedPointer = MemoryRenderBufferRenderElement<R>,
+    }
+}
 
 niri_render_elements! {
     OutputRenderElements<R> => {
@@ -6801,6 +6935,10 @@ niri_render_elements! {
         RelocatedLayerSurface = CropRenderElement<RelocateRenderElement<RescaleRenderElement<
             LayerSurfaceRenderElement<R>
         >>>,
+        RelocatedColor = CropRenderElement<RelocateRenderElement<RescaleRenderElement<
+            SolidColorRenderElement
+        >>>,
+        Pointer = PointerRenderElements<R>,
         Wayland = WaylandSurfaceRenderElement<R>,
         NamedPointer = MemoryRenderBufferRenderElement<R>,
         SolidColor = SolidColorRenderElement,

@@ -71,6 +71,7 @@ use self::workspace::{OutputId, Workspace};
 use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::layout::scrolling::ScrollDirection;
+use crate::layout::tile::TileRenderContext;
 use crate::niri_render_elements;
 use crate::render_helpers::blur::EffectsFramebuffers;
 use crate::render_helpers::offscreen::OffscreenData;
@@ -78,9 +79,10 @@ use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::texture::TextureBuffer;
-use crate::render_helpers::{BakedBuffer, RenderTarget, SplitElements};
+use crate::render_helpers::{BakedBuffer, RenderTarget};
 use crate::rubber_band::RubberBand;
 use crate::utils::region::Region;
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::utils::{
     ResizeEdge, ensure_min_max_size_maybe_zero, output_matches_name, output_size,
@@ -128,6 +130,14 @@ pub enum SizingMode {
     Fullscreen,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LayoutElementRenderContext {
+    pub location: Point<f64, Logical>,
+    pub scale: Scale<f64>,
+    pub alpha: f32,
+    pub target: RenderTarget,
+}
+
 pub trait LayoutElement {
     /// Type that can be used as a unique ID of this element.
     type Id: PartialEq + std::fmt::Debug + Clone;
@@ -151,43 +161,6 @@ pub trait LayoutElement {
     /// The point is relative to the element's visual geometry.
     fn is_in_input_region(&self, point: Point<f64, Logical>) -> bool;
 
-    /// Renders the element at the given visual location.
-    ///
-    /// The element should be rendered in such a way that its visual geometry ends up at the given
-    /// location.
-    fn render<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-        scale: Scale<f64>,
-        alpha: f32,
-        target: RenderTarget,
-    ) -> SplitElements<LayoutElementRenderElement<R>>;
-
-    /// Renders the non-popup parts of the element.
-    fn render_normal<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-        scale: Scale<f64>,
-        alpha: f32,
-        target: RenderTarget,
-    ) -> Vec<LayoutElementRenderElement<R>> {
-        self.render(renderer, location, scale, alpha, target).normal
-    }
-
-    /// Renders the popups of the element.
-    fn render_popups<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-        scale: Scale<f64>,
-        alpha: f32,
-        target: RenderTarget,
-    ) -> Vec<LayoutElementRenderElement<R>> {
-        self.render(renderer, location, scale, alpha, target).popups
-    }
-
     /// Requests the element to change its size.
     ///
     /// The size request is stored and will be continuously sent to the element on any further
@@ -204,6 +177,24 @@ pub trait LayoutElement {
     fn request_size_once(&mut self, size: Size<i32, Logical>, animate: bool) {
         self.request_size(size, SizingMode::Normal, animate, None);
     }
+
+    fn render_normal<R, C>(
+        &self,
+        renderer: &mut R,
+        context: LayoutElementRenderContext,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayoutElementRenderElement<R>, R>;
+
+    fn render_popups<R, C>(
+        &self,
+        renderer: &mut R,
+        context: LayoutElementRenderContext,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayoutElementRenderElement<R>, R>;
 
     fn min_size(&self) -> Size<i32, Logical>;
     fn max_size(&self) -> Size<i32, Logical>;
@@ -301,6 +292,24 @@ pub trait LayoutElement {
 
     fn blur_preferred_region(&self) -> Option<Region<i32, Logical>> {
         None
+    }
+}
+
+impl<T, R> Render<'_, R> for T
+where
+    R: NiriRenderer,
+    T: LayoutElement,
+{
+    type RenderContext = LayoutElementRenderContext;
+
+    type RenderElement = LayoutElementRenderElement<R>;
+
+    fn render<C>(&'_ self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<Self::RenderElement, R>,
+    {
+        self.render_popups(renderer, context, collector);
+        self.render_normal(renderer, context, collector);
     }
 }
 
@@ -4876,17 +4885,19 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    pub fn render_interactive_move_for_output<'a, R: NiriRenderer + 'a>(
-        &'a self,
+    pub fn render_interactive_move_for_output<R, C>(
+        &self,
         renderer: &mut R,
         output: &Output,
         target: RenderTarget,
-    ) -> impl Iterator<Item = RescaleRenderElement<TileRenderElement<R>>> + 'a + use<'a, R, W> {
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<RescaleRenderElement<TileRenderElement<R>>, R>,
+    {
         if self.update_render_elements_time != self.clock.now() {
             error!("clock moved between updating render elements and rendering");
         }
-
-        let mut rv = None;
 
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move
             && &move_.output == output
@@ -4895,20 +4906,25 @@ impl<W: LayoutElement> Layout<W> {
             let zoom = self.overview_zoom();
             let location = move_.tile_render_location(zoom);
             let fx_buffers = EffectsFramebuffers::get_user_data(output);
-            let iter = move_
-                .tile
-                .render(renderer, location, true, target, fx_buffers, Some(zoom))
-                .map(move |elem| {
-                    RescaleRenderElement::from_element(
+            move_.tile.render(
+                renderer,
+                TileRenderContext {
+                    location,
+                    focus_ring: true,
+                    target,
+                    fx_buffers,
+                    overview_zoom: Some(zoom),
+                },
+                &mut |elem| {
+                    let elem = RescaleRenderElement::from_element(
                         elem,
                         location.to_physical_precise_round(scale),
                         zoom,
-                    )
-                });
-            rv = Some(iter);
+                    );
+                    collector.push_element(elem);
+                },
+            );
         }
-
-        rv.into_iter().flatten()
     }
 
     pub fn refresh(&mut self, is_active: bool) {

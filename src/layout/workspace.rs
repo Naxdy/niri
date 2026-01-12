@@ -29,6 +29,8 @@ use super::{
     RemovedTile, SizeFrac,
 };
 use crate::animation::Clock;
+use crate::layout::floating::FloatingSpaceRenderContext;
+use crate::layout::scrolling::ScrollingSpaceRenderContext;
 use crate::niri_render_elements;
 use crate::render_helpers::RenderTarget;
 use crate::render_helpers::blur::EffectsFramebuffers;
@@ -36,6 +38,7 @@ use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::utils::id::IdCounter;
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::utils::{
     ResizeEdge, ensure_min_max_size, ensure_min_max_size_maybe_zero, output_size,
@@ -1772,53 +1775,72 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    pub fn render_elements<R: NiriRenderer>(
+    pub fn render_scrolling<R, C>(
         &self,
         renderer: &mut R,
         target: RenderTarget,
         focus_ring: bool,
         overview_zoom: f64,
-    ) -> (
-        impl Iterator<Item = WorkspaceRenderElement<R>> + use<R, W>,
-        impl Iterator<Item = WorkspaceRenderElement<R>> + use<R, W>,
-    ) {
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<WorkspaceRenderElement<R>, R>,
+    {
         let fx_buffers = self
             .current_output()
             .and_then(EffectsFramebuffers::get_user_data);
 
-        let scrolling_focus_ring = focus_ring && !self.floating_is_active();
-        let scrolling = self.scrolling.render_elements(
+        self.scrolling.render(
             renderer,
-            target,
-            scrolling_focus_ring,
-            fx_buffers.clone(),
-            overview_zoom,
-        );
-        let scrolling = scrolling.into_iter().map(WorkspaceRenderElement::from);
-
-        let floating_focus_ring = focus_ring && self.floating_is_active();
-        let floating = self.is_floating_visible().then(|| {
-            let view_rect = Rectangle::from_size(self.view_size);
-            let floating = self.floating.render_elements(
-                renderer,
-                view_rect,
+            ScrollingSpaceRenderContext {
                 target,
-                floating_focus_ring,
-                fx_buffers.clone(),
+                focus_ring: focus_ring && !self.floating_is_active(),
+                fx_buffers,
                 overview_zoom,
-            );
-            floating.into_iter().map(WorkspaceRenderElement::from)
-        });
-        let floating = floating.into_iter().flatten();
-
-        (floating, scrolling)
+            },
+            &mut collector.as_child(),
+        );
     }
 
-    pub fn render_shadow<R: NiriRenderer>(
+    pub fn render_floating<R, C>(
         &self,
         renderer: &mut R,
-    ) -> impl Iterator<Item = ShadowRenderElement> + '_ + use<'_, R, W> {
-        self.shadow.render(renderer, Point::from((0., 0.)))
+        target: RenderTarget,
+        focus_ring: bool,
+        overview_zoom: f64,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<WorkspaceRenderElement<R>, R>,
+    {
+        let fx_buffers = self
+            .current_output()
+            .and_then(EffectsFramebuffers::get_user_data);
+
+        if !self.is_floating_visible() {
+            return;
+        }
+
+        self.floating.render(
+            renderer,
+            FloatingSpaceRenderContext {
+                view_rect: Rectangle::from_size(self.view_size),
+                target,
+                focus_ring: focus_ring && self.floating_is_active(),
+                fx_buffers,
+                overview_zoom,
+            },
+            &mut collector.as_child(),
+        );
+    }
+
+    pub fn render_shadow<R, C>(&self, renderer: &mut R, collector: &mut C)
+    where
+        R: NiriRenderer,
+        C: PushRenderElement<ShadowRenderElement, R>,
+    {
+        self.shadow
+            .render(renderer, Point::from((0., 0.)), collector);
     }
 
     pub fn render_background(&self) -> SolidColorRenderElement {

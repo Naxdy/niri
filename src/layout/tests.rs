@@ -166,17 +166,6 @@ impl LayoutElement for TestWindow {
         false
     }
 
-    fn render<R: NiriRenderer>(
-        &self,
-        _renderer: &mut R,
-        _location: Point<f64, Logical>,
-        _scale: Scale<f64>,
-        _alpha: f32,
-        _target: RenderTarget,
-    ) -> SplitElements<LayoutElementRenderElement<R>> {
-        SplitElements::default()
-    }
-
     fn request_size(
         &mut self,
         size: Size<i32, Logical>,
@@ -290,6 +279,28 @@ impl LayoutElement for TestWindow {
 
     fn is_urgent(&self) -> bool {
         false
+    }
+
+    fn render_normal<R, C>(
+        &self,
+        _renderer: &mut R,
+        _context: LayoutElementRenderContext,
+        _collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayoutElementRenderElement<R>, R>,
+    {
+    }
+
+    fn render_popups<R, C>(
+        &self,
+        _renderer: &mut R,
+        _context: LayoutElementRenderContext,
+        _collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayoutElementRenderElement<R>, R>,
+    {
     }
 }
 

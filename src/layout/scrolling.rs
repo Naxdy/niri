@@ -18,16 +18,27 @@ use super::{ConfigureIntent, HitType, InteractiveResizeData, LayoutElement, Opti
 use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::layout::SizingMode;
+use crate::layout::closing_element::ClosingElementRenderContext;
+use crate::layout::tile::TileRenderContext;
 use crate::niri_render_elements;
 use crate::render_helpers::RenderTarget;
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::utils::ResizeEdge;
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::window::ResolvedWindowRules;
 
 /// Amount of touchpad movement to scroll the view for the width of one working area.
 const VIEW_GESTURE_WORKING_AREA_MOVEMENT: f64 = 1200.;
+
+#[derive(Clone, Debug)]
+pub struct ScrollingSpaceRenderContext {
+    pub target: RenderTarget,
+    pub focus_ring: bool,
+    pub fx_buffers: Option<EffectsFramebuffersUserData>,
+    pub overview_zoom: f64,
+}
 
 /// A scrollable-tiling space for windows.
 #[derive(Debug)]
@@ -3288,66 +3299,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             .is_fullscreen()
     }
 
-    pub fn render_elements<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        target: RenderTarget,
-        focus_ring: bool,
-        fx_buffers: Option<EffectsFramebuffersUserData>,
-        overview_zoom: f64,
-    ) -> Vec<ScrollingSpaceRenderElement<R>> {
-        let mut rv = vec![];
-
-        let scale = Scale::from(self.scale);
-
-        // Draw the closing windows on top of the other windows.
-        let view_rect = Rectangle::new(Point::from((self.view_pos(), 0.)), self.view_size);
-        for closing in self.closing_windows.iter().rev() {
-            let elem = closing.render(renderer.as_gles_renderer(), view_rect, scale, target);
-            rv.push(elem.into());
-        }
-
-        if self.columns.is_empty() {
-            return rv;
-        }
-
-        let mut first = true;
-
-        // This matches self.tiles_in_render_order().
-        let view_off = Point::from((-self.view_pos(), 0.));
-        for (col, col_x) in self.columns_in_render_order() {
-            let col_off = Point::from((col_x, 0.));
-            let col_render_off = col.render_offset();
-
-            for (tile, tile_off) in col.tiles_in_render_order() {
-                let tile_pos =
-                    view_off + col_off + col_render_off + tile_off + tile.render_offset();
-                // Round to physical pixels.
-                let tile_pos = tile_pos.to_physical_precise_round(scale).to_logical(scale);
-
-                // And now the drawing logic.
-
-                // For the active tile (which comes first), draw the focus ring.
-                let focus_ring = focus_ring && first;
-                first = false;
-
-                rv.extend(
-                    tile.render(
-                        renderer,
-                        tile_pos,
-                        focus_ring,
-                        target,
-                        fx_buffers.clone(),
-                        Some(overview_zoom),
-                    )
-                    .map(Into::into),
-                );
-            }
-        }
-
-        rv
-    }
-
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<(&W, HitType)> {
         // This matches self.tiles_with_render_positions().
         let scale = self.scale;
@@ -5653,6 +5604,81 @@ fn resolve_preset_size(preset: PresetSize, options: &Options, view_size: f64) ->
             (view_size - options.layout.gaps).mul_add(proportion, -options.layout.gaps),
         ),
         PresetSize::Fixed(width) => ResolvedSize::Window(f64::from(width)),
+    }
+}
+
+impl<R, W> Render<'_, R> for ScrollingSpace<W>
+where
+    R: NiriRenderer,
+    W: LayoutElement,
+{
+    type RenderContext = ScrollingSpaceRenderContext;
+    type RenderElement = ScrollingSpaceRenderElement<R>;
+
+    fn render<C>(&self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<ScrollingSpaceRenderElement<R>, R>,
+    {
+        let ScrollingSpaceRenderContext {
+            target,
+            focus_ring,
+            fx_buffers,
+            overview_zoom,
+        } = context;
+
+        let scale = Scale::from(self.scale);
+
+        // Draw the closing windows on top of the other windows.
+        let view_rect = Rectangle::new(Point::from((self.view_pos(), 0.)), self.view_size);
+        for closing in self.closing_windows.iter().rev() {
+            closing.render(
+                renderer,
+                ClosingElementRenderContext {
+                    view_rect,
+                    scale,
+                    target,
+                },
+                &mut collector.as_child(),
+            );
+        }
+
+        if self.columns.is_empty() {
+            return;
+        }
+
+        let mut first = true;
+
+        // This matches self.tiles_in_render_order().
+        let view_off = Point::from((-self.view_pos(), 0.));
+        for (col, col_x) in self.columns_in_render_order() {
+            let col_off = Point::from((col_x, 0.));
+            let col_render_off = col.render_offset();
+
+            for (tile, tile_off) in col.tiles_in_render_order() {
+                let tile_pos =
+                    view_off + col_off + col_render_off + tile_off + tile.render_offset();
+                // Round to physical pixels.
+                let tile_pos = tile_pos.to_physical_precise_round(scale).to_logical(scale);
+
+                // And now the drawing logic.
+
+                // For the active tile (which comes first), draw the focus ring.
+                let focus_ring = focus_ring && first;
+                first = false;
+
+                tile.render(
+                    renderer,
+                    TileRenderContext {
+                        location: tile_pos,
+                        focus_ring,
+                        target,
+                        fx_buffers: fx_buffers.clone(),
+                        overview_zoom: Some(overview_zoom),
+                    },
+                    &mut collector.as_child(),
+                );
+            }
+        }
     }
 }
 

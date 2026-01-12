@@ -9,21 +9,22 @@ use glam::{Mat3, Vec2};
 use niri_config::CornerRadius;
 
 use pango::glib::property::PropertySet;
+use smithay::backend::renderer::Texture;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::gles::{
     GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform, ffi,
 };
 use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
-use smithay::backend::renderer::{Offscreen, Texture};
 use smithay::reexports::gbm::Format;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::render_data::RendererData;
-use crate::render_helpers::renderer::AsGlesFrame;
+use crate::render_helpers::renderer::{AsGlesFrame, NiriRenderer};
 use crate::render_helpers::shaders::{Shaders, mat3_uniform};
 use crate::utils::region::Region;
+use crate::utils::render::{PushRenderElement, Render};
 
 use super::{CurrentBuffer, EffectsFramebuffers};
 
@@ -52,6 +53,10 @@ impl CommitTracker {
         Self(Default::default())
     }
 
+    pub fn insert_from_elem<'a, E: Element + 'a>(&mut self, elem: &'a E) {
+        self.0.insert(elem.id().clone(), elem.current_commit());
+    }
+
     pub fn from_elements<'a, E: Element + 'a>(elems: impl Iterator<Item = &'a E>) -> Self {
         Self(
             elems
@@ -63,6 +68,20 @@ impl CommitTracker {
     pub fn update<'a, E: Element + 'a>(&mut self, elems: impl Iterator<Item = &'a E>) {
         *self = Self::from_elements(elems);
     }
+}
+
+#[derive(Debug)]
+pub struct BlurRenderContext<'a> {
+    pub fx_buffers: EffectsFramebuffersUserData,
+    pub destination_region: &'a Region<i32, Logical>,
+    pub corner_radius: CornerRadius,
+    pub scale: f64,
+    pub geometry: Rectangle<f64, Logical>,
+    pub true_blur: bool,
+    /// used for elements that are rendered offscreen (e.g. tiles that are being dragged)
+    pub render_loc: Option<Point<f64, Logical>>,
+    pub overview_zoom: Option<f64>,
+    pub alpha: f32,
 }
 
 #[derive(Debug)]
@@ -121,25 +140,34 @@ impl Blur {
     pub const fn update_render_elements(&mut self, is_active: bool) {
         self.config.on = is_active;
     }
+}
+
+impl<'a, R> Render<'a, R> for Blur
+where
+    R: NiriRenderer,
+{
+    type RenderContext = BlurRenderContext<'a>;
+    type RenderElement = BlurRenderElement;
 
     // TODO: separate some of this logic out to [`Blur::update_render_elements`]
-    #[allow(clippy::too_many_arguments)]
-    pub fn render(
-        &self,
-        renderer: &mut GlesRenderer,
-        fx_buffers: EffectsFramebuffersUserData,
-        destination_region: &Region<i32, Logical>,
-        corner_radius: CornerRadius,
-        scale: f64,
-        geometry: Rectangle<f64, Logical>,
-        mut true_blur: bool,
-        // used for elements that are rendered offscreen (e.g. tiles that are being dragged)
-        render_loc: Option<Point<f64, Logical>>,
-        overview_zoom: Option<f64>,
-        alpha: f32,
-    ) -> Vec<BlurRenderElement> {
+    fn render<C>(&'a self, renderer: &mut R, render_context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<BlurRenderElement, R>,
+    {
+        let BlurRenderContext {
+            fx_buffers,
+            destination_region,
+            corner_radius,
+            scale,
+            geometry,
+            mut true_blur,
+            render_loc,
+            overview_zoom,
+            alpha,
+        } = render_context;
+
         if !self.config.on || self.config.passes == 0 || self.config.radius.0 == 0. {
-            return vec![];
+            return;
         }
 
         // FIXME: true blur is broken on 90/270 transformed monitors
@@ -236,7 +264,11 @@ impl Blur {
                 });
 
         if !changed_any {
-            return inner.clone();
+            inner
+                .iter()
+                .cloned()
+                .for_each(|e| collector.push_element(e));
+            return;
         }
 
         *inner = destination_region
@@ -271,7 +303,10 @@ impl Blur {
             })
             .collect();
 
-        inner.clone()
+        inner
+            .iter()
+            .cloned()
+            .for_each(|e| collector.push_element(e));
     }
 }
 

@@ -1,5 +1,7 @@
-use niri::layout::{LayoutElement, SizingMode};
+use niri::layout::{LayoutElement, LayoutElementRenderContext, SizingMode};
 use niri::render_helpers::RenderTarget;
+use niri::render_helpers::renderer::AsGlesRenderer;
+use niri::utils::render::Render;
 use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Physical, Point, Scale, Size};
@@ -52,16 +54,19 @@ impl TestCase for Window {
             .to_f64()
             .downscale(2.);
 
-        self.window
-            .render(
-                renderer,
+        let mut elements = Vec::new();
+
+        self.window.render(
+            renderer.as_gles_renderer(),
+            LayoutElementRenderContext {
                 location,
-                Scale::from(1.),
-                1.,
-                RenderTarget::Output,
-            )
-            .into_iter()
-            .map(|elem| Box::new(elem) as _)
-            .collect()
+                scale: Scale::from(1.),
+                alpha: 1.,
+                target: RenderTarget::Output,
+            },
+            &mut |elem| elements.push(Box::new(elem) as _),
+        );
+
+        elements
     }
 }
