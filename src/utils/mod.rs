@@ -1,5 +1,4 @@
 use std::cmp::{max, min};
-use std::f64;
 use std::ffi::{CString, OsStr};
 use std::io::Write;
 use std::os::unix::prelude::OsStrExt;
@@ -7,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
+use std::{f64, io};
 
 use anyhow::{Context, ensure};
 use bitflags::bitflags;
@@ -253,18 +253,91 @@ pub fn make_screenshot_path(config: &Config) -> anyhow::Result<Option<PathBuf>> 
     Ok(Some(path))
 }
 
-pub fn write_png_rgba8(
-    w: impl Write,
-    width: u32,
-    height: u32,
-    pixels: &[u8],
-) -> Result<(), png::EncodingError> {
-    let mut encoder = png::Encoder::new(w, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
+/// Writer, which initializes itself on first write
+pub enum LazyWriter<W, F> {
+    Pending(F),
+    Initialized(W),
+    Hole,
+}
+impl<W, F: FnOnce() -> io::Result<W>> LazyWriter<W, F> {
+    pub fn new(f: F) -> Self {
+        Self::Pending(f)
+    }
+    fn ensure_init(&mut self) -> io::Result<&mut W> {
+        Ok(match self {
+            Self::Pending(_) => {
+                let Self::Pending(initializer) = std::mem::replace(self, Self::Hole) else {
+                    unreachable!("just matched");
+                };
+                *self = Self::Initialized(initializer()?);
+                let Self::Initialized(i) = self else {
+                    unreachable!("just initialized");
+                };
+                i
+            }
+            Self::Initialized(i) => i,
+            Self::Hole => {
+                unreachable!("enum can only stay in Hole state during first ensure_init call")
+            }
+        })
+    }
+}
+impl<W, F> Write for LazyWriter<W, F>
+where
+    W: Write,
+    F: FnOnce() -> io::Result<W>,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.ensure_init()?.write(buf)
+    }
 
-    let mut writer = encoder.write_header()?;
-    writer.write_image_data(pixels)
+    fn flush(&mut self) -> io::Result<()> {
+        self.ensure_init()?.flush()
+    }
+}
+
+pub fn png_encoder(w: impl Write, width: u32, height: u32) -> impl Write {
+    fn map_err(e: png::EncodingError) -> io::Error {
+        io::Error::other(format!("png encoding error: {e:?}"))
+    }
+    struct PngWriter<W: Write>(Option<png::Writer<W>>);
+
+    // Fused
+    impl<W: Write> Write for PngWriter<W> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if let Some(w) = &mut self.0 {
+                w.write_image_data(buf).map_err(map_err)?;
+                Ok(buf.len())
+            } else {
+                Ok(0)
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if let Some(w) = self.0.take() {
+                w.finish().map_err(map_err)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    LazyWriter::new(move || {
+        let mut encoder = png::Encoder::new(w, width, height);
+
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+
+        encoder
+            .write_header()
+            .map(Some)
+            .map(PngWriter)
+            .map_err(map_err)
+    })
+}
+
+pub fn write_png_rgba8(w: impl Write, width: u32, height: u32, pixels: &[u8]) -> io::Result<()> {
+    let mut encoder = png_encoder(w, width, height);
+    encoder.write_all(pixels).and_then(|()| encoder.flush())
 }
 
 pub fn output_matches_name(output: &Output, target: &str) -> bool {

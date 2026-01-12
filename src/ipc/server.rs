@@ -21,17 +21,12 @@ use niri_ipc::{
     Timestamp, WindowLayout, Workspace,
 };
 use smithay::desktop::layer_map_for_output;
-use smithay::input::pointer::{
-    CursorIcon, CursorImageStatus, Focus, GrabStartData as PointerGrabStartData,
-};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, LoopHandle, Mode, PostAction};
 use smithay::reexports::rustix::fs::unlink;
-use smithay::utils::SERIAL_COUNTER;
 use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer};
 
 use crate::backend::IpcOutputMap;
-use crate::input::pick_window_grab::PickWindowGrab;
 use crate::layout::workspace::WorkspaceId;
 use crate::niri::State;
 use crate::utils::{version, with_toplevel_role};

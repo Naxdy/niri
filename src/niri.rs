@@ -2346,7 +2346,7 @@ impl State {
     }
 
     #[cfg(feature = "dbus")]
-    pub fn handle_kwin_screenshot2(
+    pub fn handle_kwin_screenshot_output(
         &mut self,
         output: Option<&str>,
         include_cursor: bool,
@@ -2354,11 +2354,25 @@ impl State {
         pipe: File,
     ) {
         let _span = tracy_client::span!("Kwin2Screenshot");
-        info!("capturing screen");
 
         self.backend.with_primary_renderer(|renderer| {
             self.niri
-                .screenshot_output(renderer, output, data_tx, include_cursor, pipe)
+                .screenshot_output_to_pipe(renderer, output, data_tx, include_cursor, pipe)
+        });
+    }
+
+    #[cfg(feature = "dbus")]
+    pub fn handle_kwin_screenshot_window(
+        &mut self,
+        window: Option<MappedId>,
+        data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
+        pipe: File,
+    ) {
+        let _span = tracy_client::span!("Kwin2Screenshot");
+
+        self.backend.with_primary_renderer(|renderer| {
+            self.niri
+                .screenshot_window_to_pipe(renderer, window, data_tx, pipe)
         });
     }
 
@@ -6101,14 +6115,12 @@ impl Niri {
             .context("error saving screenshot")
     }
 
-    pub fn screenshot_window(
+    fn screenshot_window_raw(
         &self,
         renderer: &mut GlesRenderer,
         output: &Output,
         mapped: &Mapped,
-        write_to_disk: bool,
-        path: Option<String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(Size<i32, Physical>, Vec<u8>)> {
         let _span = tracy_client::span!("Niri::screenshot_window");
 
         let scale = Scale::from(output.current_scale().fractional_scale());
@@ -6144,7 +6156,20 @@ impl Niri {
             elements,
         )?;
 
-        self.save_screenshot(geo.size, pixels, write_to_disk, path)
+        Ok((geo.size, pixels))
+    }
+
+    pub fn screenshot_window(
+        &self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        mapped: &Mapped,
+        write_to_disk: bool,
+        path: Option<String>,
+    ) -> anyhow::Result<()> {
+        let (size, pixels) = self.screenshot_window_raw(renderer, output, mapped)?;
+
+        self.save_screenshot(size, pixels, write_to_disk, path)
             .context("error saving screenshot")
     }
 
@@ -6252,23 +6277,22 @@ impl Niri {
         Ok(())
     }
 
-    /// Render output in RGBA8888 format, return width, height, and image data.
     #[cfg(feature = "dbus")]
-    pub fn screenshot_output<W: Write + Send + 'static>(
+    pub fn screenshot_output_to_pipe<W: Write + Send + 'static>(
         &mut self,
         renderer: &mut GlesRenderer,
-        output: Option<&str>,
+        output_name: Option<&str>,
         mut data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
         include_pointer: bool,
         mut pipe: W,
     ) {
-        let output = match output {
+        let output = match output_name {
             Some(name) => self.global_space.outputs().find(|o| o.name() == name),
             None => self.layout.active_output(),
         };
         let Some(output) = output.cloned() else {
             // Ignore if receiver is dead
-            let _ = data_tx.send(Err(anyhow::anyhow!("unknown output: {output:?}")));
+            let _ = data_tx.send(Err(anyhow::anyhow!("unknown output: {output_name:?}")));
             return;
         };
 
@@ -6286,6 +6310,63 @@ impl Niri {
                 // x and y scales are equal for screens
                 scale: scale.x,
                 screen: Some(output.name()),
+                window_id: None,
+            }))
+            .is_err()
+        {
+            // Receiver is dead
+            return;
+        }
+
+        thread::spawn(move || {
+            // TODO: render_to_vec can be reimplemented as render_to_writer
+            if let Err(e) = pipe.write_all(&pixels).and_then(|()| pipe.flush()) {
+                warn!("failed to write image data: {e:?}");
+                return;
+            }
+        });
+    }
+
+    #[cfg(feature = "dbus")]
+    pub fn screenshot_window_to_pipe<W: Write + Send + 'static>(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        window_id: Option<MappedId>,
+        mut data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
+        mut pipe: W,
+    ) {
+        let output = match window_id {
+            Some(id) => self
+                .layout
+                .windows()
+                .find(|(_, w)| w.id() == id)
+                .map(|(m, w)| (m.map(|m| m.output()), w)),
+            None => self.layout.focus_with_output().map(|(m, o)| (Some(o), m)),
+        };
+        let Some((output, window)) = output else {
+            // Ignore if receiver is dead
+            let _ = data_tx.send(Err(anyhow::anyhow!("unknown window: {window_id:?}")));
+            return;
+        };
+        let Some(output) = output else {
+            let _ = data_tx.send(Err(anyhow::anyhow!("window is not visible: {window_id:?}")));
+            return;
+        };
+
+        let (size, pixels) = match self.screenshot_window_raw(renderer, output, window) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = data_tx.send(Err(anyhow::anyhow!("failed to capture screenshot: {e:?}")));
+                return;
+            }
+        };
+        if data_tx
+            .send(Ok(KwinImageData {
+                width: size.w as u32,
+                height: size.h as u32,
+                scale: 1.0,
+                screen: None,
+                window_id: Some(window.id().get().to_string()),
             }))
             .is_err()
         {
