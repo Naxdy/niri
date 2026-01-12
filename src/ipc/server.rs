@@ -341,27 +341,10 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             Response::FocusedWindow(window)
         }
         Request::PickWindow => {
-            let (tx, rx) = async_channel::bounded(1);
-            ctx.event_loop.insert_idle(move |state| {
-                let pointer = state.niri.seat.get_pointer().unwrap();
-                let start_data = PointerGrabStartData {
-                    focus: None,
-                    button: 0,
-                    location: pointer.current_location(),
-                };
-                let grab = PickWindowGrab::new(start_data);
-                // The `WindowPickGrab` ungrab handler will cancel the previous ongoing pick, if
-                // any.
-                pointer.set_grab(state, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
-                state.niri.pick_window = Some(tx);
-                state
-                    .niri
-                    .cursor_manager
-                    .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
-                // Redraw to update the cursor.
-                state.niri.queue_redraw_all();
-            });
-            let result = rx.recv().await;
+            let (tx, rx) = async_oneshot::oneshot();
+            ctx.event_loop
+                .insert_idle(move |state| state.handle_pick_window(tx));
+            let result = rx.await;
             let id = result.map_err(|_| String::from("error getting picked window info"))?;
             let window = id.and_then(|id| {
                 let state = ctx.event_stream_state.borrow();
@@ -370,11 +353,10 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             Response::PickedWindow(window)
         }
         Request::PickColor => {
-            let (tx, rx) = async_channel::bounded(1);
-            ctx.event_loop.insert_idle(move |state| {
-                state.handle_pick_color(tx);
-            });
-            let result = rx.recv().await;
+            let (tx, rx) = async_oneshot::oneshot();
+            ctx.event_loop
+                .insert_idle(move |state| state.handle_pick_color(tx));
+            let result = rx.await;
             let color = result.map_err(|_| String::from("error getting picked color"))?;
             Response::PickedColor(color)
         }
