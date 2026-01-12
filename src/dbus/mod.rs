@@ -65,12 +65,23 @@ impl DBusServers {
                             include_cursor,
                             data_tx,
                             pipe,
-                        } => state.handle_kwin_screenshot2(
+                        } => state.handle_kwin_screenshot_output(
                             name.as_ref().map(String::as_str),
                             include_cursor,
                             data_tx,
                             pipe,
                         ),
+                        KwinScreenshot2ToNiri::CaptureWindow {
+                            window,
+                            data_tx,
+                            pipe,
+                        } => state.handle_kwin_screenshot_window(window, data_tx, pipe),
+                        KwinScreenshot2ToNiri::PickWindow(tx) => {
+                            state.handle_pick_window(tx);
+                        }
+                        KwinScreenshot2ToNiri::PickOutput(tx) => {
+                            state.handle_pick_output(tx);
+                        }
                     },
                     calloop::channel::Event::Closed => (),
                 })
