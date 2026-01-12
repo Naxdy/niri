@@ -15,7 +15,7 @@ pub struct Screenshot {
 
 pub enum ScreenshotToNiri {
     TakeScreenshot { include_cursor: bool },
-    PickColor(async_channel::Sender<Option<PickedColor>>),
+    PickColor(async_oneshot::Sender<Option<PickedColor>>),
 }
 
 pub enum NiriToScreenshot {
@@ -53,13 +53,13 @@ impl Screenshot {
     }
 
     async fn pick_color(&self) -> fdo::Result<HashMap<String, OwnedValue>> {
-        let (tx, rx) = async_channel::bounded(1);
+        let (tx, rx) = async_oneshot::oneshot();
         if let Err(err) = self.to_niri.send(ScreenshotToNiri::PickColor(tx)) {
             warn!("error sending pick color message to niri: {err:?}");
             return Err(fdo::Error::Failed("internal error".to_owned()));
         }
 
-        let color = match rx.recv().await {
+        let color = match rx.await {
             Ok(Some(color)) => color,
             Ok(None) => {
                 return Err(fdo::Error::Failed("no color picked".to_owned()));

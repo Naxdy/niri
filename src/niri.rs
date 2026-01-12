@@ -137,6 +137,8 @@ use crate::dbus::mutter_screen_cast::{self, ScreenCastToNiri};
 use crate::frame_clock::FrameClock;
 use crate::handlers::{XDG_ACTIVATION_TOKEN_TIMEOUT, configure_lock_surface};
 use crate::input::pick_color_grab::PickColorGrab;
+use crate::input::pick_output_grab::PickOutputGrab;
+use crate::input::pick_window_grab::PickWindowGrab;
 use crate::input::scroll_swipe_gesture::ScrollSwipeGesture;
 use crate::input::scroll_tracker::ScrollTracker;
 use crate::input::{
@@ -411,8 +413,9 @@ pub struct Niri {
     pub window_mru_ui: WindowMruUi,
     pub pending_mru_commit: Option<PendingMruCommit>,
 
-    pub pick_window: Option<async_channel::Sender<Option<MappedId>>>,
-    pub pick_color: Option<async_channel::Sender<Option<niri_ipc::PickedColor>>>,
+    pub pick_window: Option<async_oneshot::Sender<Option<MappedId>>>,
+    pub pick_output: Option<async_oneshot::Sender<Option<String>>>,
+    pub pick_color: Option<async_oneshot::Sender<Option<niri_ipc::PickedColor>>>,
 
     pub debug_draw_opaque_regions: bool,
     pub debug_draw_damage: bool,
@@ -1987,7 +1990,7 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
-    pub fn handle_pick_color(&mut self, tx: async_channel::Sender<Option<niri_ipc::PickedColor>>) {
+    pub fn handle_pick_color(&mut self, tx: async_oneshot::Sender<Option<niri_ipc::PickedColor>>) {
         let pointer = self.niri.seat.get_pointer().unwrap();
         let start_data = PointerGrabStartData {
             focus: None,
@@ -1997,6 +2000,41 @@ impl State {
         let grab = PickColorGrab::new(start_data);
         pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
         self.niri.pick_color = Some(tx);
+        self.niri
+            .cursor_manager
+            .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
+        self.niri.queue_redraw_all();
+    }
+
+    pub fn handle_pick_window(&mut self, tx: async_oneshot::Sender<Option<MappedId>>) {
+        let pointer = self.niri.seat.get_pointer().unwrap();
+        let start_data = PointerGrabStartData {
+            focus: None,
+            button: 0,
+            location: pointer.current_location(),
+        };
+        let grab = PickWindowGrab::new(start_data);
+        // The `WindowPickGrab` ungrab handler will cancel the previous ongoing pick, if
+        // any.
+        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        self.niri.pick_window = Some(tx);
+        self.niri
+            .cursor_manager
+            .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
+        // Redraw to update the cursor.
+        self.niri.queue_redraw_all();
+    }
+
+    pub fn handle_pick_output(&mut self, tx: async_oneshot::Sender<Option<String>>) {
+        let pointer = self.niri.seat.get_pointer().unwrap();
+        let start_data = PointerGrabStartData {
+            focus: None,
+            button: 0,
+            location: pointer.current_location(),
+        };
+        let grab = PickOutputGrab::new(start_data);
+        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        self.niri.pick_output = Some(tx);
         self.niri
             .cursor_manager
             .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
@@ -2840,6 +2878,7 @@ impl Niri {
 
             pick_window: None,
             pick_color: None,
+            pick_output: None,
 
             debug_draw_opaque_regions: false,
             debug_draw_damage: false,

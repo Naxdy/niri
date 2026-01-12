@@ -9,19 +9,18 @@ use smithay::input::pointer::{
 use smithay::utils::{Logical, Point};
 
 use crate::niri::State;
-use crate::window::Mapped;
 
-pub struct PickWindowGrab {
+pub struct PickOutputGrab {
     start_data: PointerGrabStartData<State>,
 }
 
-impl PickWindowGrab {
+impl PickOutputGrab {
     pub const fn new(start_data: PointerGrabStartData<State>) -> Self {
         Self { start_data }
     }
 
     fn on_ungrab(&mut self, state: &mut State) {
-        if let Some(mut tx) = state.niri.pick_window.take() {
+        if let Some(mut tx) = state.niri.pick_output.take() {
             let _ = tx.send(None);
         }
         state
@@ -33,7 +32,7 @@ impl PickWindowGrab {
     }
 }
 
-impl PointerGrab<State> for PickWindowGrab {
+impl PointerGrab<State> for PickOutputGrab {
     fn motion(
         &mut self,
         data: &mut State,
@@ -67,11 +66,11 @@ impl PointerGrab<State> for PickWindowGrab {
         // We're handling this press, don't send the release to the window.
         data.niri.suppressed_buttons.insert(event.button);
 
-        if let Some(mut tx) = data.niri.pick_window.take() {
+        if let Some(mut tx) = data.niri.pick_output.take() {
             let _ = tx.send(
                 data.niri
-                    .window_under(handle.current_location())
-                    .map(Mapped::id),
+                    .output_under(handle.current_location())
+                    .map(|(o, _)| o.name()),
             );
         }
 
