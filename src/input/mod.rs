@@ -798,14 +798,14 @@ impl State {
                     .move_window_into_or_out_of_group(None, direction);
                 self.niri.queue_redraw_all();
             }
-            Action::ToggleGroup => {
+            Action::ToggleGroup {} => {
                 self.niri.layout.toggle_group(None);
                 self.niri.queue_redraw_all();
             }
-            Action::FocusNextWindow => {
+            Action::FocusNextWindow {} => {
                 self.niri.layout.focus_next();
             }
-            Action::FocusPreviousWindow => {
+            Action::FocusPreviousWindow {} => {
                 self.niri.layout.focus_prev();
             }
             Action::FullscreenWindow { id } => {
@@ -3149,7 +3149,7 @@ impl State {
                                     trigger: Trigger::WheelScrollLeft,
                                     modifiers: Modifiers::empty(),
                                 },
-                                action: Action::FocusColumnLeftUnderMouse,
+                                action: Action::FocusColumnLeftUnderMouse {},
                                 repeat: true,
                                 cooldown: None,
                                 allow_when_locked: false,
@@ -3161,7 +3161,7 @@ impl State {
                                     trigger: Trigger::WheelScrollRight,
                                     modifiers: Modifiers::empty(),
                                 },
-                                action: Action::FocusColumnRightUnderMouse,
+                                action: Action::FocusColumnRightUnderMouse {},
                                 repeat: true,
                                 cooldown: None,
                                 allow_when_locked: false,
@@ -3236,7 +3236,7 @@ impl State {
                                 trigger: Trigger::WheelScrollUp,
                                 modifiers: Modifiers::empty(),
                             },
-                            action: Action::FocusColumnLeftUnderMouse,
+                            action: Action::FocusColumnLeftUnderMouse {},
                             repeat: true,
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
@@ -3248,7 +3248,7 @@ impl State {
                                 trigger: Trigger::WheelScrollDown,
                                 modifiers: Modifiers::empty(),
                             },
-                            action: Action::FocusColumnRightUnderMouse,
+                            action: Action::FocusColumnRightUnderMouse {},
                             repeat: true,
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
