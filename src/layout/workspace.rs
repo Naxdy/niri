@@ -4,10 +4,9 @@ use std::time::Duration;
 
 use niri_config::utils::MergeWith as _;
 use niri_config::{
-    CenterFocusedColumn, CornerRadius, OutputName, PresetSize, WindowMoveDirection,
-    Workspace as WorkspaceConfig,
+    CenterFocusedColumn, CornerRadius, OutputName, PresetSize, Workspace as WorkspaceConfig,
 };
-use niri_ipc::{PositionChange, SizeChange, WindowLayout};
+use niri_ipc::{PositionChange, SizeChange, WindowLayout, WindowMoveDirection};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{Window, layer_map_for_output};

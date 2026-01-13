@@ -21,3 +21,4 @@ knus = { workspace = true, optional = true }
 [features]
 clap = ["dep:clap"]
 json-schema = ["dep:schemars"]
+knus = ["dep:knus"]

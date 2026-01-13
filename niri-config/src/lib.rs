@@ -56,7 +56,7 @@ pub use crate::layout::*;
 pub use crate::misc::*;
 pub use crate::output::{Output, OutputName, Outputs, Position, Vrr};
 use crate::recent_windows::RecentWindowsPart;
-pub use crate::recent_windows::{MruDirection, MruFilter, MruPreviews, MruScope, RecentWindows};
+pub use crate::recent_windows::{MruPreviews, RecentWindows};
 pub use crate::utils::FloatOrInt;
 use crate::utils::{Flag, MergeWith as _};
 pub use crate::window_rule::{FloatingPosition, RelativeTo, WindowRule};
@@ -1943,11 +1943,11 @@ mod tests {
                                 COMPOSITOR,
                             ),
                         },
-                        action: Spawn(
-                            [
+                        action: Spawn {
+                            command: [
                                 "alacritty",
                             ],
-                        ),
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: true,
@@ -1963,7 +1963,9 @@ mod tests {
                                 COMPOSITOR,
                             ),
                         },
-                        action: CloseWindow,
+                        action: CloseWindow {
+                            id: None,
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: false,
@@ -1997,9 +1999,9 @@ mod tests {
                                 SHIFT | COMPOSITOR,
                             ),
                         },
-                        action: FocusMonitor(
-                            "eDP-1",
-                        ),
+                        action: FocusMonitor {
+                            output: "eDP-1",
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: false,
@@ -2031,9 +2033,10 @@ mod tests {
                                 CTRL | ALT | COMPOSITOR,
                             ),
                         },
-                        action: MoveWindowToMonitor(
-                            "eDP-1",
-                        ),
+                        action: MoveWindowToMonitor {
+                            id: None,
+                            output: "eDP-1",
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: false,
@@ -2049,9 +2052,9 @@ mod tests {
                                 CTRL | ALT | COMPOSITOR,
                             ),
                         },
-                        action: MoveColumnToMonitor(
-                            "DP-1",
-                        ),
+                        action: MoveColumnToMonitor {
+                            output: "DP-1",
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: false,
@@ -2083,11 +2086,11 @@ mod tests {
                                 COMPOSITOR,
                             ),
                         },
-                        action: FocusWorkspace(
-                            Index(
+                        action: FocusWorkspace {
+                            reference: Index(
                                 1,
                             ),
-                        ),
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: false,
@@ -2103,11 +2106,11 @@ mod tests {
                                 SHIFT | COMPOSITOR,
                             ),
                         },
-                        action: FocusWorkspace(
-                            Name(
+                        action: FocusWorkspace {
+                            reference: Name(
                                 "workspace-1",
                             ),
-                        ),
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: false,
@@ -2123,9 +2126,9 @@ mod tests {
                                 SHIFT | COMPOSITOR,
                             ),
                         },
-                        action: Quit(
-                            true,
-                        ),
+                        action: Quit {
+                            skip_confirmation: true,
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: false,
@@ -2157,9 +2160,9 @@ mod tests {
                                 ALT | SUPER,
                             ),
                         },
-                        action: SpawnSh(
-                            "pkill orca || exec orca",
-                        ),
+                        action: SpawnSh {
+                            command: "pkill orca || exec orca",
+                        },
                         repeat: true,
                         cooldown: None,
                         allow_when_locked: true,

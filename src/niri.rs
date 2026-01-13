@@ -17,9 +17,9 @@ use calloop::channel::SyncSender;
 use calloop::futures::Scheduler;
 use niri_config::debug::PreviewRender;
 use niri_config::{
-    Config, FloatOrInt, Key, Modifiers, OutputName, TrackLayout, WarpMouseToFocusMode,
-    WorkspaceReference, Xkb,
+    Config, FloatOrInt, Key, Modifiers, OutputName, TrackLayout, WarpMouseToFocusMode, Xkb,
 };
+use niri_ipc::WorkspaceReferenceArg;
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::Keycode;
 use smithay::backend::renderer::Color32F;
@@ -4110,14 +4110,14 @@ impl Niri {
 
     pub fn find_output_and_workspace_index(
         &self,
-        workspace_reference: WorkspaceReference,
+        workspace_reference: WorkspaceReferenceArg,
     ) -> Option<(Option<Output>, usize)> {
         let (target_workspace_index, target_workspace) = match workspace_reference {
-            WorkspaceReference::Index(index) => {
+            WorkspaceReferenceArg::Index(index) => {
                 return Some((None, index.saturating_sub(1) as usize));
             }
-            WorkspaceReference::Name(name) => self.layout.find_workspace_by_name(&name)?,
-            WorkspaceReference::Id(id) => {
+            WorkspaceReferenceArg::Name(name) => self.layout.find_workspace_by_name(&name)?,
+            WorkspaceReferenceArg::Id(id) => {
                 let id = WorkspaceId::specific(id);
                 self.layout.find_workspace_by_id(id)?
             }

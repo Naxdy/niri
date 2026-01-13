@@ -1,10 +1,14 @@
 use std::collections::HashSet;
 
 use knus::errors::DecodeError;
+use niri_ipc::{
+    Action,
+    recent_windows::{MruDirection, MruFilter, MruScope},
+};
 use smithay::input::keyboard::Keysym;
 
 use crate::utils::{MergeWith, expect_only_children};
-use crate::{Action, Bind, Color, FloatOrInt, Key, Modifiers, Trigger};
+use crate::{Bind, Color, FloatOrInt, Key, Modifiers, Trigger};
 
 #[derive(Debug, PartialEq)]
 pub struct RecentWindows {
@@ -156,36 +160,6 @@ impl From<MruBind> for Bind {
             hotkey_overlay_title: x.hotkey_overlay_title,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MruDirection {
-    /// Most recently used to least.
-    #[default]
-    Forward,
-    /// Least recently used to most.
-    Backward,
-}
-
-#[derive(knus::DecodeScalar, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MruScope {
-    /// All windows.
-    #[default]
-    All,
-    /// Windows on the active output.
-    Output,
-    /// Windows on the active workspace.
-    Workspace,
-}
-
-#[derive(knus::DecodeScalar, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MruFilter {
-    /// All windows.
-    #[default]
-    #[knus(skip)]
-    All,
-    /// Windows with the same app id as the active window.
-    AppId,
 }
 
 #[derive(knus::Decode, Debug, Clone, PartialEq, Eq)]
