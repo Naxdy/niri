@@ -2388,6 +2388,7 @@ name = "niri-ipc"
 version = "25.8.0"
 dependencies = [
  "clap",
+ "knus",
  "schemars",
  "serde",
  "serde_json",

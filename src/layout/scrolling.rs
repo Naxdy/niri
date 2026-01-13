@@ -4,8 +4,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use niri_config::utils::MergeWith as _;
-use niri_config::{CenterFocusedColumn, PresetSize, Struts, WindowMoveDirection};
-use niri_ipc::{SizeChange, WindowLayout};
+use niri_config::{CenterFocusedColumn, PresetSize, Struts};
+use niri_ipc::{SizeChange, WindowLayout, WindowMoveDirection};
 use ordered_float::NotNan;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};

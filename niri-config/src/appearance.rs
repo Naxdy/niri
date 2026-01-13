@@ -1003,8 +1003,7 @@ where
             ));
         }
 
-        let decode_radius = |ctx: &mut knus::decode::Context<S>,
-                             val: &knus::ast::Value<S>| {
+        let decode_radius = |ctx: &mut knus::decode::Context<S>, val: &knus::ast::Value<S>| {
             // Check for unexpected type name.
             if let Some(typ) = &val.type_name {
                 ctx.emit_error(DecodeError::TypeName {
