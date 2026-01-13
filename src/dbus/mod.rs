@@ -60,28 +60,13 @@ impl DBusServers {
             niri.event_loop
                 .insert_source(from_kwin_screenshot2, move |event, _, state| match event {
                     calloop::channel::Event::Msg(msg) => match msg {
-                        KwinScreenshot2ToNiri::CaptureScreen {
-                            name,
-                            include_cursor,
-                            data_tx,
-                            pipe,
-                        } => state.handle_kwin_screenshot_output(
-                            name.as_ref().map(String::as_str),
-                            include_cursor,
-                            data_tx,
-                            pipe,
-                        ),
-                        KwinScreenshot2ToNiri::CaptureWindow {
-                            window,
-                            data_tx,
-                            pipe,
-                        } => state.handle_kwin_screenshot_window(window, data_tx, pipe),
-                        KwinScreenshot2ToNiri::PickWindow(tx) => {
-                            state.handle_pick_window(tx);
-                        }
-                        KwinScreenshot2ToNiri::PickOutput(tx) => {
-                            state.handle_pick_output(tx);
-                        }
+                        KwinScreenshot2ToNiri::Screenshot {
+                            include_pointer,
+                            target,
+                            out,
+                        } => state.handle_screenshot(target, include_pointer, out),
+                        KwinScreenshot2ToNiri::PickWindow(tx) => state.handle_pick_window(tx),
+                        KwinScreenshot2ToNiri::PickOutput(tx) => state.handle_pick_output(tx),
                     },
                     calloop::channel::Event::Closed => (),
                 })
@@ -131,16 +116,22 @@ impl DBusServers {
             dbus.conn_screen_saver = try_start(screen_saver);
 
             let (to_niri, from_screenshot) = calloop::channel::channel();
-            let (to_screenshot, from_niri) = async_channel::unbounded();
             niri.event_loop
                 .insert_source(from_screenshot, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(msg) => {
-                        state.on_screen_shot_msg(&to_screenshot, msg)
-                    }
+                    calloop::channel::Event::Msg(msg) => match msg {
+                        gnome_shell_screenshot::ScreenshotToNiri::TakeScreenshot {
+                            include_pointer,
+                            target,
+                            out,
+                        } => state.handle_screenshot(target, include_pointer, out),
+                        gnome_shell_screenshot::ScreenshotToNiri::PickColor(sender) => {
+                            state.handle_pick_color(sender)
+                        }
+                    },
                     calloop::channel::Event::Closed => (),
                 })
                 .unwrap();
-            let screenshot = gnome_shell_screenshot::Screenshot::new(to_niri, from_niri);
+            let screenshot = gnome_shell_screenshot::Screenshot::new(to_niri);
             dbus.conn_screen_shot = try_start(screenshot);
 
             let (to_niri, from_introspect) = calloop::channel::channel();
@@ -223,3 +214,19 @@ fn try_start<I: Start>(iface: I) -> Option<Connection> {
         }
     }
 }
+
+/// Like bail!(), but for fdo
+macro_rules! fdbail {
+    ($($tt:tt)*) => {
+    	return Err(::zbus::fdo::Error::Failed(format!($($tt)*)))
+    };
+}
+pub(crate) use fdbail;
+
+/// Like anyhow!(), but for fdo
+macro_rules! fdhow {
+    ($($tt:tt)*) => {
+    	::zbus::fdo::Error::Failed(format!($($tt)*))
+    };
+}
+pub(crate) use fdhow;
