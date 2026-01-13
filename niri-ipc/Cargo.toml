@@ -16,6 +16,7 @@ clap = { workspace = true, optional = true }
 schemars = { version = "1.0.4", optional = true }
 serde.workspace = true
 serde_json.workspace = true
+knus = { workspace = true, optional = true }
 
 [features]
 clap = ["dep:clap"]
