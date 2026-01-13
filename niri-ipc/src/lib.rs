@@ -525,7 +525,7 @@ pub enum Action {
         /// Reference (index or name) of the workspace to focus.
         #[cfg_attr(feature = "clap", arg())]
         #[cfg_attr(feature = "knus", knus(argument))]
-        reference: WorkspaceReferenceArg,
+        reference: WorkspaceReference,
     },
     /// Focus the previous workspace.
     FocusWorkspacePrevious {},
@@ -564,7 +564,7 @@ pub enum Action {
         /// Reference (index or name) of the workspace to move the window to.
         #[cfg_attr(feature = "clap", arg())]
         #[cfg_attr(feature = "knus", knus(argument))]
-        reference: WorkspaceReferenceArg,
+        reference: WorkspaceReference,
 
         /// Whether the focus should follow the moved window.
         ///
@@ -600,7 +600,7 @@ pub enum Action {
         /// Reference (index or name) of the workspace to move the column to.
         #[cfg_attr(feature = "clap", arg())]
         #[cfg_attr(feature = "knus", knus(argument))]
-        reference: WorkspaceReferenceArg,
+        reference: WorkspaceReference,
 
         /// Whether the focus should follow the target workspace.
         ///
@@ -629,7 +629,7 @@ pub enum Action {
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg(long))]
-        reference: Option<WorkspaceReferenceArg>,
+        reference: Option<WorkspaceReference>,
     },
     /// Set the name of a workspace.
     #[cfg_attr(
@@ -646,7 +646,7 @@ pub enum Action {
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg(long))]
-        workspace: Option<WorkspaceReferenceArg>,
+        workspace: Option<WorkspaceReference>,
     },
     /// Unset the name of a workspace.
     #[cfg_attr(
@@ -658,7 +658,7 @@ pub enum Action {
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg())]
-        reference: Option<WorkspaceReferenceArg>,
+        reference: Option<WorkspaceReference>,
     },
     /// Focus the monitor to the left.
     FocusMonitorLeft {},
@@ -864,7 +864,7 @@ pub enum Action {
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg(long))]
-        reference: Option<WorkspaceReferenceArg>,
+        reference: Option<WorkspaceReference>,
     },
     /// Toggle a debug tint on windows.
     ToggleDebugTint {},
@@ -1079,7 +1079,7 @@ pub enum PositionChange {
 /// Workspace reference (id, index or name) to operate on.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
-pub enum WorkspaceReferenceArg {
+pub enum WorkspaceReference {
     /// Id of the workspace.
     Id(u64),
     /// Index of the workspace.
@@ -1726,7 +1726,7 @@ impl From<Timestamp> for Duration {
 }
 
 #[cfg(feature = "knus")]
-impl<S: knus::traits::ErrorSpan> knus::DecodeScalar<S> for WorkspaceReferenceArg {
+impl<S: knus::traits::ErrorSpan> knus::DecodeScalar<S> for WorkspaceReference {
     fn type_check(
         type_name: &Option<knus::span::Spanned<knus::ast::TypeName, S>>,
         ctx: &mut knus::decode::Context<S>,
@@ -1764,7 +1764,7 @@ impl<S: knus::traits::ErrorSpan> knus::DecodeScalar<S> for WorkspaceReferenceArg
     }
 }
 
-impl FromStr for WorkspaceReferenceArg {
+impl FromStr for WorkspaceReference {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

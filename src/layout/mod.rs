@@ -51,9 +51,7 @@ use std::time::Duration;
 use monitor::{InsertHint, InsertPosition, InsertWorkspace, MonitorAddWindowTarget};
 use niri_config::utils::MergeWith as _;
 use niri_config::{Config, CornerRadius, LayoutPart, PresetSize, Workspace as WorkspaceConfig};
-use niri_ipc::{
-    PositionChange, SizeChange, WindowLayout, WindowMoveDirection, WorkspaceReferenceArg,
-};
+use niri_ipc::{PositionChange, SizeChange, WindowLayout, WindowMoveDirection, WorkspaceReference};
 use scrolling::{Column, ColumnWidth};
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::RescaleRenderElement;
@@ -1319,30 +1317,30 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn find_workspace_by_ref(
         &mut self,
-        reference: WorkspaceReferenceArg,
+        reference: WorkspaceReference,
     ) -> Option<&mut Workspace<W>> {
-        if let WorkspaceReferenceArg::Index(index) = reference {
+        if let WorkspaceReference::Index(index) = reference {
             self.active_monitor().and_then(|m| {
                 let index = index.saturating_sub(1) as usize;
                 m.workspaces.get_mut(index)
             })
         } else {
             self.workspaces_mut().find(|ws| match &reference {
-                WorkspaceReferenceArg::Name(ref_name) => ws
+                WorkspaceReference::Name(ref_name) => ws
                     .name
                     .as_ref()
                     .is_some_and(|name| name.eq_ignore_ascii_case(ref_name)),
-                WorkspaceReferenceArg::Id(id) => ws.id().get() == *id,
-                WorkspaceReferenceArg::Index(_) => unreachable!(),
+                WorkspaceReference::Id(id) => ws.id().get() == *id,
+                WorkspaceReference::Index(_) => unreachable!(),
             })
         }
     }
 
     pub fn unname_workspace(&mut self, workspace_name: &str) {
-        self.unname_workspace_by_ref(WorkspaceReferenceArg::Name(workspace_name.into()));
+        self.unname_workspace_by_ref(WorkspaceReference::Name(workspace_name.into()));
     }
 
-    pub fn unname_workspace_by_ref(&mut self, reference: WorkspaceReferenceArg) {
+    pub fn unname_workspace_by_ref(&mut self, reference: WorkspaceReference) {
         let id = self.find_workspace_by_ref(reference).map(|ws| ws.id());
         if let Some(id) = id {
             self.unname_workspace_by_id(id);
@@ -4628,7 +4626,7 @@ impl<W: LayoutElement> Layout<W> {
         monitor.move_workspace_to_idx(old_idx, new_idx);
     }
 
-    pub fn set_workspace_name(&mut self, name: String, reference: Option<WorkspaceReferenceArg>) {
+    pub fn set_workspace_name(&mut self, name: String, reference: Option<WorkspaceReference>) {
         // ignore the request if the name is already used by another workspace
         if self.find_workspace_by_name(&name).is_some() {
             return;
@@ -4678,7 +4676,7 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    pub fn unset_workspace_name(&mut self, reference: Option<WorkspaceReferenceArg>) {
+    pub fn unset_workspace_name(&mut self, reference: Option<WorkspaceReference>) {
         let ws = if let Some(reference) = reference {
             self.find_workspace_by_ref(reference)
         } else {

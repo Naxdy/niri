@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use niri_ipc::WorkspaceReferenceArg;
+use niri_ipc::WorkspaceReference;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::drm::DrmNode;
 use smithay::backend::input::{InputEvent, TabletToolDescriptor};
@@ -611,7 +611,7 @@ impl ExtWorkspaceHandler for State {
     }
 
     fn activate_workspace(&mut self, id: WorkspaceId) {
-        let reference = WorkspaceReferenceArg::Id(id.get());
+        let reference = WorkspaceReference::Id(id.get());
         if let Some((mut output, index)) = self.niri.find_output_and_workspace_index(reference) {
             if let Some(active) = self.niri.layout.active_output()
                 && output.as_ref() == Some(active)
@@ -631,7 +631,7 @@ impl ExtWorkspaceHandler for State {
     }
 
     fn assign_workspace(&mut self, ws_id: WorkspaceId, output: Output) {
-        let reference = WorkspaceReferenceArg::Id(ws_id.get());
+        let reference = WorkspaceReference::Id(ws_id.get());
         if let Some((old_output, old_idx)) = self.niri.find_output_and_workspace_index(reference) {
             self.niri
                 .layout

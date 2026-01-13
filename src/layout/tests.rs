@@ -5,7 +5,7 @@ use niri_config::workspace::WorkspaceName;
 use niri_config::{
     CenterFocusedColumn, FloatOrInt, OutputName, Struts, TabIndicatorLength, TabIndicatorPosition,
 };
-use niri_ipc::WorkspaceReferenceArg;
+use niri_ipc::WorkspaceReference;
 use proptest::prelude::*;
 use proptest_derive::Arbitrary;
 use smithay::output::{Mode, PhysicalProperties, Subpixel};
@@ -914,12 +914,12 @@ impl Op {
                 ws_name,
             } => {
                 let ws_ref =
-                    ws_name.map(|ws_name| WorkspaceReferenceArg::Name(format!("ws{ws_name}")));
+                    ws_name.map(|ws_name| WorkspaceReference::Name(format!("ws{ws_name}")));
                 layout.set_workspace_name(format!("ws{new_ws_name}"), ws_ref);
             }
             Op::UnsetWorkspaceName { ws_name } => {
                 let ws_ref =
-                    ws_name.map(|ws_name| WorkspaceReferenceArg::Name(format!("ws{ws_name}")));
+                    ws_name.map(|ws_name| WorkspaceReference::Name(format!("ws{ws_name}")));
                 layout.unset_workspace_name(ws_ref);
             }
             Op::AddWindow { mut params } => {
