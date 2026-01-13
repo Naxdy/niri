@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 bitflags.workspace = true
 csscolorparser = "0.7.2"
-knus = { version = "3.3.1", path = "../../knus" }
+knus.workspace = true
 miette = { version = "7.6.0", features = ["fancy-no-backtrace"] }
 niri-ipc = { version = "25.8.0", path = "../niri-ipc", features = ["knus"] }
 regex = "1.11.3"

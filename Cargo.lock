@@ -1969,6 +1969,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "knus"
 version = "3.3.1"
+source = "git+https://github.com/TheLostLambda/knus.git#581e719f1d749313b2e712f5fad5a599c983a22e"
 dependencies = [
  "base64",
  "chumsky",
@@ -1981,6 +1982,7 @@ dependencies = [
 [[package]]
 name = "knus-derive"
 version = "3.3.1"
+source = "git+https://github.com/TheLostLambda/knus.git#581e719f1d749313b2e712f5fad5a599c983a22e"
 dependencies = [
  "heck",
  "proc-macro-error2",
