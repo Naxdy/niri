@@ -209,6 +209,10 @@ static MAPPED_ID_COUNTER: IdCounter = IdCounter::new();
 pub struct MappedId(u64);
 
 impl MappedId {
+    pub fn from_raw(u: u64) -> Self {
+        Self(u)
+    }
+
     pub fn next() -> Self {
         Self(MAPPED_ID_COUNTER.next())
     }

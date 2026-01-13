@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fs::File};
 
+use anyhow::bail;
 use smithay::reexports::rustix;
 use zbus::{
     fdo::{self, RequestNameFlags},
@@ -7,32 +8,45 @@ use zbus::{
     zvariant::{OwnedValue, Value},
 };
 
-use crate::{dbus::Start, window::mapped::MappedId};
+use crate::{
+    dbus::{Start, fdbail, fdhow},
+    niri::{Niri, NoopScreenshotPipe, ScreenshotData, ScreenshotOutput, ScreenshotTarget},
+    window::mapped::MappedId,
+};
 
 pub struct KwinScreenshot2 {
     to_niri: calloop::channel::Sender<KwinScreenshot2ToNiri>,
 }
 
-pub struct KwinImageData {
-    pub width: u32,
-    pub height: u32,
-    pub screen: Option<String>,
-    pub window_id: Option<String>,
-    pub scale: f64,
+pub struct KwinScreenshotOutput {
+    data_tx: async_oneshot::Sender<anyhow::Result<ScreenshotData>>,
+    pipe: File,
+}
+impl ScreenshotOutput for KwinScreenshotOutput {
+    type Pipe = NoopScreenshotPipe<File>;
+
+    fn image_meta_failed(mut self, err: anyhow::Error) {
+        // Receiver is dead
+        let _ = self.data_tx.send(Err(err));
+    }
+
+    fn image_meta_success(
+        mut self,
+        _state: &mut Niri,
+        data: ScreenshotData,
+    ) -> anyhow::Result<Self::Pipe> {
+        if let Err(e) = self.data_tx.send(Ok(data)) {
+            bail!("client no longer waits on the image: {e:?}")
+        }
+        Ok(NoopScreenshotPipe(self.pipe))
+    }
 }
 
 pub enum KwinScreenshot2ToNiri {
-    CaptureScreen {
-        // None for current
-        name: Option<String>,
-        include_cursor: bool,
-        data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
-        pipe: File,
-    },
-    CaptureWindow {
-        window: Option<MappedId>,
-        data_tx: async_oneshot::Sender<anyhow::Result<KwinImageData>>,
-        pipe: File,
+    Screenshot {
+        target: ScreenshotTarget,
+        include_pointer: bool,
+        out: KwinScreenshotOutput,
     },
     PickWindow(async_oneshot::Sender<Option<MappedId>>),
     PickOutput(async_oneshot::Sender<Option<String>>),
@@ -40,7 +54,7 @@ pub enum KwinScreenshot2ToNiri {
 
 const QIMAGE_FORMAT_RGBA8888: u32 = 17;
 
-fn image_data_to_dbus(data: KwinImageData) -> HashMap<String, OwnedValue> {
+fn image_data_to_dbus(data: ScreenshotData) -> HashMap<String, OwnedValue> {
     let mut out = HashMap::new();
     out.insert(
         "type".to_owned(),
@@ -77,74 +91,54 @@ fn image_data_to_dbus(data: KwinImageData) -> HashMap<String, OwnedValue> {
     out
 }
 
-async fn capture_screen(
+async fn capture(
     this: &KwinScreenshot2,
-    name: Option<String>,
+    target: ScreenshotTarget,
     options: HashMap<String, OwnedValue>,
     pipe: zbus::zvariant::OwnedFd,
 ) -> fdo::Result<HashMap<String, OwnedValue>> {
     let pipe = rustix::io::fcntl_dupfd_cloexec(pipe, 0)
-        .map_err(|e| fdo::Error::Failed(format!("failed to prepare pipe: {e:?}")))?;
+        .map_err(|e| fdhow!("failed to prepare pipe: {e:?}"))?;
     let pipe = File::from(pipe);
 
     let (data_tx, data_rx) = async_oneshot::oneshot();
 
-    let include_cursor = match options.get("include-cursor").map(bool::try_from) {
+    let include_pointer = match options.get("include-cursor").map(bool::try_from) {
         Some(Ok(v)) => v,
         _ => false,
     };
 
+    let out = KwinScreenshotOutput { data_tx, pipe };
+
     this.to_niri
-        .send(KwinScreenshot2ToNiri::CaptureScreen {
-            name,
-            include_cursor,
-            data_tx,
-            pipe,
+        .send(KwinScreenshot2ToNiri::Screenshot {
+            target,
+            include_pointer,
+            out,
         })
-        .map_err(|e| fdo::Error::Failed(format!("failed to request screenshot: {e:?}")))?;
+        .map_err(|e| fdhow!("failed to request screenshot: {e:?}"))?;
 
     let data = match data_rx.await {
         Ok(Ok(v)) => v,
-        Ok(Err(e)) => return Err(fdo::Error::Failed(e.to_string())),
-        Err(e) => {
-            return Err(fdo::Error::Failed(format!(
-                "failed to request screenshot: {e:?}"
-            )));
-        }
+        Ok(Err(e)) => fdbail!("{e:?}"),
+        Err(e) => fdbail!("failed to request screenshot: {e:?}"),
     };
     Ok(image_data_to_dbus(data))
 }
 
-async fn capture_window(
-    this: &KwinScreenshot2,
-    window: Option<MappedId>,
-    _options: HashMap<String, OwnedValue>,
-    pipe: zbus::zvariant::OwnedFd,
-) -> fdo::Result<HashMap<String, OwnedValue>> {
-    let pipe = rustix::io::fcntl_dupfd_cloexec(pipe, 0)
-        .map_err(|e| fdo::Error::Failed(format!("failed to prepare pipe: {e:?}")))?;
-    let pipe = File::from(pipe);
-
-    let (data_tx, data_rx) = async_oneshot::oneshot();
-
-    this.to_niri
-        .send(KwinScreenshot2ToNiri::CaptureWindow {
-            window,
-            data_tx,
-            pipe,
-        })
-        .map_err(|e| fdo::Error::Failed(format!("failed to request screenshot: {e:?}")))?;
-
-    let data = match data_rx.await {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => return Err(fdo::Error::Failed(e.to_string())),
-        Err(e) => {
-            return Err(fdo::Error::Failed(format!(
-                "failed to request screenshot: {e:?}"
-            )));
+enum InteractiveKind {
+    Window,
+    Output,
+    Unknown,
+}
+impl From<u32> for InteractiveKind {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => Self::Window,
+            1 => Self::Output,
+            _ => Self::Unknown,
         }
-    };
-    Ok(image_data_to_dbus(data))
+    }
 }
 
 /// https://github.com/KDE/kwin/blob/b3d8b7085a5186744807300e122f2ef687e943fe/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml
@@ -159,7 +153,7 @@ impl KwinScreenshot2 {
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        capture_screen(self, None, options, pipe).await
+        capture(self, ScreenshotTarget::CurrentOutput, options, pipe).await
     }
     async fn capture_screen(
         &self,
@@ -167,14 +161,14 @@ impl KwinScreenshot2 {
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        capture_screen(self, Some(name), options, pipe).await
+        capture(self, ScreenshotTarget::Output(name), options, pipe).await
     }
     async fn capture_active_window(
         &self,
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        capture_window(self, None, options, pipe).await
+        capture(self, ScreenshotTarget::CurrentWindow, options, pipe).await
     }
     async fn capture_interactive(
         &self,
@@ -182,38 +176,34 @@ impl KwinScreenshot2 {
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        match kind {
-            0 => {
+        match InteractiveKind::from(kind) {
+            InteractiveKind::Window => {
                 let (tx, rx) = async_oneshot::oneshot();
                 self.to_niri
                     .send(KwinScreenshot2ToNiri::PickWindow(tx))
-                    .map_err(|e| {
-                        fdo::Error::Failed(format!("failed to request window pick: {e:?}"))
-                    })?;
-                let window = rx.await.map_err(|e| {
-                    fdo::Error::Failed(format!("compositor failed to pick window: {e:?}"))
-                })?;
-                if window.is_none() {
-                    return Err(fdo::Error::Failed(format!("no window selected")));
-                }
-                capture_window(self, window, options, pipe).await
+                    .map_err(|e| fdhow!("failed to request window pick: {e:?}"))?;
+                let Some(window) = rx
+                    .await
+                    .map_err(|e| fdhow!("compositor failed to pick window: {e:?}"))?
+                else {
+                    fdbail!("no window selected");
+                };
+                capture(self, ScreenshotTarget::Window(window), options, pipe).await
             }
-            1 => {
+            InteractiveKind::Output => {
                 let (tx, rx) = async_oneshot::oneshot();
                 self.to_niri
                     .send(KwinScreenshot2ToNiri::PickOutput(tx))
-                    .map_err(|e| {
-                        fdo::Error::Failed(format!("failed to request window pick: {e:?}"))
-                    })?;
-                let output = rx.await.map_err(|e| {
-                    fdo::Error::Failed(format!("compositor failed to pick output: {e:?}"))
-                })?;
-                if output.is_none() {
-                    return Err(fdo::Error::Failed(format!("no output selected")));
-                }
-                capture_screen(self, output, options, pipe).await
+                    .map_err(|e| fdhow!("failed to request window pick: {e:?}"))?;
+                let Some(output) = rx
+                    .await
+                    .map_err(|e| fdhow!("compositor failed to pick output: {e:?}"))?
+                else {
+                    fdbail!("no output selected");
+                };
+                capture(self, ScreenshotTarget::Output(output), options, pipe).await
             }
-            _ => Err(fdo::Error::Failed("unsupported pick option".to_owned())),
+            _ => fdbail!("unsupported pick option"),
         }
     }
 
