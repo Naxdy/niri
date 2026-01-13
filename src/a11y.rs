@@ -7,12 +7,12 @@ use accesskit::{
 };
 use accesskit_unix::Adapter;
 use calloop::LoopHandle;
-use niri_config::MruScope;
 
 use crate::layout::workspace::WorkspaceId;
 use crate::niri::{KeyboardFocus, Niri, State};
 use crate::utils::with_toplevel_role;
 use crate::window::mapped::MappedId;
+use niri_ipc::recent_windows::MruScope;
 
 const ID_ROOT: NodeId = NodeId(0);
 const ID_ANNOUNCEMENT: NodeId = NodeId(1);
