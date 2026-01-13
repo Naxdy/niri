@@ -10,7 +10,6 @@ layout {
     center-focused-column "never"
     always-center-single-column
     empty-workspace-above-first
-    default-column-display "tabbed"
     background-color "#003300"
 
     preset-column-widths {
@@ -66,11 +65,9 @@ layout {
         // off
         on
         hide-when-single-tab
-        place-within-column
         gap 5
         width 4
         length total-proportion=1.0
-        position "right"
         gaps-between-tabs 2
         corner-radius 8
         active-color "red"
@@ -151,26 +148,6 @@ If set, niri will always add an empty workspace at the very start, in addition t
 ```kdl
 layout {
     empty-workspace-above-first
-}
-```
-
-### `default-column-display`
-
-<sup>Since: 25.02</sup>
-
-Sets the default display mode for new columns.
-Can be `normal` or `tabbed`.
-
-```kdl
-// Make all new columns tabbed by default.
-layout {
-    default-column-display "tabbed"
-
-    // You may also want to hide the tab indicator
-    // when there's only a single window in a column.
-    tab-indicator {
-        hide-when-single-tab
-    }
 }
 ```
 
