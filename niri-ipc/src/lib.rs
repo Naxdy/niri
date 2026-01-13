@@ -184,20 +184,23 @@ pub struct PickedColor {
     pub rgb: [f64; 3],
 }
 
+/// Direction for window to move to
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, Hash)]
 #[cfg_attr(feature = "knus", derive(knus::DecodeScalar))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 pub enum WindowMoveDirection {
+    /// Up
     Up,
+    /// Left
     Left,
+    /// Right
     Right,
+    /// Down
     Down,
 }
 
 /// Actions that niri can perform.
-// Variants in this enum should match the spelling of the ones in niri-config. Most, but not all,
-// variants from niri-config should be present here.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "knus", derive(knus::Decode))]
@@ -212,10 +215,13 @@ pub enum Action {
         #[cfg_attr(feature = "knus", knus(property, default))]
         skip_confirmation: bool,
     },
+    /// Switch backend to another TTY
     #[cfg_attr(feature = "knus", knus(skip))]
     ChangeVt {
+        /// TTY id
         vt: i32,
     },
+    /// Suspend logind session
     Suspend {},
     /// Power off all monitors via DPMS.
     PowerOffMonitors {},
@@ -313,14 +319,19 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
     },
-    ToggleGroup,
+    /// Toggle window grouping as tabs
+    ToggleGroup {},
+    /// Move window into/from the tab group
     MoveWindowIntoOrOutOfGroup {
+        /// Move target direction
         #[cfg_attr(feature = "clap", arg())]
         #[cfg_attr(feature = "knus", knus(argument))]
         direction: WindowMoveDirection,
     },
-    FocusNextWindow,
-    FocusPreviousWindow,
+    /// Focus next window
+    FocusNextWindow {},
+    /// Focus previous window
+    FocusPreviousWindow {},
     /// Toggle fullscreen on a window.
     #[cfg_attr(
         feature = "clap",
@@ -365,12 +376,14 @@ pub enum Action {
     FocusWindowPrevious {},
     /// Focus the column to the left.
     FocusColumnLeft {},
+    /// Focus the column to the left on the output under the cursor.
     #[cfg_attr(feature = "knus", knus(skip))]
-    FocusColumnLeftUnderMouse,
+    FocusColumnLeftUnderMouse {},
     /// Focus the column to the right.
     FocusColumnRight {},
+    /// Focus the column to the right on the output under the cursor.
     #[cfg_attr(feature = "knus", knus(skip))]
-    FocusColumnRightUnderMouse,
+    FocusColumnRightUnderMouse {},
     /// Focus the first column.
     FocusColumnFirst {},
     /// Focus the last column.
@@ -499,10 +512,12 @@ pub enum Action {
     CenterVisibleColumns {},
     /// Focus the workspace below.
     FocusWorkspaceDown {},
+    /// Focus the workspace below on the output under mouse cursor.
     #[cfg_attr(feature = "knus", knus(skip))]
     FocusWorkspaceDownUnderMouse,
     /// Focus the workspace above.
     FocusWorkspaceUp {},
+    /// Focus the workspace above on the output under mouse cursor.
     #[cfg_attr(feature = "knus", knus(skip))]
     FocusWorkspaceUpUnderMouse,
     /// Focus a workspace by reference (index or name).
@@ -983,34 +998,52 @@ pub enum Action {
     /// niri's config file watcher to notice the changes.
     #[cfg_attr(feature = "knus", knus(skip))]
     LoadConfigFile {},
+    /// Screenshot UI: confirm screenshot area selection
     #[cfg_attr(feature = "knus", knus(skip))]
     ConfirmScreenshot {
+        /// Write the screenshot to disk in addition to putting it in your clipboard.
+        ///
+        /// The screenshot is saved according to the `screenshot-path` config setting.
         write_to_disk: bool,
     },
+    /// Screenshot UI: cancel screenshot area selection
     #[cfg_attr(feature = "knus", knus(skip))]
     CancelScreenshot,
+    /// Screenshot UI: toggle between rendering cursor to screenshot or not
     #[cfg_attr(feature = "knus", knus(skip))]
     ScreenshotTogglePointer,
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruAdvance {
+        /// IDK
         direction: MruDirection,
+        /// IDK
         scope: Option<MruScope>,
+        /// IDK
         filter: Option<MruFilter>,
     },
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruConfirm,
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruCancel,
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruCloseCurrentWindow,
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruFirst,
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruLast,
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruSetScope {
+        /// IDK
         scope: MruScope,
     },
+    /// IDK
     #[cfg_attr(feature = "knus", knus(skip))]
     MruCycleScope,
 }
