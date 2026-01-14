@@ -119,22 +119,23 @@ impl Blur {
         self.config = config;
     }
 
-    // TODO: the alpha tex methods can probably do better / without clearing `self.inner` entirely
-
     pub fn clear_alpha_tex(&self) {
         if self.alpha_tex.borrow().is_some() {
-            self.inner
-                .borrow_mut()
-                .iter_mut()
-                .for_each(BlurRenderElement::damage_all);
+            self.inner.borrow_mut().iter_mut().for_each(|e| {
+                e.alpha_tex = None;
+                e.damage_all();
+            });
         }
 
         self.alpha_tex.set(None);
     }
 
     pub fn set_alpha_tex(&self, alpha_tex: GlesTexture) {
+        self.inner.borrow_mut().iter_mut().for_each(|e| {
+            e.alpha_tex = Some(alpha_tex.clone());
+            e.damage_all();
+        });
         self.alpha_tex.set(Some(alpha_tex));
-        self.inner.set(vec![]);
     }
 
     pub const fn update_render_elements(&mut self, is_active: bool) {
@@ -180,7 +181,6 @@ where
 
         let sample_region = destination_region
             .rects()
-            .iter()
             .map(|destination_area| {
                 if let (Some(zoom), true) = (overview_zoom, true_blur) {
                     let mut sample_area = destination_area.to_f64().upscale(zoom);
@@ -193,7 +193,7 @@ where
                         (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
                     sample_area.to_i32_round()
                 } else {
-                    *destination_area
+                    destination_area
                 }
             })
             .collect::<Region<_, _>>();
@@ -229,15 +229,15 @@ where
             _ => false,
         });
 
-        let changed_any = destination_region.rects().len() != inner.len()
+        let changed_any = destination_region.len() != inner.len()
             || inner
                 .iter_mut()
                 .zip(destination_region.rects())
                 .zip(sample_region.rects())
                 .any(|((inner, destination_area), sample_area)| {
                     // if nothing about our geometry changed, we don't need to re-render blur
-                    if inner.sample_area == *sample_area
-                        && inner.destination_area == *destination_area
+                    if inner.sample_area == sample_area
+                        && inner.destination_area == destination_area
                         && inner.geometry == geometry
                         && inner.scale == scale
                         && inner.corner_radius == corner_radius
@@ -273,13 +273,12 @@ where
 
         *inner = destination_region
             .rects()
-            .iter()
-            .zip(sample_region.rects().iter())
+            .zip(sample_region.rects())
             .filter_map(|(destination_area, sample_area)| {
                 Some(BlurRenderElement::new(
                     &fx_buffers.borrow(),
-                    *sample_area,
-                    *destination_area,
+                    sample_area,
+                    destination_area,
                     corner_radius,
                     scale,
                     self.config,

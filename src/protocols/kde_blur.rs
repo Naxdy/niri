@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
     protocol::{wl_region::WlRegion, wl_surface::WlSurface},
@@ -10,6 +12,7 @@ const PROTOCOL_VERSION: u32 = 1;
 
 pub struct OrgKdeKwinBlurState {
     pub surface: WlSurface,
+    pub region: Arc<RwLock<Option<WlRegion>>>,
 }
 
 pub struct OrgKdeKwinBlurManagerState {}
@@ -88,7 +91,8 @@ where
         match request {
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur_manager::Request::Create { id, surface } => {
                 data_init.init(id, OrgKdeKwinBlurState {
-                    surface
+                    surface,
+                        region: Arc::new(RwLock::new(None))
                 });
             },
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur_manager::Request::Unset { surface } => {
@@ -117,12 +121,13 @@ where
     ) {
         match request {
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::Commit => {
+                state.set_blur_region(&data.surface, data.region.read().unwrap().clone());
                 state.enable_blur(&data.surface);
             }
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::SetRegion {
                 region,
             } => {
-                state.set_blur_region(&data.surface, region);
+                *data.region.write().unwrap() = region;
             }
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::Release => {}
             e => {

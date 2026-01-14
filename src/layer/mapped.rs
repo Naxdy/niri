@@ -427,7 +427,10 @@ impl MappedLayer {
 
             // If there's been an update to our render elements, we need to render them again for
             // our blur ignore alpha pass.
-            if ignore_alpha > 0. && self.blur.maybe_update_commit_tracker(our_tracker) {
+            if ignore_alpha > 0.
+                && self.blur_region.is_none()
+                && self.blur.maybe_update_commit_tracker(our_tracker)
+            {
                 push_elements_from_surface_tree(
                     renderer.as_gles_renderer(),
                     surface,
