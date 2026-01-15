@@ -427,10 +427,7 @@ impl MappedLayer {
 
             // If there's been an update to our render elements, we need to render them again for
             // our blur ignore alpha pass.
-            if ignore_alpha > 0.
-                && self.blur_region.is_none()
-                && self.blur.maybe_update_commit_tracker(our_tracker)
-            {
+            if ignore_alpha > 0. {
                 push_elements_from_surface_tree(
                     renderer.as_gles_renderer(),
                     surface,
@@ -486,10 +483,14 @@ impl MappedLayer {
 
             let geo = Rectangle::new(location, blur_sample_area.size.to_f64());
 
-            let blur_region = self.blur_region.as_ref().map_or_else(
-                || Region::from_rects(std::iter::once(blur_sample_area)),
-                |r| r.with_offset(location.to_i32_round()),
-            );
+            let blur_region = if ignore_alpha > 0. {
+                Region::from_rects(std::iter::once(blur_sample_area))
+            } else {
+                self.blur_region.as_ref().map_or_else(
+                    || Region::from_rects(std::iter::once(blur_sample_area)),
+                    |r| r.with_offset(location.to_i32_round()),
+                )
+            };
 
             self.blur.render(
                 renderer,
