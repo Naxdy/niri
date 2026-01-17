@@ -1,7 +1,6 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-#[cfg(feature = "dbus")]
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
