@@ -264,7 +264,12 @@ enum RequestSizeOnce {
 }
 
 impl Mapped {
-    pub fn new(window: Window, rules: ResolvedWindowRules, hook: HookId) -> Self {
+    pub fn new(
+        window: Window,
+        rules: ResolvedWindowRules,
+        hook: HookId,
+        appmenu: Option<AppmenuPath>,
+    ) -> Self {
         let surface = window.wl_surface().expect("no X11 support");
         let credentials = get_credentials_for_surface(&surface);
 
@@ -302,7 +307,7 @@ impl Mapped {
             focus_timestamp: None,
             proto_wants_blur: false,
             #[cfg(feature = "dbus")]
-            appmenu: None,
+            appmenu,
         };
 
         rv.is_maximized = rv.sizing_mode().is_maximized();

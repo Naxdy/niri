@@ -4,6 +4,9 @@ use smithay::output::Output;
 use smithay::wayland::shell::xdg::ToplevelSurface;
 use smithay::wayland::xdg_activation::XdgActivationTokenData;
 
+#[cfg(feature = "dbus")]
+use crate::protocols::kde_appmenu::AppmenuPath;
+
 use super::ResolvedWindowRules;
 
 #[derive(Debug)]
@@ -12,6 +15,10 @@ pub struct Unmapped {
     pub state: InitialConfigureState,
     /// Activation token, if one was used on this unmapped window.
     pub activation_token_data: Option<XdgActivationTokenData>,
+
+    /// Appmenu as assigned by KDE appmenu protocol
+    #[cfg(feature = "dbus")]
+    pub appmenu: Option<AppmenuPath>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -87,6 +94,8 @@ impl Unmapped {
                 wants_maximized: false,
             },
             activation_token_data: None,
+            #[cfg(feature = "dbus")]
+            appmenu: None,
         }
     }
 

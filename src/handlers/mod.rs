@@ -935,10 +935,12 @@ delegate_org_kde_kwin_blur!(State);
 #[cfg(feature = "dbus")]
 impl OrgKdeKwinAppmenuManagerHandler for State {
     fn set_appmenu(&mut self, surface: &WlSurface, appmenu: Option<AppmenuPath>) {
-        if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(surface) {
+        if let Some(unmapped) = self.niri.unmapped_windows.get_mut(surface) {
+            unmapped.appmenu = appmenu;
+        } else if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(surface) {
             mapped.set_appmenu(appmenu);
         } else {
-            trace!(
+            warn!(
                 "tried to set appmenu on un-mapped or unsupported sorface: {}",
                 surface.id()
             )
