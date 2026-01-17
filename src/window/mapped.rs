@@ -30,6 +30,8 @@ use crate::layout::{
 };
 use crate::niri::OutputRenderElements;
 use crate::niri_render_elements;
+#[cfg(feature = "dbus")]
+use crate::protocols::kde_appmenu::AppmenuPath;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::offscreen::OffscreenData;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -190,6 +192,10 @@ pub struct Mapped {
 
     /// Whether this window wants blur as specified by any of the wayland protocols.
     proto_wants_blur: bool,
+
+    /// Appmenu as assigned by KDE appmenu protocol
+    #[cfg(feature = "dbus")]
+    appmenu: Option<AppmenuPath>,
 }
 
 niri_render_elements! {
@@ -289,6 +295,8 @@ impl Mapped {
             uncommitted_maximized: Vec::new(),
             focus_timestamp: None,
             proto_wants_blur: false,
+            #[cfg(feature = "dbus")]
+            appmenu: None,
         };
 
         rv.is_maximized = rv.sizing_mode().is_maximized();
@@ -578,6 +586,16 @@ impl Mapped {
 
     pub const fn is_urgent(&self) -> bool {
         self.is_urgent
+    }
+
+    #[cfg(feature = "dbus")]
+    pub fn set_appmenu(&mut self, appmenu: Option<AppmenuPath>) {
+        self.appmenu = appmenu;
+    }
+
+    #[cfg(feature = "dbus")]
+    pub fn get_appmenu(&self) -> Option<AppmenuPath> {
+        self.appmenu.clone()
     }
 }
 

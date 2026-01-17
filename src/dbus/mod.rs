@@ -3,6 +3,7 @@ use zbus::object_server::Interface;
 
 use crate::niri::State;
 
+pub mod canonical_dbusmenu;
 pub mod freedesktop_a11y;
 pub mod freedesktop_locale1;
 pub mod freedesktop_login1;
@@ -22,6 +23,7 @@ use self::freedesktop_screensaver::ScreenSaver;
 use self::gnome_shell_introspect::Introspect;
 use self::mutter_display_config::DisplayConfig;
 use self::mutter_service_channel::ServiceChannel;
+use self::canonical_dbusmenu::CanonicalDbusmenu;
 
 trait Start: Interface {
     fn start(self) -> anyhow::Result<zbus::blocking::Connection>;
@@ -39,6 +41,7 @@ pub struct DBusServers {
     pub conn_login1: Option<Connection>,
     pub conn_locale1: Option<Connection>,
     pub conn_keyboard_monitor: Option<Connection>,
+    pub conn_canonical_dbusmenu: Option<Connection>,
 }
 
 impl DBusServers {
@@ -50,6 +53,27 @@ impl DBusServers {
         let config = niri.config.borrow();
 
         let mut dbus = Self::default();
+
+        if is_session_instance {
+            let (to_niri, from_appmenu) = calloop::channel::channel();
+            niri.event_loop
+                .insert_source(from_appmenu, move |event, _, state| match event {
+                    calloop::channel::Event::Msg(msg) => match msg {
+                        canonical_dbusmenu::AppmenuToNiri::QueryAppmenu(id, mut sender) => {
+                            let result = state
+                                .niri
+                                .layout
+                                .windows()
+                                .find(|(_, m)| m.id().get() == id as u64)
+                                .and_then(|(_, m)| m.get_appmenu());
+                            let _ = sender.send(result);
+                        }
+                    },
+                    calloop::channel::Event::Closed => {}
+                });
+            let canonical_dbusmenu = CanonicalDbusmenu::new(to_niri);
+            dbus.conn_canonical_dbusmenu = try_start(canonical_dbusmenu);
+        }
 
         if is_session_instance {
             let (to_niri, from_service_channel) = calloop::channel::channel();
