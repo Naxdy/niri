@@ -153,6 +153,8 @@ use crate::protocols::ext_background_effect::ExtBackgroundEffectManagerState;
 use crate::protocols::ext_workspace::{self, ExtWorkspaceManagerState};
 use crate::protocols::foreign_toplevel::{self, ForeignToplevelManagerState};
 use crate::protocols::gamma_control::GammaControlManagerState;
+#[cfg(feature = "dbus")]
+use crate::protocols::kde_appmenu::OrgKdeKwinAppmenuManagerState;
 use crate::protocols::kde_blur::OrgKdeKwinBlurManagerState;
 use crate::protocols::mutter_x11_interop::MutterX11InteropManagerState;
 use crate::protocols::output_management::OutputManagementManagerState;
@@ -324,6 +326,9 @@ pub struct Niri {
     pub mutter_x11_interop_state: MutterX11InteropManagerState,
     pub org_kde_kwin_blur_manager_state: OrgKdeKwinBlurManagerState,
     pub ext_background_effect_manager_state: ExtBackgroundEffectManagerState,
+
+    #[cfg(feature = "dbus")]
+    pub org_kde_kwin_appmenu_manager_state: OrgKdeKwinAppmenuManagerState,
 
     // This will not work as is outside of tests, so it is gated with #[cfg(test)] for now. In
     // particular, shaders will need to learn about the single pixel buffer. Also, it must be
@@ -2831,6 +2836,10 @@ impl Niri {
         let org_kde_kwin_blur_manager_state =
             OrgKdeKwinBlurManagerState::new::<State, _>(&display_handle, |_| true);
 
+        #[cfg(feature = "dbus")]
+        let org_kde_kwin_appmenu_manager_state =
+            OrgKdeKwinAppmenuManagerState::new::<State, _>(&display_handle, |_| true);
+
         let ext_background_effect_manager_state =
             ExtBackgroundEffectManagerState::new::<State, _>(&display_handle, |_| true);
 
@@ -3037,6 +3046,8 @@ impl Niri {
             activation_state,
             mutter_x11_interop_state,
             org_kde_kwin_blur_manager_state,
+            #[cfg(feature = "dbus")]
+            org_kde_kwin_appmenu_manager_state,
             ext_background_effect_manager_state,
             #[cfg(test)]
             single_pixel_buffer_state,

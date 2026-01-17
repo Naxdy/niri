@@ -9,4 +9,8 @@ pub mod screencopy;
 pub mod virtual_keyboard;
 pub mod virtual_pointer;
 
+// Doesn't make sense without dbus, as it is tied to dbusmenu
+#[cfg(feature = "dbus")]
+pub mod kde_appmenu;
+
 pub mod raw;

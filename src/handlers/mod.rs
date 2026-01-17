@@ -71,6 +71,8 @@ use smithay::{
     delegate_viewporter, delegate_xdg_activation,
 };
 
+#[cfg(feature = "dbus")]
+use crate::delegate_org_kde_kwin_appmenu;
 pub use crate::handlers::xdg_shell::KdeDecorationsModeState;
 use crate::layout::workspace::WorkspaceId;
 use crate::layout::{ActivateWindow, LayoutElement as _};
@@ -81,6 +83,8 @@ use crate::protocols::foreign_toplevel::{
     self, ForeignToplevelHandler, ForeignToplevelManagerState,
 };
 use crate::protocols::gamma_control::{GammaControlHandler, GammaControlManagerState};
+#[cfg(feature = "dbus")]
+use crate::protocols::kde_appmenu::{AppmenuPath, OrgKdeKwinAppmenuManagerHandler};
 use crate::protocols::kde_blur::OrgKdeKwinBlurManagerHandler;
 use crate::protocols::mutter_x11_interop::MutterX11InteropHandler;
 use crate::protocols::output_management::{OutputManagementHandler, OutputManagementManagerState};
@@ -927,6 +931,22 @@ impl OrgKdeKwinBlurManagerHandler for State {
     }
 }
 delegate_org_kde_kwin_blur!(State);
+
+#[cfg(feature = "dbus")]
+impl OrgKdeKwinAppmenuManagerHandler for State {
+    fn set_appmenu(&mut self, surface: &WlSurface, appmenu: Option<AppmenuPath>) {
+        if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(surface) {
+            mapped.set_appmenu(appmenu);
+        } else {
+            trace!(
+                "tried to set appmenu on un-mapped or unsupported sorface: {}",
+                surface.id()
+            )
+        }
+    }
+}
+#[cfg(feature = "dbus")]
+delegate_org_kde_kwin_appmenu!(State);
 
 impl ExtBackgroundEffectManagerHandler for State {
     fn ext_background_effect_manager_state(

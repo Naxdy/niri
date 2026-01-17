@@ -4,6 +4,7 @@ use zbus::object_server::Interface;
 use crate::dbus::kwin_screenshot2::KwinScreenshot2ToNiri;
 use crate::niri::State;
 
+pub mod canonical_dbusmenu;
 pub mod freedesktop_a11y;
 pub mod freedesktop_locale1;
 pub mod freedesktop_login1;
@@ -25,6 +26,7 @@ use self::gnome_shell_introspect::Introspect;
 use self::kwin_screenshot2::KwinScreenshot2;
 use self::mutter_display_config::DisplayConfig;
 use self::mutter_service_channel::ServiceChannel;
+use self::canonical_dbusmenu::CanonicalDbusmenu;
 
 trait Start: Interface {
     fn start(self) -> anyhow::Result<zbus::blocking::Connection>;
@@ -43,6 +45,7 @@ pub struct DBusServers {
     pub conn_locale1: Option<Connection>,
     pub conn_keyboard_monitor: Option<Connection>,
     pub conn_kwin_screenshot2: Option<Connection>,
+    pub conn_canonical_dbusmenu: Option<Connection>,
 }
 
 impl DBusServers {
@@ -74,6 +77,28 @@ impl DBusServers {
             let kwin_screenshot2 = KwinScreenshot2::new(to_niri);
 
             dbus.conn_kwin_screenshot2 = try_start(kwin_screenshot2);
+        }
+
+        if is_session_instance {
+            let (to_niri, from_appmenu) = calloop::channel::channel();
+            niri.event_loop
+                .insert_source(from_appmenu, move |event, _, state| match event {
+                    calloop::channel::Event::Msg(msg) => match msg {
+                        canonical_dbusmenu::AppmenuToNiri::QueryAppmenu(id, sender) => {
+                            let result = state
+                                .niri
+                                .layout
+                                .windows()
+                                .find(|(_, m)| m.id().get() == id as u64)
+                                .and_then(|(_, m)| m.get_appmenu());
+                            let _ = sender.send(result);
+                        }
+                    },
+                    calloop::channel::Event::Closed => {}
+                })
+                .unwrap();
+            let canonical_dbusmenu = CanonicalDbusmenu::new(to_niri);
+            dbus.conn_canonical_dbusmenu = try_start(canonical_dbusmenu);
         }
 
         if is_session_instance {
