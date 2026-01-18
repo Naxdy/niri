@@ -21,8 +21,6 @@ impl AppmenuPath {
     }
 }
 
-use crate::niri::State;
-
 const PROTOCOL_VERSION: u32 = 2;
 
 pub struct OrgKdeKwinAppmenuManagerState {}
@@ -85,18 +83,19 @@ where
     }
 }
 
-impl GlobalDispatch<OrgKdeKwinAppmenuManager, OrgKdeKwinAppmenuManagerGlobalData, State>
+impl<D> GlobalDispatch<OrgKdeKwinAppmenuManager, OrgKdeKwinAppmenuManagerGlobalData, D>
     for OrgKdeKwinAppmenuManagerState
+where
+    D: Dispatch<OrgKdeKwinAppmenuManager, ()>,
 {
     fn bind(
-        _state: &mut State,
+        _state: &mut D,
         _handle: &DisplayHandle,
         _client: &Client,
         resource: smithay::reexports::wayland_server::New<OrgKdeKwinAppmenuManager>,
         _global_data: &OrgKdeKwinAppmenuManagerGlobalData,
-        data_init: &mut DataInit<'_, State>,
+        data_init: &mut DataInit<'_, D>,
     ) {
-        info!("init appmenu manager");
         data_init.init(resource, ());
     }
 
@@ -105,15 +104,18 @@ impl GlobalDispatch<OrgKdeKwinAppmenuManager, OrgKdeKwinAppmenuManagerGlobalData
     }
 }
 
-impl Dispatch<OrgKdeKwinAppmenu, OrgKdeKwinAppmenuState, State> for OrgKdeKwinAppmenuManagerState {
+impl<D> Dispatch<OrgKdeKwinAppmenu, OrgKdeKwinAppmenuState, D> for OrgKdeKwinAppmenuManagerState
+where
+    D: OrgKdeKwinAppmenuManagerHandler,
+{
     fn request(
-        state: &mut State,
+        state: &mut D,
         _client: &Client,
         _resource: &OrgKdeKwinAppmenu,
         request: <OrgKdeKwinAppmenu as Resource>::Request,
         data: &OrgKdeKwinAppmenuState,
         _dhandle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, State>,
+        _data_init: &mut DataInit<'_, D>,
     ) {
         match request {
             wayland_protocols_plasma::appmenu::server::org_kde_kwin_appmenu::Request::SetAddress { service_name, object_path } => {
