@@ -150,6 +150,7 @@ use crate::protocols::ext_workspace::{self, ExtWorkspaceManagerState};
 use crate::protocols::foreign_toplevel::{self, ForeignToplevelManagerState};
 use crate::protocols::gamma_control::GammaControlManagerState;
 use crate::protocols::kde_blur::OrgKdeKwinBlurManagerState;
+use crate::protocols::kde_outputorder::KdeOutputOrderV1State;
 use crate::protocols::mutter_x11_interop::MutterX11InteropManagerState;
 use crate::protocols::output_management::OutputManagementManagerState;
 use crate::protocols::screencopy::{Screencopy, ScreencopyBuffer, ScreencopyManagerState};
@@ -317,6 +318,7 @@ pub struct Niri {
     pub activation_state: XdgActivationState,
     pub mutter_x11_interop_state: MutterX11InteropManagerState,
     pub org_kde_kwin_blur_manager_state: OrgKdeKwinBlurManagerState,
+    pub kde_output_order_v1_state: KdeOutputOrderV1State,
     pub ext_background_effect_manager_state: ExtBackgroundEffectManagerState,
 
     // This will not work as is outside of tests, so it is gated with #[cfg(test)] for now. In
@@ -1922,7 +1924,8 @@ impl State {
         self.niri.on_ipc_outputs_changed();
 
         let new_config = self.backend.ipc_outputs().lock().unwrap().clone();
-        self.niri.output_management_state.notify_changes(new_config);
+        self.niri.output_management_state.notify_changes(&new_config);
+        self.niri.kde_output_order_v1_state.notify_changes(&new_config)
     }
 
     pub fn open_screenshot_ui(&mut self, show_pointer: bool, path: Option<String>) {
@@ -2557,6 +2560,9 @@ impl Niri {
 
         let org_kde_kwin_blur_manager_state =
             OrgKdeKwinBlurManagerState::new::<State, _>(&display_handle, |_| true);
+ 
+        let kde_output_order_v1_state =
+            KdeOutputOrderV1State::new::<State, _>(&display_handle, |_| true);
 
         let ext_background_effect_manager_state =
             ExtBackgroundEffectManagerState::new::<State, _>(&display_handle, |_| true);
@@ -2764,6 +2770,7 @@ impl Niri {
             activation_state,
             mutter_x11_interop_state,
             org_kde_kwin_blur_manager_state,
+            kde_output_order_v1_state,
             ext_background_effect_manager_state,
             #[cfg(test)]
             single_pixel_buffer_state,
