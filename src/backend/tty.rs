@@ -3376,7 +3376,7 @@ unsafe fn init_libinput_plugin_system(libinput: &Libinput) {
         use input::AsRaw as _;
         use input::ffi::libinput;
 
-        extern "C" {
+        unsafe extern "C" {
             fn libinput_plugin_system_append_path(libinput: *const libinput, path: *const c_char);
             fn libinput_plugin_system_append_default_paths(libinput: *const libinput);
             fn libinput_plugin_system_load_plugins(
