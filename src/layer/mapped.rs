@@ -483,12 +483,14 @@ impl MappedLayer {
 
             let geo = Rectangle::new(location, blur_sample_area.size.to_f64());
 
-            let blur_region = if ignore_alpha > 0. {
-                Region::from_rects(std::iter::once(blur_sample_area))
+            let default_region = Region::from_rects(std::iter::once(blur_sample_area));
+
+            let (blur_region, region_offset) = if ignore_alpha > 0. {
+                (&default_region, Point::default())
             } else {
                 self.blur_region.as_ref().map_or_else(
-                    || Region::from_rects(std::iter::once(blur_sample_area)),
-                    |r| r.with_offset(location.to_i32_round()),
+                    || (&default_region, Point::default()),
+                    |r| (r, location.to_i32_round()),
                 )
             };
 
@@ -496,7 +498,8 @@ impl MappedLayer {
                 renderer,
                 BlurRenderContext {
                     fx_buffers,
-                    destination_region: &blur_region,
+                    region_offset,
+                    destination_region: blur_region,
                     corner_radius: self.rules.geometry_corner_radius.unwrap_or_default(),
                     scale: self.scale,
                     geometry: geo,

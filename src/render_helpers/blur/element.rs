@@ -73,6 +73,7 @@ impl CommitTracker {
 #[derive(Debug)]
 pub struct BlurRenderContext<'a> {
     pub fx_buffers: EffectsFramebuffersUserData,
+    pub region_offset: Point<i32, Logical>,
     pub destination_region: &'a Region<i32, Logical>,
     pub corner_radius: CornerRadius,
     pub scale: f64,
@@ -143,6 +144,34 @@ impl Blur {
     }
 }
 
+/// Helper function to return the rects of a region used for sampling a specific
+/// destination region.
+fn sample_region_rects<'a>(
+    region_offset: Point<i32, Logical>,
+    overview_zoom: Option<f64>,
+    true_blur: bool,
+    scale: f64,
+    destination_region: &'a Region<i32, Logical>,
+    fx_buffers: &'a EffectsFramebuffers,
+) -> impl Iterator<Item = Rectangle<i32, Logical>> + 'a {
+    destination_region
+        .rects_with_offset(region_offset)
+        .map(move |destination_area| {
+            if let (Some(zoom), true) = (overview_zoom, true_blur) {
+                let mut sample_area = destination_area.to_f64().upscale(zoom);
+
+                let center = (fx_buffers.output_size.to_f64().to_logical(scale) / 2.).to_point();
+                sample_area.loc.x =
+                    (center.x - destination_area.loc.x as f64).mul_add(-zoom, center.x);
+                sample_area.loc.y =
+                    (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
+                sample_area.to_i32_round()
+            } else {
+                destination_area
+            }
+        })
+}
+
 impl<'a, R> Render<'a, R> for Blur
 where
     R: NiriRenderer,
@@ -165,6 +194,7 @@ where
             render_loc,
             overview_zoom,
             alpha,
+            region_offset,
         } = render_context;
 
         if !self.config.on || self.config.passes == 0 || self.config.radius.0 == 0. {
@@ -178,25 +208,6 @@ where
         ) {
             true_blur = false;
         }
-
-        let sample_region = destination_region
-            .rects()
-            .map(|destination_area| {
-                if let (Some(zoom), true) = (overview_zoom, true_blur) {
-                    let mut sample_area = destination_area.to_f64().upscale(zoom);
-
-                    let center = (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.)
-                        .to_point();
-                    sample_area.loc.x =
-                        (center.x - destination_area.loc.x as f64).mul_add(-zoom, center.x);
-                    sample_area.loc.y =
-                        (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
-                    sample_area.to_i32_round()
-                } else {
-                    destination_area
-                }
-            })
-            .collect::<Region<_, _>>();
 
         let mut tex_buffer = || {
             renderer
@@ -232,8 +243,15 @@ where
         let changed_any = destination_region.len() != inner.len()
             || inner
                 .iter_mut()
-                .zip(destination_region.rects())
-                .zip(sample_region.rects())
+                .zip(destination_region.rects_with_offset(region_offset))
+                .zip(sample_region_rects(
+                    region_offset,
+                    overview_zoom,
+                    true_blur,
+                    scale,
+                    destination_region,
+                    &fx_buffers.borrow(),
+                ))
                 .any(|((inner, destination_area), sample_area)| {
                     // if nothing about our geometry changed, we don't need to re-render blur
                     if inner.sample_area == sample_area
@@ -272,8 +290,15 @@ where
         }
 
         *inner = destination_region
-            .rects()
-            .zip(sample_region.rects())
+            .rects_with_offset(region_offset)
+            .zip(sample_region_rects(
+                region_offset,
+                overview_zoom,
+                true_blur,
+                scale,
+                destination_region,
+                &fx_buffers.borrow(),
+            ))
             .filter_map(|(destination_area, sample_area)| {
                 Some(BlurRenderElement::new(
                     &fx_buffers.borrow(),

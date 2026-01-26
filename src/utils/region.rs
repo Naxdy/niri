@@ -24,26 +24,19 @@ where
         }
     }
 
-    pub fn with_offset(&self, point: Point<N, Kind>) -> Self {
-        let mut this = Self {
-            rects: self
-                .rects
-                .iter()
-                .map(|mut r| {
-                    r.loc.x += point.x;
-                    r.loc.y += point.y;
-                    r
-                })
-                .collect(),
-        };
-
-        this.rects.sort_rects();
-
-        this
-    }
-
     pub fn rects(&self) -> impl Iterator<Item = Rectangle<N, Kind>> {
         self.rects.iter()
+    }
+
+    pub fn rects_with_offset(
+        &self,
+        point: Point<N, Kind>,
+    ) -> impl Iterator<Item = Rectangle<N, Kind>> {
+        self.rects.iter().map(move |mut r| {
+            r.loc.x += point.x;
+            r.loc.y += point.y;
+            r
+        })
     }
 
     pub fn subtract_rect(&mut self, rect: Rectangle<N, Kind>) {
@@ -116,10 +109,28 @@ where
     N: Coordinate + Default + PartialOrd + Add + Sub + Copy + AddAssign,
 {
     fn from_iter<T: IntoIterator<Item = Rectangle<N, Kind>>>(iter: T) -> Self {
-        iter.into_iter().fold(Self::new(), |mut acc, curr| {
-            acc.add_rect(curr);
-            acc
-        })
+        let mut iter = iter.into_iter();
+        let (lower, upper) = iter.size_hint();
+        let num_elems = upper.unwrap_or(lower);
+
+        if num_elems > 1 {
+            iter.fold(
+                Self {
+                    rects: RegionInner::Multiple(Vec::with_capacity(num_elems)),
+                },
+                |mut acc, curr| {
+                    acc.add_rect(curr);
+                    acc
+                },
+            )
+        } else {
+            Self {
+                rects: match iter.next() {
+                    Some(rect) => RegionInner::Single(rect),
+                    None => RegionInner::Empty,
+                },
+            }
+        }
     }
 }
 
@@ -239,5 +250,21 @@ where
         self.idx += 1;
 
         item.copied()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining_elems = match &self.inner {
+            RegionInner::Empty => 0,
+            RegionInner::Single(_) => {
+                if self.idx > 0 {
+                    0
+                } else {
+                    1
+                }
+            }
+            RegionInner::Multiple(rectangles) => rectangles.len() - self.idx,
+        };
+
+        (remaining_elems, Some(remaining_elems))
     }
 }
