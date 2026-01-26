@@ -1938,6 +1938,7 @@ where
             self.blur.render(
                 renderer,
                 BlurRenderContext {
+                    region_offset: Point::default(),
                     fx_buffers: fx_buffers.clone(),
                     destination_region: &Region::from_rects(std::iter::once(
                         blur_sample_area.to_i32_round(),
