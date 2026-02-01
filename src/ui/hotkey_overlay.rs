@@ -5,7 +5,8 @@ use std::fmt::Write as _;
 use std::iter::zip;
 use std::rc::Rc;
 
-use niri_config::{Action, Bind, Config, Key, ModKey, Modifiers, Trigger};
+use niri_config::{Bind, Config, Key, ModKey, Modifiers, Trigger};
+use niri_ipc::Action;
 use pangocairo::cairo::{self, ImageSurface};
 use pangocairo::pango::{AttrColor, AttrInt, AttrList, AttrString, FontDescription, Weight};
 use smithay::backend::renderer::element::Kind;
@@ -197,72 +198,88 @@ fn collect_actions(config: &Config) -> Vec<&Action> {
     let binds = &config.binds.0;
 
     // Collect actions that we want to show.
-    let mut actions = vec![&Action::ShowHotkeyOverlay];
+    let mut actions = vec![&Action::ShowHotkeyOverlay {}];
 
     // Prefer Quit(false) if found, otherwise try Quit(true), and if there's neither, fall back to
     // Quit(false).
-    if binds.iter().any(|bind| bind.action == Action::Quit(false)) {
-        actions.push(&Action::Quit(false));
-    } else if binds.iter().any(|bind| bind.action == Action::Quit(true)) {
-        actions.push(&Action::Quit(true));
+    if binds.iter().any(|bind| {
+        bind.action
+            == Action::Quit {
+                skip_confirmation: false,
+            }
+    }) {
+        actions.push(&Action::Quit {
+            skip_confirmation: false,
+        });
+    } else if binds.iter().any(|bind| {
+        bind.action
+            == Action::Quit {
+                skip_confirmation: true,
+            }
+    }) {
+        actions.push(&Action::Quit {
+            skip_confirmation: true,
+        });
     } else {
-        actions.push(&Action::Quit(false));
+        actions.push(&Action::Quit {
+            skip_confirmation: false,
+        });
     }
 
     actions.extend(&[
-        &Action::CloseWindow,
-        &Action::FocusColumnLeft,
-        &Action::FocusColumnRight,
-        &Action::MoveColumnLeft,
-        &Action::MoveColumnRight,
-        &Action::FocusWorkspaceDown,
-        &Action::FocusWorkspaceUp,
+        &Action::CloseWindow { id: None },
+        &Action::FocusColumnLeft {},
+        &Action::FocusColumnRight {},
+        &Action::MoveColumnLeft {},
+        &Action::MoveColumnRight {},
+        &Action::FocusWorkspaceDown {},
+        &Action::FocusWorkspaceUp {},
     ]);
 
     // Prefer move-column-to-workspace-down, but fall back to move-window-to-workspace-down.
     if let Some(bind) = binds
         .iter()
-        .find(|bind| matches!(bind.action, Action::MoveColumnToWorkspaceDown(_)))
+        .find(|bind| matches!(bind.action, Action::MoveColumnToWorkspaceDown { .. }))
     {
         actions.push(&bind.action);
     } else if binds
         .iter()
-        .any(|bind| matches!(bind.action, Action::MoveWindowToWorkspaceDown(_)))
+        .any(|bind| matches!(bind.action, Action::MoveWindowToWorkspaceDown { .. }))
     {
-        actions.push(&Action::MoveWindowToWorkspaceDown(true));
+        actions.push(&Action::MoveWindowToWorkspaceDown { focus: true });
     } else {
-        actions.push(&Action::MoveColumnToWorkspaceDown(true));
+        actions.push(&Action::MoveColumnToWorkspaceDown { focus: true });
     }
 
     // Same for -up.
     if let Some(bind) = binds
         .iter()
-        .find(|bind| matches!(bind.action, Action::MoveColumnToWorkspaceUp(_)))
+        .find(|bind| matches!(bind.action, Action::MoveColumnToWorkspaceUp { .. }))
     {
         actions.push(&bind.action);
     } else if binds
         .iter()
-        .any(|bind| matches!(bind.action, Action::MoveWindowToWorkspaceUp(_)))
+        .any(|bind| matches!(bind.action, Action::MoveWindowToWorkspaceUp { .. }))
     {
-        actions.push(&Action::MoveWindowToWorkspaceUp(true));
+        actions.push(&Action::MoveWindowToWorkspaceUp { focus: true });
     } else {
-        actions.push(&Action::MoveColumnToWorkspaceUp(true));
+        actions.push(&Action::MoveColumnToWorkspaceUp { focus: true });
     }
 
     actions.extend(&[
-        &Action::SwitchPresetColumnWidth,
-        &Action::MaximizeColumn,
-        &Action::ConsumeOrExpelWindowLeft,
-        &Action::ConsumeOrExpelWindowRight,
-        &Action::ToggleWindowFloating,
-        &Action::SwitchFocusBetweenFloatingAndTiling,
-        &Action::ToggleOverview,
+        &Action::SwitchPresetColumnWidth {},
+        &Action::MaximizeColumn {},
+        &Action::ConsumeOrExpelWindowLeft { id: None },
+        &Action::ConsumeOrExpelWindowRight { id: None },
+        &Action::ToggleWindowFloating { id: None },
+        &Action::SwitchFocusBetweenFloatingAndTiling {},
+        &Action::ToggleOverview {},
     ]);
 
     // Screenshot is not as important, can omit if not bound.
     if let Some(bind) = binds
         .iter()
-        .find(|bind| matches!(bind.action, Action::Screenshot(_, _)))
+        .find(|bind| matches!(bind.action, Action::Screenshot { .. }))
     {
         actions.push(&bind.action);
     }
@@ -279,7 +296,7 @@ fn collect_actions(config: &Config) -> Vec<&Action> {
 
     // Add the spawn actions.
     for bind in binds.iter().filter(|bind| {
-        matches!(bind.action, Action::Spawn(_) | Action::SpawnSh(_))
+        matches!(bind.action, Action::Spawn{..} | Action::SpawnSh{..})
             // Only show binds with Mod or Super to filter out stuff like volume up/down.
             && (bind.key.modifiers.contains(Modifiers::COMPOSITOR)
                 || bind.key.modifiers.contains(Modifiers::SUPER))
@@ -456,34 +473,40 @@ fn render(
 
 fn action_name(action: &Action) -> String {
     match action {
-        Action::Quit(_) => String::from("Exit niri"),
-        Action::ShowHotkeyOverlay => String::from("Show Important Hotkeys"),
-        Action::CloseWindow => String::from("Close Focused Window"),
-        Action::FocusColumnLeft => String::from("Focus Column to the Left"),
-        Action::FocusColumnRight => String::from("Focus Column to the Right"),
-        Action::MoveColumnLeft => String::from("Move Column Left"),
-        Action::MoveColumnRight => String::from("Move Column Right"),
-        Action::FocusWorkspaceDown => String::from("Switch Workspace Down"),
-        Action::FocusWorkspaceUp => String::from("Switch Workspace Up"),
-        Action::MoveColumnToWorkspaceDown(_) => String::from("Move Column to Workspace Down"),
-        Action::MoveColumnToWorkspaceUp(_) => String::from("Move Column to Workspace Up"),
-        Action::MoveWindowToWorkspaceDown(_) => String::from("Move Window to Workspace Down"),
-        Action::MoveWindowToWorkspaceUp(_) => String::from("Move Window to Workspace Up"),
-        Action::SwitchPresetColumnWidth => String::from("Switch Preset Column Widths"),
-        Action::MaximizeColumn => String::from("Maximize Column"),
-        Action::ConsumeOrExpelWindowLeft => String::from("Consume or Expel Window Left"),
-        Action::ConsumeOrExpelWindowRight => String::from("Consume or Expel Window Right"),
-        Action::ToggleWindowFloating => String::from("Move Window Between Floating and Tiling"),
-        Action::SwitchFocusBetweenFloatingAndTiling => {
+        Action::Quit { .. } => String::from("Exit niri"),
+        Action::ShowHotkeyOverlay {} => String::from("Show Important Hotkeys"),
+        Action::CloseWindow { id: None } => String::from("Close Focused Window"),
+        Action::FocusColumnLeft {} => String::from("Focus Column to the Left"),
+        Action::FocusColumnRight {} => String::from("Focus Column to the Right"),
+        Action::MoveColumnLeft {} => String::from("Move Column Left"),
+        Action::MoveColumnRight {} => String::from("Move Column Right"),
+        Action::FocusWorkspaceDown {} => String::from("Switch Workspace Down"),
+        Action::FocusWorkspaceUp {} => String::from("Switch Workspace Up"),
+        Action::MoveColumnToWorkspaceDown { .. } => String::from("Move Column to Workspace Down"),
+        Action::MoveColumnToWorkspaceUp { .. } => String::from("Move Column to Workspace Up"),
+        Action::MoveWindowToWorkspaceDown { .. } => String::from("Move Window to Workspace Down"),
+        Action::MoveWindowToWorkspaceUp { .. } => String::from("Move Window to Workspace Up"),
+        Action::SwitchPresetColumnWidth {} => String::from("Switch Preset Column Widths"),
+        Action::MaximizeColumn {} => String::from("Maximize Column"),
+        Action::ConsumeOrExpelWindowLeft { id: None } => {
+            String::from("Consume or Expel Window Left")
+        }
+        Action::ConsumeOrExpelWindowRight { id: None } => {
+            String::from("Consume or Expel Window Right")
+        }
+        Action::ToggleWindowFloating { id: None } => {
+            String::from("Move Window Between Floating and Tiling")
+        }
+        Action::SwitchFocusBetweenFloatingAndTiling {} => {
             String::from("Switch Focus Between Floating and Tiling")
         }
-        Action::ToggleOverview => String::from("Open the Overview"),
-        Action::Screenshot(_, _) => String::from("Take a Screenshot"),
-        Action::Spawn(args) => format!(
+        Action::ToggleOverview {} => String::from("Open the Overview"),
+        Action::Screenshot { .. } => String::from("Take a Screenshot"),
+        Action::Spawn { command } => format!(
             "Spawn <span face='monospace' bgcolor='#000000'>{}</span>",
-            args.first().unwrap_or(&String::new())
+            command.first().unwrap_or(&String::new())
         ),
-        Action::SpawnSh(command) => format!(
+        Action::SpawnSh { command } => format!(
             "Spawn <span face='monospace' bgcolor='#000000'>{}</span>",
             // Fairly crude but should get the job done in most cases.
             command.split_ascii_whitespace().next().unwrap_or("")
@@ -619,7 +642,7 @@ mod tests {
     #[test]
     fn test_format_bind() {
         // Not bound.
-        assert_snapshot!(check("", Action::Screenshot(true, None)), @" (not bound) : Take a Screenshot");
+        assert_snapshot!(check("", Action::Screenshot{show_pointer: true,path: None}), @" (not bound) : Take a Screenshot");
 
         // Bound with a default title.
         assert_snapshot!(
@@ -627,7 +650,7 @@ mod tests {
                 r#"binds {
                     Mod+P { screenshot; }
                 }"#,
-                Action::Screenshot(true, None),
+                Action::Screenshot{show_pointer: true, path: None},
             ),
             @" Super + P : Take a Screenshot"
         );
@@ -638,7 +661,7 @@ mod tests {
                 r#"binds {
                     Mod+P hotkey-overlay-title="Hello" { screenshot; }
                 }"#,
-                Action::Screenshot(true, None),
+                Action::Screenshot{show_pointer: true, path: None},
             ),
             @" Super + P : Hello"
         );
@@ -650,7 +673,7 @@ mod tests {
                     Mod+P { screenshot; }
                     Print { screenshot; }
                 }"#,
-                Action::Screenshot(true, None),
+                Action::Screenshot{show_pointer: true,path: None},
             ),
             @" Super + P : Take a Screenshot"
         );
@@ -662,7 +685,7 @@ mod tests {
                     Mod+P { screenshot; }
                     Print hotkey-overlay-title="My Cool Bind" { screenshot; }
                 }"#,
-                Action::Screenshot(true, None),
+                Action::Screenshot{show_pointer: true, path: None},
             ),
             @" PrtSc : My Cool Bind"
         );
@@ -674,7 +697,7 @@ mod tests {
                     Mod+P hotkey-overlay-title="First" { screenshot; }
                     Print hotkey-overlay-title="My Cool Bind" { screenshot; }
                 }"#,
-                Action::Screenshot(true, None),
+                Action::Screenshot{show_pointer: true, path: None},
             ),
             @" Super + P : First"
         );
@@ -686,7 +709,7 @@ mod tests {
                     Mod+P { screenshot; }
                     Print hotkey-overlay-title=null { screenshot; }
                 }"#,
-                Action::Screenshot(true, None),
+                Action::Screenshot{show_pointer: true, path: None},
             ),
             @"None"
         );
@@ -698,7 +721,7 @@ mod tests {
                     Mod+P hotkey-overlay-title="Hello" { screenshot; }
                     Print hotkey-overlay-title=null { screenshot; }
                 }"#,
-                Action::Screenshot(true, None),
+                Action::Screenshot{show_pointer: true, path: None},
             ),
             @" Super + P : Hello"
         );

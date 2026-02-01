@@ -1,6 +1,7 @@
 use zbus::blocking::Connection;
 use zbus::object_server::Interface;
 
+use crate::dbus::kwin_screenshot2::KwinScreenshot2ToNiri;
 use crate::niri::State;
 
 pub mod freedesktop_a11y;
@@ -9,6 +10,7 @@ pub mod freedesktop_login1;
 pub mod freedesktop_screensaver;
 pub mod gnome_shell_introspect;
 pub mod gnome_shell_screenshot;
+pub mod kwin_screenshot2;
 pub mod mutter_display_config;
 pub mod mutter_service_channel;
 
@@ -20,6 +22,7 @@ use mutter_screen_cast::ScreenCast;
 use self::freedesktop_a11y::KeyboardMonitor;
 use self::freedesktop_screensaver::ScreenSaver;
 use self::gnome_shell_introspect::Introspect;
+use self::kwin_screenshot2::KwinScreenshot2;
 use self::mutter_display_config::DisplayConfig;
 use self::mutter_service_channel::ServiceChannel;
 
@@ -39,6 +42,7 @@ pub struct DBusServers {
     pub conn_login1: Option<Connection>,
     pub conn_locale1: Option<Connection>,
     pub conn_keyboard_monitor: Option<Connection>,
+    pub conn_kwin_screenshot2: Option<Connection>,
 }
 
 impl DBusServers {
@@ -50,6 +54,27 @@ impl DBusServers {
         let config = niri.config.borrow();
 
         let mut dbus = Self::default();
+
+        if is_session_instance {
+            let (to_niri, from_kwin_screenshot2) = calloop::channel::channel();
+            niri.event_loop
+                .insert_source(from_kwin_screenshot2, move |event, _, state| match event {
+                    calloop::channel::Event::Msg(msg) => match msg {
+                        KwinScreenshot2ToNiri::Screenshot {
+                            include_pointer,
+                            target,
+                            out,
+                        } => state.handle_screenshot(target, include_pointer, out),
+                        KwinScreenshot2ToNiri::PickWindow(tx) => state.handle_pick_window(tx),
+                        KwinScreenshot2ToNiri::PickOutput(tx) => state.handle_pick_output(tx),
+                    },
+                    calloop::channel::Event::Closed => (),
+                })
+                .unwrap();
+            let kwin_screenshot2 = KwinScreenshot2::new(to_niri);
+
+            dbus.conn_kwin_screenshot2 = try_start(kwin_screenshot2);
+        }
 
         if is_session_instance {
             let (to_niri, from_service_channel) = calloop::channel::channel();
@@ -91,16 +116,22 @@ impl DBusServers {
             dbus.conn_screen_saver = try_start(screen_saver);
 
             let (to_niri, from_screenshot) = calloop::channel::channel();
-            let (to_screenshot, from_niri) = async_channel::unbounded();
             niri.event_loop
                 .insert_source(from_screenshot, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(msg) => {
-                        state.on_screen_shot_msg(&to_screenshot, msg)
-                    }
+                    calloop::channel::Event::Msg(msg) => match msg {
+                        gnome_shell_screenshot::ScreenshotToNiri::TakeScreenshot {
+                            include_pointer,
+                            target,
+                            out,
+                        } => state.handle_screenshot(target, include_pointer, out),
+                        gnome_shell_screenshot::ScreenshotToNiri::PickColor(sender) => {
+                            state.handle_pick_color(sender)
+                        }
+                    },
                     calloop::channel::Event::Closed => (),
                 })
                 .unwrap();
-            let screenshot = gnome_shell_screenshot::Screenshot::new(to_niri, from_niri);
+            let screenshot = gnome_shell_screenshot::Screenshot::new(to_niri);
             dbus.conn_screen_shot = try_start(screenshot);
 
             let (to_niri, from_introspect) = calloop::channel::channel();
@@ -183,3 +214,19 @@ fn try_start<I: Start>(iface: I) -> Option<Connection> {
         }
     }
 }
+
+/// Like bail!(), but for fdo
+macro_rules! fdbail {
+    ($($tt:tt)*) => {
+    	return Err(::zbus::fdo::Error::Failed(format!($($tt)*)))
+    };
+}
+pub(crate) use fdbail;
+
+/// Like anyhow!(), but for fdo
+macro_rules! fdhow {
+    ($($tt:tt)*) => {
+    	::zbus::fdo::Error::Failed(format!($($tt)*))
+    };
+}
+pub(crate) use fdhow;

@@ -26,6 +26,7 @@ use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::SolidColorRenderElement;
 use crate::rubber_band::RubberBand;
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
     ResizeEdge, output_size, round_logical_in_physical, round_logical_in_physical_max1,
@@ -1668,42 +1669,17 @@ impl<W: LayoutElement> Monitor<W> {
         ws.render_above_top_layer()
     }
 
-    pub fn render_insert_hint_between_workspaces<R: NiriRenderer>(
+    pub fn render_workspaces<R, C>(
         &self,
         renderer: &mut R,
-    ) -> impl Iterator<Item = MonitorRenderElement<R>> + use<R, W> {
-        let mut rv = None;
-
-        if !self.options.layout.insert_hint.off
-            && let Some(render_loc) = self.insert_hint_render_loc
-            && let InsertWorkspace::NewAt(_) = render_loc.workspace
-        {
-            let iter = self
-                .insert_hint_element
-                .render(renderer, render_loc.location)
-                .map(MonitorInnerRenderElement::UncroppedInsertHint);
-            rv = Some(iter);
-        }
-
-        rv.into_iter().flatten().map(|elem| {
-            let elem = RescaleRenderElement::from_element(elem, Point::default(), 1.);
-            RelocateRenderElement::from_element(elem, Point::default(), Relocate::Relative)
-        })
-    }
-
-    pub fn render_elements<'a, R: NiriRenderer>(
-        &'a self,
-        renderer: &'a mut R,
         target: RenderTarget,
         focus_ring: bool,
-    ) -> impl Iterator<
-        Item = (
-            Rectangle<f64, Logical>,
-            MonitorRenderElement<R>,
-            impl Iterator<Item = MonitorRenderElement<R>> + 'a,
-        ),
-    > {
-        let _span = tracy_client::span!("Monitor::render_elements");
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<MonitorRenderElement<R>, R>,
+    {
+        let _span = tracy_client::span!("Monitor::render_workspaces");
 
         let scale = self.scale.fractional_scale();
         // Ceil the height in physical pixels.
@@ -1733,95 +1709,103 @@ impl<W: LayoutElement> Monitor<W> {
 
         let zoom = self.overview_zoom();
 
-        // Draw the insert hint.
-        let mut insert_hint = None;
-        if !self.options.layout.insert_hint.off
-            && let Some(render_loc) = self.insert_hint_render_loc
-            && let InsertWorkspace::Existing(workspace_id) = render_loc.workspace
-        {
-            insert_hint = Some((
-                workspace_id,
+        let insert_hint_render_loc = self
+            .insert_hint_render_loc
+            .filter(|_| !self.options.layout.insert_hint.off);
+
+        let scale_relocate = move |geo: Rectangle<f64, Logical>, elem| {
+            let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
+            RelocateRenderElement::from_element(
+                elem,
+                // The offset we get from workspaces_with_render_geo() is already
+                // rounded to physical pixels, but it's in the logical coordinate
+                // space, so we need to convert it to physical.
+                geo.loc.to_physical_precise_round(scale),
+                Relocate::Relative,
+            )
+        };
+
+        for (ws, geo) in self.workspaces_with_render_geo() {
+            // Macro instead of closure because ws and insert hint have different elem types.
+            macro_rules! push {
+                () => {
+                    &mut |elem| {
+                        let elem = CropRenderElement::from_element(elem, scale, crop_bounds);
+                        if let Some(elem) = elem {
+                            let elem = MonitorInnerRenderElement::from(elem);
+                            let elem = scale_relocate(geo, elem);
+                            collector.push_element(elem);
+                        }
+                    }
+                };
+            }
+
+            ws.render_floating(renderer, target, focus_ring, zoom, push!());
+
+            if let Some(loc) = insert_hint_render_loc
+                && loc.workspace == InsertWorkspace::Existing(ws.id())
+            {
                 self.insert_hint_element
-                    .render(renderer, render_loc.location),
-            ));
+                    .render(renderer, loc.location, push!());
+            }
+
+            ws.render_scrolling(renderer, target, focus_ring, zoom, push!());
         }
-
-        self.workspaces_with_render_geo().map(move |(ws, geo)| {
-            let map_ws_contents = move |elem: WorkspaceRenderElement<R>| {
-                let elem = CropRenderElement::from_element(elem, scale, crop_bounds)?;
-                let elem = MonitorInnerRenderElement::Workspace(elem);
-                Some(elem)
-            };
-
-            let (floating, scrolling) =
-                ws.render_elements(renderer, target, focus_ring, self.overview_zoom());
-            let floating = floating.filter_map(map_ws_contents);
-            let scrolling = scrolling.filter_map(map_ws_contents);
-
-            let hint = if matches!(insert_hint, Some((hint_ws_id, _)) if hint_ws_id == ws.id()) {
-                let iter = insert_hint.take().unwrap().1;
-                let iter = iter.filter_map(move |elem| {
-                    let elem = CropRenderElement::from_element(elem, scale, crop_bounds)?;
-                    let elem = MonitorInnerRenderElement::InsertHint(elem);
-                    Some(elem)
-                });
-                Some(iter)
-            } else {
-                None
-            };
-            let hint = hint.into_iter().flatten();
-
-            let iter = floating.chain(hint).chain(scrolling);
-
-            let scale_relocate = move |elem| {
-                let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
-                RelocateRenderElement::from_element(
-                    elem,
-                    // The offset we get from workspaces_with_render_positions() is already
-                    // rounded to physical pixels, but it's in the logical coordinate
-                    // space, so we need to convert it to physical.
-                    geo.loc.to_physical_precise_round(scale),
-                    Relocate::Relative,
-                )
-            };
-
-            let iter = iter.map(scale_relocate);
-
-            let background = ws.render_background();
-            let background = scale_relocate(MonitorInnerRenderElement::SolidColor(background));
-
-            (geo, background, iter)
-        })
     }
+    pub fn render_workspace_shadows<R, C>(&self, renderer: &mut R, collector: &mut C)
+    where
+        R: NiriRenderer,
+        C: PushRenderElement<MonitorRenderElement<R>, R>,
+    {
+        let Some(progress) = self.overview_progress.as_ref().map(|p| p.clamped_value()) else {
+            return;
+        };
 
-    pub fn render_workspace_shadows<'a, R: NiriRenderer>(
-        &'a self,
-        renderer: &'a mut R,
-    ) -> impl Iterator<Item = MonitorRenderElement<R>> + 'a {
+        let alpha = progress.clamp(0., 1.) as f32;
+
         let _span = tracy_client::span!("Monitor::render_workspace_shadows");
 
         let scale = self.scale.fractional_scale();
         let zoom = self.overview_zoom();
-        let overview_clamped_progress = self.overview_progress.as_ref().map(|p| p.clamped_value());
 
-        self.workspaces_with_render_geo()
-            .flat_map(move |(ws, geo)| {
-                let shadow = overview_clamped_progress.map(|value| {
-                    ws.render_shadow(renderer)
-                        .map(move |elem| elem.with_alpha(value.clamp(0., 1.) as f32))
-                        .map(MonitorInnerRenderElement::Shadow)
-                });
-                let iter = shadow.into_iter().flatten();
+        for (ws, geo) in self.workspaces_with_render_geo() {
+            ws.render_shadow(renderer, &mut |elem: ShadowRenderElement| {
+                let elem = elem.with_alpha(alpha);
+                let elem = MonitorInnerRenderElement::Shadow(elem);
+                let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
+                let elem = RelocateRenderElement::from_element(
+                    elem,
+                    geo.loc.to_physical_precise_round(scale),
+                    Relocate::Relative,
+                );
+                collector.push_element(elem);
+            });
+        }
+    }
 
-                iter.map(move |elem| {
-                    let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
-                    RelocateRenderElement::from_element(
-                        elem,
-                        geo.loc.to_physical_precise_round(scale),
-                        Relocate::Relative,
-                    )
-                })
-            })
+    pub fn render_insert_hint_between_workspaces<R, C>(&self, renderer: &mut R, collector: &mut C)
+    where
+        R: NiriRenderer,
+        C: PushRenderElement<MonitorRenderElement<R>, R>,
+    {
+        if self.options.layout.insert_hint.off {
+            return;
+        }
+        let Some(render_loc) = self.insert_hint_render_loc else {
+            return;
+        };
+        let InsertWorkspace::NewAt(_) = render_loc.workspace else {
+            return;
+        };
+
+        self.insert_hint_element
+            .render(renderer, render_loc.location, &mut |elem| {
+                let elem = MonitorInnerRenderElement::UncroppedInsertHint(elem);
+                let elem = RescaleRenderElement::from_element(elem, Point::default(), 1.);
+                let elem =
+                    RelocateRenderElement::from_element(elem, Point::default(), Relocate::Relative);
+                collector.push_element(elem);
+            });
     }
 
     pub fn workspace_switch_gesture_begin(&mut self, is_touchpad: bool) {

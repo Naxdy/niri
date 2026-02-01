@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use niri::layout::focus_ring::FocusRing;
 use niri::render_helpers::border::BorderRenderElement;
+use niri::utils::render::Render;
 use niri_config::{Color, CornerRadius, GradientInterpolation};
 use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
@@ -93,11 +94,8 @@ impl TestCase for GradientArea {
             1.,
             1.,
         );
-        rv.extend(
-            self.border
-                .render(renderer, g_loc)
-                .map(|elem| Box::new(elem) as _),
-        );
+        self.border
+            .render(renderer, g_loc, &mut |elem| rv.push(Box::new(elem) as _));
 
         rv.extend(
             [BorderRenderElement::new(

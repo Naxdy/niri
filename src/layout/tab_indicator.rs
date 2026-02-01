@@ -21,6 +21,7 @@ use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::{
     floor_logical_in_physical_max1, round_logical_in_physical, round_logical_in_physical_max1,
     to_physical_precise_round,
@@ -358,72 +359,6 @@ impl TabIndicator {
             .find_map(|(idx, rect)| rect.contains(point).then_some(idx))
     }
 
-    pub fn render<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        pos: Point<f64, Logical>,
-    ) -> impl Iterator<Item = TabIndicatorRenderElement> + '_ + use<'_, R> {
-        let has_border_shader = BorderRenderElement::has_shader(renderer);
-        if !has_border_shader {
-            return None.into_iter().flatten();
-        }
-
-        let titles = (!self.config.hide_titles).then(|| {
-            zip(&self.title_textures, &self.shader_locs)
-                .filter_map(|(tex, loc)| match tex.get(renderer.as_gles_renderer()) {
-                    Ok(texture) => {
-                        let pos_x = (tex.max_size.w + MIN_DIST_TO_EDGES) / 2.
-                            - texture.logical_size().w / 2.;
-
-                        let pos_y = match self.config.position {
-                            TabIndicatorPosition::Top => -GAP_TO_BAR,
-                            TabIndicatorPosition::Bottom => GAP_TO_BAR - texture.logical_size().h,
-                        };
-
-                        Some(
-                            PrimaryGpuTextureRenderElement(
-                                TextureRenderElement::from_texture_buffer(
-                                    texture,
-                                    pos + *loc + Point::new(pos_x, pos_y),
-                                    1.,
-                                    None,
-                                    None,
-                                    Kind::Unspecified,
-                                ),
-                            )
-                            .into(),
-                        )
-                    }
-                    Err(_) => {
-                        // silent fail is ok, we just won't show the title
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .into_iter()
-        });
-
-        let font_height = self.font_height();
-
-        let rv = zip(&self.shaders, &self.shader_locs)
-            .map(move |(shader, loc)| {
-                let offset = if !self.config.hide_titles {
-                    match self.config.position {
-                        TabIndicatorPosition::Top => Point::new(0., font_height + GAP_TO_BAR),
-                        TabIndicatorPosition::Bottom => Point::new(0., -font_height - GAP_TO_BAR),
-                    }
-                } else {
-                    Point::default()
-                };
-
-                shader.clone().with_location(pos + *loc + offset)
-            })
-            .map(TabIndicatorRenderElement::from)
-            .chain(titles.into_iter().flatten());
-
-        Some(rv).into_iter().flatten()
-    }
-
     /// Extra size occupied by the tab indicator.
     pub fn extra_size(&self, tab_count: usize, scale: f64) -> Size<f64, Logical> {
         if self.config.off || (self.config.hide_when_single_tab && tab_count == 1) {
@@ -683,4 +618,72 @@ fn render_title_texture(
     )?;
 
     Ok((buffer, wanted_size))
+}
+
+impl<R> Render<'_, R> for TabIndicator
+where
+    R: NiriRenderer,
+{
+    type RenderContext = Point<f64, Logical>;
+    type RenderElement = TabIndicatorRenderElement;
+
+    fn render<C>(&self, renderer: &mut R, render_context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<TabIndicatorRenderElement, R>,
+    {
+        let pos = render_context;
+
+        let has_border_shader = BorderRenderElement::has_shader(renderer);
+        if !has_border_shader {
+            return;
+        }
+
+        (!self.config.hide_titles).then(|| {
+            zip(&self.title_textures, &self.shader_locs)
+                .filter_map(|(tex, loc)| match tex.get(renderer.as_gles_renderer()) {
+                    Ok(texture) => {
+                        let pos_x = (tex.max_size.w + MIN_DIST_TO_EDGES) / 2.
+                            - texture.logical_size().w / 2.;
+
+                        let pos_y = match self.config.position {
+                            TabIndicatorPosition::Top => -GAP_TO_BAR,
+                            TabIndicatorPosition::Bottom => GAP_TO_BAR - texture.logical_size().h,
+                        };
+
+                        Some(PrimaryGpuTextureRenderElement(
+                            TextureRenderElement::from_texture_buffer(
+                                texture,
+                                pos + *loc + Point::new(pos_x, pos_y),
+                                1.,
+                                None,
+                                None,
+                                Kind::Unspecified,
+                            ),
+                        ))
+                    }
+                    Err(_) => {
+                        // silent fail is ok, we just won't show the title
+                        None
+                    }
+                })
+                .for_each(|e| collector.push_element(e))
+        });
+
+        let font_height = self.font_height();
+
+        zip(&self.shaders, &self.shader_locs)
+            .map(move |(shader, loc)| {
+                let offset = if !self.config.hide_titles {
+                    match self.config.position {
+                        TabIndicatorPosition::Top => Point::new(0., font_height + GAP_TO_BAR),
+                        TabIndicatorPosition::Bottom => Point::new(0., -font_height - GAP_TO_BAR),
+                    }
+                } else {
+                    Point::default()
+                };
+
+                shader.clone().with_location(pos + *loc + offset)
+            })
+            .for_each(|e| collector.push_element(e));
+    }
 }

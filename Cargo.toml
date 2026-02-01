@@ -26,6 +26,10 @@ tracing = { version = "0.1.41", features = [
 tracing-subscriber = { version = "=0.3.19", features = ["env-filter"] }
 tracy-client = { version = "0.18.3", default-features = false }
 
+[workspace.dependencies.knus]
+# version = "3.3.1"
+git = "https://github.com/TheLostLambda/knus.git"
+
 [workspace.dependencies.smithay]
 # version = "0.4.1"
 git = "https://github.com/Smithay/smithay.git"
@@ -109,6 +113,7 @@ xcursor = "0.3.10"
 zbus = { version = "5.11.0", optional = true }
 itertools = "0.14.0"
 wayland-protocols-plasma = { version = "0.3.9", features = ["server"] }
+async-oneshot = "0.5.9"
 
 [dependencies.smithay]
 workspace = true
@@ -177,7 +182,7 @@ overflow-checks = true
 lto = "thin"
 
 [profile.release.package.niri-config]
-# knuffel with chomsky generates a metric ton of debuginfo.
+# knus with chomsky generates a metric ton of debuginfo.
 debug = false
 
 [profile.dev.package]

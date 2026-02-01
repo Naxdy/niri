@@ -1,6 +1,5 @@
 use std::iter::zip;
 
-use arrayvec::ArrayVec;
 use niri_config::{CornerRadius, Gradient, GradientRelativeTo};
 use smithay::backend::renderer::element::{Element as _, Kind};
 use smithay::utils::{Logical, Point, Rectangle, Size};
@@ -9,6 +8,7 @@ use crate::niri_render_elements;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
+use crate::utils::render::{PushRenderElement, Render};
 
 #[derive(Debug)]
 pub struct FocusRing {
@@ -225,52 +225,6 @@ impl FocusRing {
         }
     }
 
-    pub fn render<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-    ) -> impl Iterator<Item = FocusRingRenderElement> + use<R> {
-        let mut rv = ArrayVec::<_, 8>::new();
-
-        if self.config.off {
-            return rv.into_iter();
-        }
-
-        let border_width = -self.locations[0].y;
-
-        // If drawing as a border with width = 0, then there's nothing to draw.
-        if self.is_border && border_width == 0. {
-            return rv.into_iter();
-        }
-
-        let has_border_shader = BorderRenderElement::has_shader(renderer);
-
-        let mut push = |buffer, border: &BorderRenderElement, location: Point<f64, Logical>| {
-            let elem = if self.use_border_shader && has_border_shader {
-                border.clone().with_location(location).into()
-            } else {
-                let alpha = border.alpha();
-                SolidColorRenderElement::from_buffer(buffer, location, alpha, Kind::Unspecified)
-                    .into()
-            };
-            rv.push(elem);
-        };
-
-        if self.is_border {
-            for ((buf, border), loc) in zip(zip(&self.buffers, &self.borders), self.locations) {
-                push(buf, border, location + loc);
-            }
-        } else {
-            push(
-                &self.buffers[0],
-                &self.borders[0],
-                location + self.locations[0],
-            );
-        }
-
-        rv.into_iter()
-    }
-
     pub const fn width(&self) -> f64 {
         self.config.width
     }
@@ -285,5 +239,57 @@ impl FocusRing {
 
     pub const fn config(&self) -> &niri_config::FocusRing {
         &self.config
+    }
+}
+
+impl<R> Render<'_, R> for FocusRing
+where
+    R: NiriRenderer,
+{
+    type RenderContext = Point<f64, Logical>;
+    type RenderElement = FocusRingRenderElement;
+
+    fn render<C>(&self, renderer: &mut R, render_context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<FocusRingRenderElement, R>,
+    {
+        let location = render_context;
+
+        if self.config.off {
+            return;
+        }
+
+        let border_width = -self.locations[0].y;
+
+        // If drawing as a border with width = 0, then there's nothing to draw.
+        if self.is_border && border_width == 0. {
+            return;
+        }
+
+        let has_border_shader = BorderRenderElement::has_shader(renderer);
+
+        let mut push = |buffer, border: &BorderRenderElement, location: Point<f64, Logical>| {
+            let elem: FocusRingRenderElement = if self.use_border_shader && has_border_shader {
+                border.clone().with_location(location).into()
+            } else {
+                let alpha = border.alpha();
+                SolidColorRenderElement::from_buffer(buffer, location, alpha, Kind::Unspecified)
+                    .into()
+            };
+
+            collector.push_element(elem);
+        };
+
+        if self.is_border {
+            for ((buf, border), loc) in zip(zip(&self.buffers, &self.borders), self.locations) {
+                push(buf, border, location + loc);
+            }
+        } else {
+            push(
+                &self.buffers[0],
+                &self.borders[0],
+                location + self.locations[0],
+            );
+        }
     }
 }

@@ -1,6 +1,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -8,16 +9,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::{env, mem, thread};
+use std::{env, io, mem, thread};
 
 use _server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as KdeDecorationsMode;
 use anyhow::{Context, bail, ensure};
+use calloop::channel::SyncSender;
 use calloop::futures::Scheduler;
 use niri_config::debug::PreviewRender;
 use niri_config::{
-    Config, FloatOrInt, Key, Modifiers, OutputName, TrackLayout, WarpMouseToFocusMode,
-    WorkspaceReference, Xkb,
+    Config, FloatOrInt, Key, Modifiers, OutputName, TrackLayout, WarpMouseToFocusMode, Xkb,
 };
+use niri_ipc::WorkspaceReference;
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::Keycode;
 use smithay::backend::renderer::Color32F;
@@ -124,13 +126,13 @@ use crate::dbus::freedesktop_locale1::Locale1ToNiri;
 use crate::dbus::freedesktop_login1::Login1ToNiri;
 #[cfg(feature = "dbus")]
 use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospect};
-#[cfg(feature = "dbus")]
-use crate::dbus::gnome_shell_screenshot::{NiriToScreenshot, ScreenshotToNiri};
 #[cfg(feature = "xdp-gnome-screencast")]
 use crate::dbus::mutter_screen_cast::{self, ScreenCastToNiri};
 use crate::frame_clock::FrameClock;
 use crate::handlers::{XDG_ACTIVATION_TOKEN_TIMEOUT, configure_lock_surface};
 use crate::input::pick_color_grab::PickColorGrab;
+use crate::input::pick_output_grab::PickOutputGrab;
+use crate::input::pick_window_grab::PickWindowGrab;
 use crate::input::scroll_swipe_gesture::ScrollSwipeGesture;
 use crate::input::scroll_tracker::ScrollTracker;
 use crate::input::{
@@ -139,11 +141,15 @@ use crate::input::{
 };
 use crate::ipc::server::IpcServer;
 use crate::layer::MappedLayer;
-use crate::layer::mapped::LayerSurfaceRenderElement;
-use crate::layout::closing_element::{ClosingElement, ClosingElementRenderElement};
+use crate::layer::mapped::{LayerSurfaceRenderContext, LayerSurfaceRenderElement};
+use crate::layout::closing_element::{
+    ClosingElement, ClosingElementRenderContext, ClosingElementRenderElement,
+};
 use crate::layout::tile::TileRenderElement;
 use crate::layout::workspace::{Workspace, WorkspaceId};
-use crate::layout::{HitType, Layout, LayoutElement as _, MonitorRenderElement};
+use crate::layout::{
+    HitType, Layout, LayoutElement as _, LayoutElementRenderContext, MonitorRenderElement,
+};
 use crate::niri_render_elements;
 use crate::protocols::ext_background_effect::ExtBackgroundEffectManagerState;
 use crate::protocols::ext_workspace::{self, ExtWorkspaceManagerState};
@@ -162,10 +168,11 @@ use crate::render_helpers::debug::draw_opaque_regions;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
+use crate::render_helpers::surface::push_elements_from_surface_tree;
 use crate::render_helpers::texture::TextureBuffer;
 use crate::render_helpers::{
-    RenderTarget, SplitElements, encompassing_geo, render_to_dmabuf,
-    render_to_encompassing_texture, render_to_shm, render_to_texture, render_to_vec, shaders,
+    RenderTarget, encompassing_geo, render_to_dmabuf, render_to_encompassing_texture,
+    render_to_shm, render_to_texture, render_to_vec, shaders,
 };
 use crate::ui::config_error_notification::ConfigErrorNotification;
 use crate::ui::exit_confirm_dialog::{ExitConfirmDialog, ExitConfirmDialogRenderElement};
@@ -173,6 +180,7 @@ use crate::ui::hotkey_overlay::HotkeyOverlay;
 use crate::ui::mru::{MruCloseRequest, WindowMruUi, WindowMruUiRenderElement};
 use crate::ui::screen_transition::{self, ScreenTransition};
 use crate::ui::screenshot_ui::{OutputScreenshot, ScreenshotUi, ScreenshotUiRenderElement};
+use crate::utils::render::{PushRenderElement, Render};
 use crate::utils::scale::{closest_representable_scale, guess_monitor_scale};
 use crate::utils::spawning::{CHILD_DISPLAY, CHILD_ENV};
 use crate::utils::transaction::{Transaction, TransactionBlocker};
@@ -399,8 +407,9 @@ pub struct Niri {
     pub window_mru_ui: WindowMruUi,
     pub pending_mru_commit: Option<PendingMruCommit>,
 
-    pub pick_window: Option<async_channel::Sender<Option<MappedId>>>,
-    pub pick_color: Option<async_channel::Sender<Option<niri_ipc::PickedColor>>>,
+    pub pick_window: Option<async_oneshot::Sender<Option<MappedId>>>,
+    pub pick_output: Option<async_oneshot::Sender<Option<String>>>,
+    pub pick_color: Option<async_oneshot::Sender<Option<niri_ipc::PickedColor>>>,
 
     pub debug_draw_opaque_regions: bool,
     pub debug_draw_damage: bool,
@@ -669,6 +678,255 @@ impl KeyboardFocus {
 
     pub const fn is_overview(&self) -> bool {
         matches!(self, Self::Overview)
+    }
+}
+
+pub struct ScreenshotData {
+    pub width: u32,
+    pub height: u32,
+    pub screen: Option<String>,
+    pub window_id: Option<String>,
+    pub scale: f64,
+}
+
+pub enum ScreenshotTarget {
+    CurrentOutput,
+    Output(String),
+    CurrentWindow,
+    Window(MappedId),
+    AllOutputs,
+}
+
+pub trait ScreenshotOutput: 'static {
+    type Pipe: Write + ScreenshotPipe;
+    fn image_meta_failed(self, err: anyhow::Error);
+    fn image_meta_success(
+        self,
+        state: &mut Niri,
+        data: ScreenshotData,
+    ) -> anyhow::Result<Self::Pipe>;
+}
+pub trait ScreenshotPipe: Send + 'static {
+    type Output;
+    fn finish_success(self) -> anyhow::Result<Self::Output>;
+    fn finish_failure(self, e: anyhow::Error);
+}
+
+pub struct NoopScreenshotPipe<W>(pub W);
+impl<W> Write for NoopScreenshotPipe<W>
+where
+    W: Write,
+{
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+impl<W: Send + 'static> ScreenshotPipe for NoopScreenshotPipe<W> {
+    type Output = ();
+    fn finish_success(self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn finish_failure(self, e: anyhow::Error) {
+        warn!("screenshot writing failed: {e:?}")
+    }
+}
+
+enum WriteToDisk {
+    /// ConfiguredName if screenshot_path is set in config, No otherwise
+    Auto,
+    /// Use screenshot_path from config, fail if it is not set
+    ConfiguredName,
+    /// Use specified name
+    Name(PathBuf),
+    /// Do not save to disk
+    No,
+}
+impl WriteToDisk {
+    fn handle_auto(self, has_screenshot_path: bool) -> Self {
+        match self {
+            Self::Auto => {
+                if has_screenshot_path {
+                    Self::ConfiguredName
+                } else {
+                    Self::No
+                }
+            }
+            _ => self,
+        }
+    }
+}
+
+pub struct LegacyScreenshotOutput {
+    write_to_disk: WriteToDisk,
+    copy_to_clipboard: bool,
+}
+impl LegacyScreenshotOutput {
+    pub fn new(write_to_disk: bool, path: Option<String>) -> Self {
+        Self {
+            copy_to_clipboard: true,
+
+            write_to_disk: match (write_to_disk, path) {
+                (false, _) => WriteToDisk::No,
+                (true, Some(path)) => WriteToDisk::Name(PathBuf::from(path)),
+                (true, None) => WriteToDisk::Auto,
+            },
+        }
+    }
+}
+
+pub struct LegacyScreenshotPipe {
+    path: Option<(PathBuf, bool)>,
+    collector: io::Cursor<Vec<u8>>,
+    data: ScreenshotData,
+
+    ipc_taken: SyncSender<Option<String>>,
+    copy_to_clipboard: Option<SyncSender<Arc<[u8]>>>,
+}
+impl Write for LegacyScreenshotPipe {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.collector.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // Noop
+        self.collector.flush()
+    }
+}
+impl ScreenshotPipe for LegacyScreenshotPipe {
+    type Output = Option<PathBuf>;
+
+    fn finish_success(self) -> anyhow::Result<Self::Output> {
+        let mut image_path = None;
+
+        let mut buf = vec![];
+        let w = std::io::Cursor::new(&mut buf);
+        write_png_rgba8(
+            w,
+            self.data.width,
+            self.data.height,
+            &self.collector.into_inner(),
+        )?;
+
+        if let Some((path, create_parent)) = self.path {
+            debug!("saving screenshot to {path:?}");
+
+            if create_parent && let Some(parent) = path.parent() {
+                // Relative paths with one component, i.e. "test.png", have Some("") parent.
+                if !parent.as_os_str().is_empty()
+                    && let Err(err) = std::fs::create_dir_all(parent)
+                    && err.kind() != std::io::ErrorKind::AlreadyExists
+                {
+                    warn!("error creating screenshot directory: {err:?}");
+                }
+            }
+
+            match std::fs::write(&path, &buf) {
+                Ok(()) => image_path = Some(path),
+                Err(err) => {
+                    warn!("error saving screenshot image: {err:?}");
+                }
+            }
+        } else {
+            debug!("disk saving is not requested")
+        }
+
+        #[cfg(feature = "dbus")]
+        if let Err(err) = crate::utils::show_screenshot_notification(image_path.as_deref()) {
+            warn!("error showing screenshot notification: {err:?}");
+        }
+
+        if let Some(copy_to_clipboard) = self.copy_to_clipboard {
+            let buf: Arc<[u8]> = Arc::from(buf.into_boxed_slice());
+            let _ = copy_to_clipboard.send(buf.clone());
+        }
+
+        let path_string = image_path
+            .as_ref()
+            .map(|p| p.to_string_lossy())
+            .map(|s| s.to_string());
+        let _ = self.ipc_taken.send(path_string);
+
+        Ok(image_path)
+    }
+
+    fn finish_failure(self, err: anyhow::Error) {
+        warn!("failed to write screenshot: {err:?}")
+    }
+}
+impl ScreenshotOutput for LegacyScreenshotOutput {
+    type Pipe = LegacyScreenshotPipe;
+
+    fn image_meta_failed(self, err: anyhow::Error) {
+        warn!("failed to capture screenshot: {err:?}")
+    }
+
+    fn image_meta_success(
+        self,
+        state: &mut Niri,
+        data: ScreenshotData,
+    ) -> anyhow::Result<Self::Pipe> {
+        let path = match self
+            .write_to_disk
+            .handle_auto(state.config.borrow().screenshot_path.0.is_some())
+        {
+            WriteToDisk::Auto => unreachable!("handle_auto removes this variant"),
+            WriteToDisk::ConfiguredName => match make_screenshot_path(&state.config.borrow()) {
+                Ok(path) => Some((path, true)),
+                Err(err) => {
+                    bail!("error making screenshot path: {err:?}");
+                }
+            },
+            WriteToDisk::Name(path) => Some((path, false)),
+            WriteToDisk::No => None,
+        };
+
+        // Prepare to set the encoded image as our clipboard selection. This must be done from the
+        // main thread.
+        let copy_to_clipboard = if self.copy_to_clipboard {
+            let (tx, rx) = calloop::channel::sync_channel::<Arc<[u8]>>(1);
+            state
+                .event_loop
+                .insert_source(rx, move |event, _, state| match event {
+                    calloop::channel::Event::Msg(buf) => {
+                        set_data_device_selection(
+                            &state.niri.display_handle,
+                            &state.niri.seat,
+                            vec![String::from("image/png")],
+                            buf,
+                        );
+                    }
+                    calloop::channel::Event::Closed => (),
+                })
+                .unwrap();
+            Some(tx)
+        } else {
+            None
+        };
+
+        // Prepare to send screenshot completion event back to main thread.
+        let (ipc_taken, event_rx) = calloop::channel::sync_channel::<Option<String>>(1);
+        state
+            .event_loop
+            .insert_source(event_rx, move |event, _, state| match event {
+                calloop::channel::Event::Msg(path) => {
+                    state.ipc_screenshot_taken(path);
+                }
+                calloop::channel::Event::Closed => (),
+            })
+            .unwrap();
+
+        Ok(LegacyScreenshotPipe {
+            path,
+            collector: io::Cursor::new(Vec::new()),
+            data,
+            copy_to_clipboard,
+            ipc_taken,
+        })
     }
 }
 
@@ -1975,7 +2233,7 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
-    pub fn handle_pick_color(&mut self, tx: async_channel::Sender<Option<niri_ipc::PickedColor>>) {
+    pub fn handle_pick_color(&mut self, tx: async_oneshot::Sender<Option<niri_ipc::PickedColor>>) {
         let pointer = self.niri.seat.get_pointer().unwrap();
         let start_data = PointerGrabStartData {
             focus: None,
@@ -1991,6 +2249,41 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
+    pub fn handle_pick_window(&mut self, tx: async_oneshot::Sender<Option<MappedId>>) {
+        let pointer = self.niri.seat.get_pointer().unwrap();
+        let start_data = PointerGrabStartData {
+            focus: None,
+            button: 0,
+            location: pointer.current_location(),
+        };
+        let grab = PickWindowGrab::new(start_data);
+        // The `WindowPickGrab` ungrab handler will cancel the previous ongoing pick, if
+        // any.
+        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        self.niri.pick_window = Some(tx);
+        self.niri
+            .cursor_manager
+            .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
+        // Redraw to update the cursor.
+        self.niri.queue_redraw_all();
+    }
+
+    pub fn handle_pick_output(&mut self, tx: async_oneshot::Sender<Option<String>>) {
+        let pointer = self.niri.seat.get_pointer().unwrap();
+        let start_data = PointerGrabStartData {
+            focus: None,
+            button: 0,
+            location: pointer.current_location(),
+        };
+        let grab = PickOutputGrab::new(start_data);
+        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        self.niri.pick_output = Some(tx);
+        self.niri
+            .cursor_manager
+            .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
+        self.niri.queue_redraw_all();
+    }
+
     pub fn confirm_screenshot(&mut self, write_to_disk: bool) {
         let ScreenshotUi::Open { path, .. } = &mut self.niri.screenshot_ui else {
             return;
@@ -1999,11 +2292,17 @@ impl State {
 
         self.backend.with_primary_renderer(|renderer| {
             match self.niri.screenshot_ui.capture(renderer) {
-                Ok((size, pixels)) => {
-                    if let Err(err) = self.niri.save_screenshot(size, pixels, write_to_disk, path) {
-                        warn!("error saving screenshot: {err:?}");
-                    }
-                }
+                Ok((size, pixels)) => self.niri.save_to_pipe(
+                    ScreenshotData {
+                        width: size.w as u32,
+                        height: size.h as u32,
+                        screen: None,
+                        window_id: None,
+                        scale: 1.0,
+                    },
+                    pixels,
+                    LegacyScreenshotOutput::new(write_to_disk, path),
+                ),
                 Err(err) => {
                     warn!("error capturing screenshot: {err:?}");
                 }
@@ -2279,60 +2578,24 @@ impl State {
         }
     }
 
-    #[cfg(feature = "dbus")]
-    pub fn on_screen_shot_msg(
+    pub fn handle_screenshot<O: ScreenshotOutput>(
         &mut self,
-        to_screenshot: &async_channel::Sender<NiriToScreenshot>,
-        msg: ScreenshotToNiri,
+        target: ScreenshotTarget,
+        include_pointer: bool,
+        out: O,
     ) {
-        match msg {
-            ScreenshotToNiri::TakeScreenshot { include_cursor } => {
-                self.handle_take_screenshot(to_screenshot, include_cursor);
-            }
-            ScreenshotToNiri::PickColor(tx) => {
-                self.handle_pick_color(tx);
-            }
-        }
-    }
-
-    #[cfg(feature = "dbus")]
-    fn handle_take_screenshot(
-        &mut self,
-        to_screenshot: &async_channel::Sender<NiriToScreenshot>,
-        include_cursor: bool,
-    ) {
-        let _span = tracy_client::span!("TakeScreenshot");
-
-        let rv = self.backend.with_primary_renderer(|renderer| {
-            let on_done = {
-                let to_screenshot = to_screenshot.clone();
-                move |path| {
-                    let msg = NiriToScreenshot::ScreenshotResult(Some(path));
-                    if let Err(err) = to_screenshot.send_blocking(msg) {
-                        warn!("error sending path to screenshot: {err:?}");
-                    }
-                }
-            };
-
-            let res = self
-                .niri
-                .screenshot_all_outputs(renderer, include_cursor, on_done);
-
-            if let Err(err) = res {
-                warn!("error taking a screenshot: {err:?}");
-
-                let msg = NiriToScreenshot::ScreenshotResult(None);
-                if let Err(err) = to_screenshot.send_blocking(msg) {
-                    warn!("error sending None to screenshot: {err:?}");
-                }
-            }
-        });
-
-        if rv.is_none() {
-            let msg = NiriToScreenshot::ScreenshotResult(None);
-            if let Err(err) = to_screenshot.send_blocking(msg) {
-                warn!("error sending None to screenshot: {err:?}");
-            }
+        let mut out = Some(out);
+        if self
+            .backend
+            .with_primary_renderer(|renderer| {
+                let out = out.take().expect("always exists");
+                self.niri
+                    .screenshot_to_pipe(renderer, target, include_pointer, out)
+            })
+            .is_none()
+            && let Some(out) = out.take()
+        {
+            out.image_meta_failed(anyhow::anyhow!("no primary renderer found"));
         }
     }
 
@@ -2811,6 +3074,7 @@ impl Niri {
 
             pick_window: None,
             pick_color: None,
+            pick_output: None,
 
             debug_draw_opaque_regions: false,
             debug_draw_damage: false,
@@ -3875,13 +4139,13 @@ impl Niri {
         }
     }
 
-    pub fn pointer_element<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        output: &Output,
-    ) -> Vec<OutputRenderElements<R>> {
+    pub fn render_pointer<R, C>(&self, renderer: &mut R, output: &Output, collector: &mut C)
+    where
+        R: NiriRenderer,
+        C: PushRenderElement<PointerRenderElements<R>, R>,
+    {
         if !self.pointer_visibility.is_visible() {
-            return vec![];
+            return;
         }
 
         let _span = tracy_client::span!("Niri::render_pointer");
@@ -3900,20 +4164,21 @@ impl Niri {
 
         let output_scale = Scale::from(output.current_scale().fractional_scale());
 
-        let mut pointer_elements = match render_cursor {
-            RenderCursor::Hidden => vec![],
+        match render_cursor {
+            RenderCursor::Hidden => {}
             RenderCursor::Surface { surface, hotspot } => {
                 let pointer_pos =
                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
 
-                render_elements_from_surface_tree(
+                push_elements_from_surface_tree(
                     renderer,
                     &surface,
                     pointer_pos,
                     output_scale,
                     1.,
                     Kind::Cursor,
-                )
+                    &mut collector.as_child(),
+                );
             }
             RenderCursor::Named {
                 icon,
@@ -3926,8 +4191,7 @@ impl Niri {
                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
 
                 let texture = self.cursor_texture_cache.get(icon, scale, &cursor, idx);
-                let mut pointer_elements = vec![];
-                let pointer_element = match MemoryRenderBufferRenderElement::from_buffer(
+                match MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
                     pointer_pos,
                     &texture,
@@ -3936,34 +4200,27 @@ impl Niri {
                     None,
                     Kind::Cursor,
                 ) {
-                    Ok(element) => Some(element),
+                    Ok(element) => collector.push_element(element),
                     Err(err) => {
                         warn!("error importing a cursor texture: {err:?}");
-                        None
                     }
                 };
-                if let Some(element) = pointer_element {
-                    pointer_elements.push(OutputRenderElements::NamedPointer(element));
-                }
-
-                pointer_elements
             }
         };
 
         if let Some(dnd_icon) = self.dnd_icon.as_ref() {
             let pointer_pos =
                 (pointer_pos + dnd_icon.offset.to_f64()).to_physical_precise_round(output_scale);
-            pointer_elements.extend(render_elements_from_surface_tree(
+            push_elements_from_surface_tree(
                 renderer,
                 &dnd_icon.surface,
                 pointer_pos,
                 output_scale,
                 1.,
                 Kind::ScanoutCandidate,
-            ));
+                &mut collector.as_child(),
+            );
         }
-
-        pointer_elements
     }
 
     pub fn refresh_pointer_outputs(&mut self) {
@@ -4334,7 +4591,7 @@ impl Niri {
         // The pointer goes on the top.
         let mut elements = vec![];
         if include_pointer {
-            elements = self.pointer_element(renderer, output);
+            self.render_pointer(renderer, output, &mut elements.as_child());
         }
 
         // Next, the screen transition texture.
@@ -4423,13 +4680,8 @@ impl Niri {
         }
 
         // Then, the Alt-Tab switcher.
-        let mru_elements = self
-            .window_mru_ui
-            .render_output(self, output, renderer, target)
-            .into_iter()
-            .flatten()
-            .map(OutputRenderElements::from);
-        elements.extend(mru_elements);
+        self.window_mru_ui
+            .render_output(self, output, renderer, target, &mut elements.as_child());
 
         // Don't draw the focus ring on the workspaces while interactively moving above those
         // workspaces, since the interactively-moved window already has a focus ring.
@@ -4438,159 +4690,207 @@ impl Niri {
         // Get monitor elements.
         let mon = self.layout.monitor_for_output(output).unwrap();
         let zoom = mon.overview_zoom();
-        let monitor_elements = Vec::from_iter(
-            mon.render_elements(renderer, target, focus_ring)
-                .map(|(geo, bg, iter)| (geo, bg, Vec::from_iter(iter))),
-        );
-        let workspace_shadow_elements = Vec::from_iter(mon.render_workspace_shadows(renderer));
-        let insert_hint_elements = mon.render_insert_hint_between_workspaces(renderer);
-        let int_move_elements: Vec<_> = self
-            .layout
-            .render_interactive_move_for_output(renderer, output, target)
-            .collect();
 
         // Render closing layers
-        elements.extend(self.closing_layers.iter().filter_map(|layer| {
-            let mode = output.current_mode()?;
-
-            Some(
-                layer
-                    .render(
-                        renderer.as_gles_renderer(),
-                        Rectangle::new(
+        if let Some(mode) = output.current_mode() {
+            self.closing_layers.iter().for_each(|layer| {
+                layer.render(
+                    renderer,
+                    ClosingElementRenderContext {
+                        view_rect: Rectangle::new(
                             output.current_location().to_f64(),
                             mode.size
                                 .to_f64()
                                 .to_logical(output.current_scale().fractional_scale()),
                         ),
-                        output.current_scale().fractional_scale().into(),
-                        RenderTarget::Output,
-                    )
-                    .into(),
-            )
-        }));
+                        scale: output.current_scale().fractional_scale().into(),
+                        target: RenderTarget::Output,
+                    },
+                    &mut elements.as_child(),
+                );
+            });
+        }
 
         // Get layer-shell elements.
         let layer_map = layer_map_for_output(output);
         let fx_buffers = EffectsFramebuffers::get_user_data(output);
-        let mut extend_from_layer =
-            |elements: &mut SplitElements<LayerSurfaceRenderElement<R>>, layer, for_backdrop| {
-                self.render_layer(
-                    renderer,
-                    target,
-                    &layer_map,
-                    layer,
-                    elements,
-                    for_backdrop,
-                    fx_buffers.clone(),
-                );
-            };
 
-        // The overlay layer elements go next.
-        let mut layer_elems = SplitElements::default();
-        extend_from_layer(&mut layer_elems, Layer::Overlay, false);
-        elements.extend(layer_elems.into_iter().map(OutputRenderElements::from));
-
-        // Collect the top layer elements.
-        let mut layer_elems = SplitElements::default();
-        extend_from_layer(&mut layer_elems, Layer::Top, false);
-        let top_layer = layer_elems;
+        // Overlay is rendered first
+        self.render_layer(
+            renderer,
+            target,
+            &layer_map,
+            Layer::Overlay,
+            false,
+            fx_buffers.clone(),
+            &mut elements.as_child(),
+        );
 
         // When rendering above the top layer, we put the regular monitor elements first.
         // Otherwise, we will render all layer-shell pop-ups and the top layer on top.
         if mon.render_above_top_layer() {
-            // Collect all other layer-shell elements.
-            let mut layer_elems = SplitElements::default();
-            extend_from_layer(&mut layer_elems, Layer::Bottom, false);
-            extend_from_layer(&mut layer_elems, Layer::Background, false);
-
-            elements.extend(
-                int_move_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
+            self.layout.render_interactive_move_for_output(
+                renderer,
+                output,
+                target,
+                &mut elements.as_child(),
             );
-            elements.extend(
-                insert_hint_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
+            mon.render_insert_hint_between_workspaces(renderer, &mut elements.as_child());
+            mon.render_workspaces(renderer, target, focus_ring, &mut elements.as_child());
 
-            let mut ws_background = None;
-            elements.extend(
-                monitor_elements
-                    .into_iter()
-                    .flat_map(|(_ws_geo, ws_bg, iter)| {
-                        ws_background = Some(ws_bg);
-                        iter
-                    })
-                    .map(OutputRenderElements::from),
+            self.render_layer(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Top,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
             );
 
-            elements.extend(top_layer.into_iter().map(OutputRenderElements::from));
-            elements.extend(layer_elems.into_iter().map(OutputRenderElements::from));
+            // popups go above surfaces
+            self.render_layer_popups(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Bottom,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
+            self.render_layer_popups(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Background,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
 
-            if let Some(ws_background) = ws_background {
-                elements.push(OutputRenderElements::from(ws_background));
+            self.render_layer_normal(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Bottom,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
+            self.render_layer_normal(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Background,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
+            );
+
+            // We don't expect more than one workspace when render_above_top_layer().
+            if let Some((ws, _)) = mon.workspaces_with_render_geo().next() {
+                elements.push(ws.render_background().into());
             }
-
-            elements.extend(
-                workspace_shadow_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
         } else {
-            elements.extend(top_layer.into_iter().map(OutputRenderElements::from));
-
-            elements.extend(
-                int_move_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
-
-            elements.extend(
-                insert_hint_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
-
-            for (ws_geo, ws_background, ws_elements) in monitor_elements {
-                // Collect all other layer-shell elements.
-                let mut layer_elems = SplitElements::default();
-                extend_from_layer(&mut layer_elems, Layer::Bottom, false);
-                extend_from_layer(&mut layer_elems, Layer::Background, false);
-
-                elements.extend(
-                    layer_elems
-                        .popups
-                        .into_iter()
-                        .filter_map(|elem| scale_relocate_crop(elem, output_scale, zoom, ws_geo))
-                        .map(OutputRenderElements::from),
-                );
-
-                elements.extend(ws_elements.into_iter().map(OutputRenderElements::from));
-
-                elements.extend(
-                    layer_elems
-                        .normal
-                        .into_iter()
-                        .filter_map(|elem| scale_relocate_crop(elem, output_scale, zoom, ws_geo))
-                        .map(OutputRenderElements::from),
-                );
-
-                elements.push(OutputRenderElements::from(ws_background));
+            /// Returns a closure that accepts a render element and scales it by the specified
+            /// geometry before pushing it to the collector.
+            fn scale_then_push<'a, R, C>(
+                geo: Rectangle<f64, Logical>,
+                output_scale: Scale<f64>,
+                zoom: f64,
+                collector: &'a mut C,
+            ) -> impl FnMut(LayerSurfaceRenderElement<R>) + 'a
+            where
+                R: NiriRenderer,
+                C: PushRenderElement<OutputRenderElements<R>, R>,
+            {
+                move |elem: LayerSurfaceRenderElement<R>| {
+                    if let Some(elem) = scale_relocate_crop(elem, output_scale, zoom, geo) {
+                        collector.push_element(elem);
+                    }
+                }
             }
 
-            elements.extend(
-                workspace_shadow_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
+            self.render_layer(
+                renderer,
+                target,
+                &layer_map,
+                Layer::Top,
+                false,
+                fx_buffers.clone(),
+                &mut elements.as_child(),
             );
+
+            self.layout.render_interactive_move_for_output(
+                renderer,
+                output,
+                target,
+                &mut elements.as_child(),
+            );
+
+            mon.render_insert_hint_between_workspaces(renderer, &mut elements.as_child());
+
+            for (_ws, geo) in mon.workspaces_with_render_geo() {
+                // Collect all other layer-shell elements.
+                self.render_layer_popups(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Bottom,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+                self.render_layer_popups(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Background,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+            }
+
+            mon.render_workspaces(renderer, target, focus_ring, &mut elements.as_child());
+
+            for (ws, geo) in mon.workspaces_with_render_geo() {
+                self.render_layer_normal(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Bottom,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+                self.render_layer_normal(
+                    renderer,
+                    target,
+                    &layer_map,
+                    Layer::Background,
+                    false,
+                    fx_buffers.clone(),
+                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                );
+
+                scale_then_push(geo, output_scale, zoom, &mut elements)(
+                    ws.render_background().into(),
+                );
+            }
         }
 
-        // Then the backdrop.
-        let mut layer_elems = SplitElements::default();
-        extend_from_layer(&mut layer_elems, Layer::Background, true);
-        elements.extend(layer_elems.into_iter().map(OutputRenderElements::from));
+        mon.render_workspace_shadows(renderer, &mut elements.as_child());
+
+        self.render_layer(
+            renderer,
+            target,
+            &layer_map,
+            Layer::Background,
+            true,
+            fx_buffers,
+            &mut elements.as_child(),
+        );
 
         elements.push(backdrop);
 
@@ -4616,32 +4916,111 @@ impl Niri {
         elements
     }
 
+    fn layers_in_render_order<'a>(
+        &'a self,
+        layer_map: &'a LayerMap,
+        layer: Layer,
+        for_backdrop: bool,
+    ) -> impl Iterator<Item = (&'a MappedLayer, Rectangle<i32, Logical>)> {
+        // LayerMap returns layers in reverse stacking order.
+        layer_map.layers_on(layer).rev().filter_map(move |surface| {
+            let mapped = self.mapped_layer_surfaces.get(surface)?;
+
+            if for_backdrop != mapped.place_within_backdrop() {
+                return None;
+            }
+
+            let geo = layer_map.layer_geometry(surface)?;
+            Some((mapped, geo))
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn render_layer<R: NiriRenderer>(
+    fn render_layer<R, C>(
         &self,
         renderer: &mut R,
         target: RenderTarget,
         layer_map: &LayerMap,
         layer: Layer,
-        elements: &mut SplitElements<LayerSurfaceRenderElement<R>>,
         for_backdrop: bool,
         fx_buffers: Option<EffectsFramebuffersUserData>,
-    ) {
-        // LayerMap returns layers in reverse stacking order.
-        layer_map
-            .layers_on(layer)
-            .rev()
-            .filter_map(|surface| {
-                let mapped = self.mapped_layer_surfaces.get(surface)?;
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        self.render_layer_popups(
+            renderer,
+            target,
+            layer_map,
+            layer,
+            for_backdrop,
+            fx_buffers.clone(),
+            collector,
+        );
+        self.render_layer_normal(
+            renderer,
+            target,
+            layer_map,
+            layer,
+            for_backdrop,
+            fx_buffers,
+            collector,
+        );
+    }
 
-                if for_backdrop != mapped.place_within_backdrop() {
-                    return None;
-                }
+    #[allow(clippy::too_many_arguments)]
+    fn render_layer_normal<R, C>(
+        &self,
+        renderer: &mut R,
+        target: RenderTarget,
+        layer_map: &LayerMap,
+        layer: Layer,
+        for_backdrop: bool,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        for (mapped, geo) in self.layers_in_render_order(layer_map, layer, for_backdrop) {
+            mapped.render_normal(
+                renderer,
+                LayerSurfaceRenderContext {
+                    location: geo.loc.to_f64(),
+                    target,
+                    fx_buffers: fx_buffers.clone(),
+                },
+                collector,
+            );
+        }
+    }
 
-                let geo = layer_map.layer_geometry(surface)?;
-                Some(mapped.render(renderer, geo.loc.to_f64(), target, fx_buffers.clone()))
-            })
-            .for_each(|l| elements.extend(l));
+    #[allow(clippy::too_many_arguments)]
+    fn render_layer_popups<R, C>(
+        &self,
+        renderer: &mut R,
+        target: RenderTarget,
+        layer_map: &LayerMap,
+        layer: Layer,
+        for_backdrop: bool,
+        fx_buffers: Option<EffectsFramebuffersUserData>,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<LayerSurfaceRenderElement<R>, R>,
+    {
+        for (mapped, geo) in self.layers_in_render_order(layer_map, layer, for_backdrop) {
+            mapped.render_popups(
+                renderer,
+                LayerSurfaceRenderContext {
+                    location: geo.loc.to_f64(),
+                    target,
+                    fx_buffers: fx_buffers.clone(),
+                },
+                collector,
+            );
+        }
     }
 
     fn advance_layer_animations(&mut self) {
@@ -5422,10 +5801,10 @@ impl Niri {
     fn get_window_pointer_element(
         &self,
         scale: Scale<f64>,
-        pointer_element: Vec<OutputRenderElements<GlesRenderer>>,
+        pointer_element: Vec<PointerRenderElements<GlesRenderer>>,
         window_pointer_location: Point<f64, Logical>,
     ) -> Option<(
-        impl Iterator<Item = RelocateRenderElement<OutputRenderElements<GlesRenderer>>>,
+        impl Iterator<Item = RelocateRenderElement<PointerRenderElements<GlesRenderer>>>,
         Point<i32, Physical>,
     )> {
         if pointer_element.is_empty() {
@@ -5514,24 +5893,24 @@ impl Niri {
 
             let window_pointer_location = self.get_window_pointer_location(mapped, output, scale);
 
-            let pointer_elements = self.pointer_element(renderer, output);
+            let mut elements = Vec::new();
+
+            self.render_pointer(renderer, output, &mut elements);
 
             let pointer_elements = window_pointer_location
                 .and_then(|window_pointer_location| {
-                    self.get_window_pointer_element(
-                        scale,
-                        pointer_elements,
-                        window_pointer_location,
-                    )
+                    self.get_window_pointer_element(scale, elements, window_pointer_location)
                 })
                 .map(|e| e.0)
                 .into_iter()
                 .flatten()
                 .map(Into::into);
 
-            let elements: Vec<_> = pointer_elements
-                .chain(mapped.render_for_screen_cast(renderer, scale))
-                .collect();
+            let mut surface_elements = Vec::new();
+
+            mapped.render_for_screen_cast(renderer, scale, &mut surface_elements);
+
+            let elements = pointer_elements.chain(surface_elements).collect::<Vec<_>>();
 
             if cast.dequeue_buffer_and_render(renderer, &elements, bbox.size, scale) {
                 cast.last_frame_time = target_presentation_time;
@@ -5833,7 +6212,9 @@ impl Niri {
                 }
                 let res_output = res.ok();
 
-                let pointer = self.pointer_element(renderer, &output);
+                let mut pointer = Vec::new();
+                self.render_pointer(renderer, &output, &mut pointer);
+
                 let res_pointer = if pointer.is_empty() {
                     None
                 } else {
@@ -5869,14 +6250,13 @@ impl Niri {
         })
     }
 
-    pub fn screenshot(
+    #[allow(clippy::type_complexity, reason = "output type is self-descreptive")]
+    fn screenshot_output_raw(
         &mut self,
         renderer: &mut GlesRenderer,
         output: &Output,
-        write_to_disk: bool,
         include_pointer: bool,
-        path: Option<String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(Size<i32, Physical>, Scale<f64>, Vec<u8>)> {
         let _span = tracy_client::span!("Niri::screenshot");
 
         self.update_render_elements(Some(output));
@@ -5902,18 +6282,15 @@ impl Niri {
             elements,
         )?;
 
-        self.save_screenshot(size, pixels, write_to_disk, path)
-            .context("error saving screenshot")
+        Ok((size, scale, pixels))
     }
 
-    pub fn screenshot_window(
+    fn screenshot_window_raw(
         &self,
         renderer: &mut GlesRenderer,
         output: &Output,
         mapped: &Mapped,
-        write_to_disk: bool,
-        path: Option<String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(Size<i32, Physical>, Vec<u8>)> {
         let _span = tracy_client::span!("Niri::screenshot_window");
 
         let scale = Scale::from(output.current_scale().fractional_scale());
@@ -5924,12 +6301,17 @@ impl Niri {
                 mapped.rules().opacity.unwrap_or(1.).clamp(0., 1.)
             };
         // FIXME: pointer.
-        let elements = mapped.render(
+        let mut elements = Vec::new();
+        mapped.render(
             renderer,
-            mapped.window.geometry().loc.to_f64(),
-            scale,
-            alpha,
-            RenderTarget::ScreenCapture,
+            LayoutElementRenderContext {
+                location: mapped.window.geometry().loc.to_f64(),
+
+                scale,
+                alpha,
+                target: RenderTarget::ScreenCapture,
+            },
+            &mut elements,
         );
         let geo = encompassing_geo(scale, elements.iter());
         let elements = elements.iter().rev().map(|elem| {
@@ -5944,185 +6326,144 @@ impl Niri {
             elements,
         )?;
 
-        self.save_screenshot(geo.size, pixels, write_to_disk, path)
-            .context("error saving screenshot")
+        Ok((geo.size, pixels))
     }
 
-    pub fn save_screenshot(
-        &self,
-        size: Size<i32, Physical>,
-        pixels: Vec<u8>,
-        write_to_disk: bool,
-        path_arg: Option<String>,
-    ) -> anyhow::Result<()> {
-        let path = write_to_disk
-            .then(|| {
-                // When given an explicit path, don't try to strftime it or create parents.
-                path_arg.map(|p| (PathBuf::from(p), false)).or_else(|| {
-                    match make_screenshot_path(&self.config.borrow()) {
-                        Ok(path) => path.map(|p| (p, true)),
-                        Err(err) => {
-                            warn!("error making screenshot path: {err:?}");
-                            None
-                        }
-                    }
-                })
-            })
-            .flatten();
-
-        // Prepare to set the encoded image as our clipboard selection. This must be done from the
-        // main thread.
-        let (tx, rx) = calloop::channel::sync_channel::<Arc<[u8]>>(1);
-        self.event_loop
-            .insert_source(rx, move |event, _, state| match event {
-                calloop::channel::Event::Msg(buf) => {
-                    set_data_device_selection(
-                        &state.niri.display_handle,
-                        &state.niri.seat,
-                        vec![String::from("image/png")],
-                        buf,
-                    );
-                }
-                calloop::channel::Event::Closed => (),
-            })
-            .unwrap();
-
-        // Prepare to send screenshot completion event back to main thread.
-        let (event_tx, event_rx) = calloop::channel::sync_channel::<Option<String>>(1);
-        self.event_loop
-            .insert_source(event_rx, move |event, _, state| match event {
-                calloop::channel::Event::Msg(path) => {
-                    state.ipc_screenshot_taken(path);
-                }
-                calloop::channel::Event::Closed => (),
-            })
-            .unwrap();
-
-        // Encode and save the image in a thread as it's slow.
-        thread::spawn(move || {
-            let mut buf = vec![];
-
-            let w = std::io::Cursor::new(&mut buf);
-            if let Err(err) = write_png_rgba8(w, size.w as u32, size.h as u32, &pixels) {
-                warn!("error encoding screenshot image: {err:?}");
+    fn save_to_pipe<O: ScreenshotOutput>(&mut self, data: ScreenshotData, pixels: Vec<u8>, out: O) {
+        let mut pipe = match out.image_meta_success(self, data) {
+            Ok(pipe) => pipe,
+            Err(e) => {
+                warn!("receiver did not accept the screenshot: {e:?}");
                 return;
             }
-
-            let buf: Arc<[u8]> = Arc::from(buf.into_boxed_slice());
-            let _ = tx.send(buf.clone());
-
-            let mut image_path = None;
-
-            if let Some((path, create_parent)) = path {
-                debug!("saving screenshot to {path:?}");
-
-                if create_parent && let Some(parent) = path.parent() {
-                    // Relative paths with one component, i.e. "test.png", have Some("") parent.
-                    if !parent.as_os_str().is_empty()
-                        && let Err(err) = std::fs::create_dir_all(parent)
-                        && err.kind() != std::io::ErrorKind::AlreadyExists
-                    {
-                        warn!("error creating screenshot directory: {err:?}");
-                    }
-                }
-
-                match std::fs::write(&path, buf) {
-                    Ok(()) => image_path = Some(path),
-                    Err(err) => {
-                        warn!("error saving screenshot image: {err:?}");
-                    }
-                }
-            } else {
-                debug!("not saving screenshot to disk");
-            }
-
-            #[cfg(feature = "dbus")]
-            if let Err(err) = crate::utils::show_screenshot_notification(image_path.as_deref()) {
-                warn!("error showing screenshot notification: {err:?}");
-            }
-
-            // Send screenshot completion event.
-            let path_string = image_path
-                .as_ref()
-                .and_then(|p| p.to_str())
-                .map(|s| s.to_owned());
-            let _ = event_tx.send(path_string);
-        });
-
-        Ok(())
-    }
-
-    #[cfg(feature = "dbus")]
-    pub fn screenshot_all_outputs(
-        &mut self,
-        renderer: &mut GlesRenderer,
-        include_pointer: bool,
-        on_done: impl FnOnce(PathBuf) + Send + 'static,
-    ) -> anyhow::Result<()> {
-        let _span = tracy_client::span!("Niri::screenshot_all_outputs");
-
-        self.update_render_elements(None);
-
-        let outputs: Vec<_> = self.global_space.outputs().cloned().collect();
-
-        // FIXME: support multiple outputs, needs fixing multi-scale handling and cropping.
-        anyhow::ensure!(outputs.len() == 1);
-
-        let output = outputs.into_iter().next().unwrap();
-        let geom = self.global_space.output_geometry(&output).unwrap();
-
-        let output_scale = output.current_scale().integer_scale();
-        let geom = geom.to_physical(output_scale);
-
-        let size = geom.size;
-        let transform = output.current_transform();
-        let size = transform.transform_size(size);
-
-        let elements = self.render::<GlesRenderer>(
-            renderer,
-            &output,
-            include_pointer,
-            RenderTarget::ScreenCapture,
-        );
-        let elements = elements.iter().rev();
-        let pixels = render_to_vec(
-            renderer,
-            size,
-            Scale::from(f64::from(output_scale)),
-            Transform::Normal,
-            Fourcc::Abgr8888,
-            elements,
-        )?;
-
-        let path = make_screenshot_path(&self.config.borrow())
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| {
-                let mut path = env::temp_dir();
-                path.push("screenshot.png");
-                path
-            });
-        debug!("saving screenshot to {path:?}");
+        };
 
         thread::spawn(move || {
-            let file = match std::fs::File::create(&path) {
-                Ok(file) => file,
-                Err(err) => {
-                    warn!("error creating file: {err:?}");
+            // TODO: render_to_vec can be reimplemented as render_to_writer
+            if let Err(e) = pipe.write_all(&pixels).and_then(|()| pipe.flush()) {
+                pipe.finish_failure(anyhow::anyhow!("image writing failed: {e:?}"));
+                return;
+            }
+            if let Err(e) = pipe.finish_success() {
+                warn!("screenshot receiver failed to process output: {e:?}")
+            }
+        });
+    }
+
+    pub fn screenshot_output_to_pipe<O: ScreenshotOutput>(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        output_name: Option<&str>,
+        include_pointer: bool,
+        out: O,
+    ) {
+        let output = match output_name {
+            Some(name) => self.global_space.outputs().find(|o| o.name() == name),
+            None => self.layout.active_output(),
+        };
+        let Some(output) = output.cloned() else {
+            out.image_meta_failed(anyhow::anyhow!("unknown output: {output_name:?}"));
+            return;
+        };
+
+        let (size, scale, pixels) =
+            match self.screenshot_output_raw(renderer, &output, include_pointer) {
+                Ok(v) => v,
+                Err(e) => {
+                    out.image_meta_failed(anyhow::anyhow!("failed to capture screenshot: {e:?}"));
                     return;
                 }
             };
 
-            let w = std::io::BufWriter::new(file);
-            if let Err(err) = write_png_rgba8(w, size.w as u32, size.h as u32, &pixels) {
-                warn!("error encoding screenshot image: {err:?}");
+        self.save_to_pipe(
+            ScreenshotData {
+                width: size.w as u32,
+                height: size.h as u32,
+                // x and y scales are equal for screens
+                scale: scale.x,
+                screen: Some(output.name()),
+                window_id: None,
+            },
+            pixels,
+            out,
+        );
+    }
+
+    pub fn screenshot_window_to_pipe<O: ScreenshotOutput>(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        window_id: Option<MappedId>,
+        out: O,
+    ) {
+        let output = match window_id {
+            Some(id) => self
+                .layout
+                .windows()
+                .find(|(_, w)| w.id() == id)
+                .map(|(m, w)| (m.map(|m| m.output()), w)),
+            None => self.layout.focus_with_output().map(|(m, o)| (Some(o), m)),
+        };
+        let Some((output, window)) = output else {
+            // Ignore if receiver is dead
+            out.image_meta_failed(anyhow::anyhow!("unknown window: {window_id:?}"));
+            return;
+        };
+        let Some(output) = output else {
+            out.image_meta_failed(anyhow::anyhow!("window is not visible: {window_id:?}"));
+            return;
+        };
+
+        let (size, pixels) = match self.screenshot_window_raw(renderer, output, window) {
+            Ok(v) => v,
+            Err(e) => {
+                out.image_meta_failed(anyhow::anyhow!("failed to capture screenshot: {e:?}"));
                 return;
             }
+        };
 
-            on_done(path);
-        });
+        self.save_to_pipe(
+            ScreenshotData {
+                width: size.w as u32,
+                height: size.h as u32,
+                scale: 1.0,
+                screen: None,
+                window_id: Some(window.id().get().to_string()),
+            },
+            pixels,
+            out,
+        );
+    }
 
-        Ok(())
+    pub fn screenshot_all_outputs_to_pipe<O: ScreenshotOutput>(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        out: O,
+    ) {
+        // Screenshoting multiple outputs is not implemented, captures the current output instead
+        // Not a regression, as old version of this function had ensure!(outputs.len() == 1)
+        self.screenshot_output_to_pipe(renderer, None, false, out)
+    }
+
+    pub fn screenshot_to_pipe<O: ScreenshotOutput>(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        target: ScreenshotTarget,
+        include_pointer: bool,
+        out: O,
+    ) {
+        match target {
+            ScreenshotTarget::CurrentOutput => {
+                self.screenshot_output_to_pipe(renderer, None, include_pointer, out)
+            }
+            ScreenshotTarget::Output(name) => {
+                self.screenshot_output_to_pipe(renderer, Some(name.as_str()), include_pointer, out)
+            }
+            ScreenshotTarget::CurrentWindow => self.screenshot_window_to_pipe(renderer, None, out),
+            ScreenshotTarget::Window(mapped_id) => {
+                self.screenshot_window_to_pipe(renderer, Some(mapped_id), out)
+            }
+            ScreenshotTarget::AllOutputs => self.screenshot_all_outputs_to_pipe(renderer, out),
+        }
     }
 
     pub const fn is_locked(&self) -> bool {
@@ -6791,6 +7132,12 @@ fn scale_relocate_crop<E: Element>(
     let elem = RelocateRenderElement::from_element(elem, ws_geo.loc, Relocate::Relative);
     CropRenderElement::from_element(elem, output_scale, ws_geo)
 }
+niri_render_elements! {
+    PointerRenderElements<R> => {
+        Wayland = WaylandSurfaceRenderElement<R>,
+        NamedPointer = MemoryRenderBufferRenderElement<R>,
+    }
+}
 
 niri_render_elements! {
     OutputRenderElements<R> => {
@@ -6801,6 +7148,10 @@ niri_render_elements! {
         RelocatedLayerSurface = CropRenderElement<RelocateRenderElement<RescaleRenderElement<
             LayerSurfaceRenderElement<R>
         >>>,
+        RelocatedColor = CropRenderElement<RelocateRenderElement<RescaleRenderElement<
+            SolidColorRenderElement
+        >>>,
+        Pointer = PointerRenderElements<R>,
         Wayland = WaylandSurfaceRenderElement<R>,
         NamedPointer = MemoryRenderBufferRenderElement<R>,
         SolidColor = SolidColorRenderElement,

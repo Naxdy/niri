@@ -9,21 +9,22 @@ use glam::{Mat3, Vec2};
 use niri_config::CornerRadius;
 
 use pango::glib::property::PropertySet;
+use smithay::backend::renderer::Texture;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::gles::{
     GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform, ffi,
 };
 use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
-use smithay::backend::renderer::{Offscreen, Texture};
 use smithay::reexports::gbm::Format;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 use crate::render_helpers::blur::EffectsFramebuffersUserData;
 use crate::render_helpers::render_data::RendererData;
-use crate::render_helpers::renderer::AsGlesFrame;
+use crate::render_helpers::renderer::{AsGlesFrame, NiriRenderer};
 use crate::render_helpers::shaders::{Shaders, mat3_uniform};
 use crate::utils::region::Region;
+use crate::utils::render::{PushRenderElement, Render};
 
 use super::{CurrentBuffer, EffectsFramebuffers};
 
@@ -52,6 +53,10 @@ impl CommitTracker {
         Self(Default::default())
     }
 
+    pub fn insert_from_elem<'a, E: Element + 'a>(&mut self, elem: &'a E) {
+        self.0.insert(elem.id().clone(), elem.current_commit());
+    }
+
     pub fn from_elements<'a, E: Element + 'a>(elems: impl Iterator<Item = &'a E>) -> Self {
         Self(
             elems
@@ -63,6 +68,21 @@ impl CommitTracker {
     pub fn update<'a, E: Element + 'a>(&mut self, elems: impl Iterator<Item = &'a E>) {
         *self = Self::from_elements(elems);
     }
+}
+
+#[derive(Debug)]
+pub struct BlurRenderContext<'a> {
+    pub fx_buffers: EffectsFramebuffersUserData,
+    pub region_offset: Point<i32, Logical>,
+    pub destination_region: &'a Region<i32, Logical>,
+    pub corner_radius: CornerRadius,
+    pub scale: f64,
+    pub geometry: Rectangle<f64, Logical>,
+    pub true_blur: bool,
+    /// used for elements that are rendered offscreen (e.g. tiles that are being dragged)
+    pub render_loc: Option<Point<f64, Logical>>,
+    pub overview_zoom: Option<f64>,
+    pub alpha: f32,
 }
 
 #[derive(Debug)]
@@ -100,46 +120,85 @@ impl Blur {
         self.config = config;
     }
 
-    // TODO: the alpha tex methods can probably do better / without clearing `self.inner` entirely
-
     pub fn clear_alpha_tex(&self) {
         if self.alpha_tex.borrow().is_some() {
-            self.inner
-                .borrow_mut()
-                .iter_mut()
-                .for_each(BlurRenderElement::damage_all);
+            self.inner.borrow_mut().iter_mut().for_each(|e| {
+                e.alpha_tex = None;
+                e.damage_all();
+            });
         }
 
         self.alpha_tex.set(None);
     }
 
     pub fn set_alpha_tex(&self, alpha_tex: GlesTexture) {
+        self.inner.borrow_mut().iter_mut().for_each(|e| {
+            e.alpha_tex = Some(alpha_tex.clone());
+            e.damage_all();
+        });
         self.alpha_tex.set(Some(alpha_tex));
-        self.inner.set(vec![]);
     }
 
     pub const fn update_render_elements(&mut self, is_active: bool) {
         self.config.on = is_active;
     }
+}
+
+/// Helper function to return the rects of a region used for sampling a specific
+/// destination region.
+fn sample_region_rects<'a>(
+    region_offset: Point<i32, Logical>,
+    overview_zoom: Option<f64>,
+    true_blur: bool,
+    scale: f64,
+    destination_region: &'a Region<i32, Logical>,
+    fx_buffers: &'a EffectsFramebuffers,
+) -> impl Iterator<Item = Rectangle<i32, Logical>> + 'a {
+    destination_region
+        .rects_with_offset(region_offset)
+        .map(move |destination_area| {
+            if let (Some(zoom), true) = (overview_zoom, true_blur) {
+                let mut sample_area = destination_area.to_f64().upscale(zoom);
+
+                let center = (fx_buffers.output_size.to_f64().to_logical(scale) / 2.).to_point();
+                sample_area.loc.x =
+                    (center.x - destination_area.loc.x as f64).mul_add(-zoom, center.x);
+                sample_area.loc.y =
+                    (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
+                sample_area.to_i32_round()
+            } else {
+                destination_area
+            }
+        })
+}
+
+impl<'a, R> Render<'a, R> for Blur
+where
+    R: NiriRenderer,
+{
+    type RenderContext = BlurRenderContext<'a>;
+    type RenderElement = BlurRenderElement;
 
     // TODO: separate some of this logic out to [`Blur::update_render_elements`]
-    #[allow(clippy::too_many_arguments)]
-    pub fn render(
-        &self,
-        renderer: &mut GlesRenderer,
-        fx_buffers: EffectsFramebuffersUserData,
-        destination_region: &Region<i32, Logical>,
-        corner_radius: CornerRadius,
-        scale: f64,
-        geometry: Rectangle<f64, Logical>,
-        mut true_blur: bool,
-        // used for elements that are rendered offscreen (e.g. tiles that are being dragged)
-        render_loc: Option<Point<f64, Logical>>,
-        overview_zoom: Option<f64>,
-        alpha: f32,
-    ) -> Vec<BlurRenderElement> {
+    fn render<C>(&'a self, renderer: &mut R, render_context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<BlurRenderElement, R>,
+    {
+        let BlurRenderContext {
+            fx_buffers,
+            destination_region,
+            corner_radius,
+            scale,
+            geometry,
+            mut true_blur,
+            render_loc,
+            overview_zoom,
+            alpha,
+            region_offset,
+        } = render_context;
+
         if !self.config.on || self.config.passes == 0 || self.config.radius.0 == 0. {
-            return vec![];
+            return;
         }
 
         // FIXME: true blur is broken on 90/270 transformed monitors
@@ -149,26 +208,6 @@ impl Blur {
         ) {
             true_blur = false;
         }
-
-        let sample_region = destination_region
-            .rects()
-            .iter()
-            .map(|destination_area| {
-                if let (Some(zoom), true) = (overview_zoom, true_blur) {
-                    let mut sample_area = destination_area.to_f64().upscale(zoom);
-
-                    let center = (fx_buffers.borrow().output_size.to_f64().to_logical(scale) / 2.)
-                        .to_point();
-                    sample_area.loc.x =
-                        (center.x - destination_area.loc.x as f64).mul_add(-zoom, center.x);
-                    sample_area.loc.y =
-                        (center.y - destination_area.loc.y as f64).mul_add(-zoom, center.y);
-                    sample_area.to_i32_round()
-                } else {
-                    *destination_area
-                }
-            })
-            .collect::<Region<_, _>>();
 
         let mut tex_buffer = || {
             renderer
@@ -201,15 +240,22 @@ impl Blur {
             _ => false,
         });
 
-        let changed_any = destination_region.rects().len() != inner.len()
+        let changed_any = destination_region.len() != inner.len()
             || inner
                 .iter_mut()
-                .zip(destination_region.rects())
-                .zip(sample_region.rects())
+                .zip(destination_region.rects_with_offset(region_offset))
+                .zip(sample_region_rects(
+                    region_offset,
+                    overview_zoom,
+                    true_blur,
+                    scale,
+                    destination_region,
+                    &fx_buffers.borrow(),
+                ))
                 .any(|((inner, destination_area), sample_area)| {
                     // if nothing about our geometry changed, we don't need to re-render blur
-                    if inner.sample_area == *sample_area
-                        && inner.destination_area == *destination_area
+                    if inner.sample_area == sample_area
+                        && inner.destination_area == destination_area
                         && inner.geometry == geometry
                         && inner.scale == scale
                         && inner.corner_radius == corner_radius
@@ -236,18 +282,28 @@ impl Blur {
                 });
 
         if !changed_any {
-            return inner.clone();
+            inner
+                .iter()
+                .cloned()
+                .for_each(|e| collector.push_element(e));
+            return;
         }
 
         *inner = destination_region
-            .rects()
-            .iter()
-            .zip(sample_region.rects().iter())
+            .rects_with_offset(region_offset)
+            .zip(sample_region_rects(
+                region_offset,
+                overview_zoom,
+                true_blur,
+                scale,
+                destination_region,
+                &fx_buffers.borrow(),
+            ))
             .filter_map(|(destination_area, sample_area)| {
                 Some(BlurRenderElement::new(
                     &fx_buffers.borrow(),
-                    *sample_area,
-                    *destination_area,
+                    sample_area,
+                    destination_area,
                     corner_radius,
                     scale,
                     self.config,
@@ -271,7 +327,10 @@ impl Blur {
             })
             .collect();
 
-        inner.clone()
+        inner
+            .iter()
+            .cloned()
+            .for_each(|e| collector.push_element(e));
     }
 }
 

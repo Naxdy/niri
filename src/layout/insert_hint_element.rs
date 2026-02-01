@@ -2,7 +2,10 @@ use niri_config::CornerRadius;
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
 use super::focus_ring::{FocusRing, FocusRingRenderElement};
-use crate::render_helpers::renderer::NiriRenderer;
+use crate::{
+    render_helpers::renderer::NiriRenderer,
+    utils::render::{PushRenderElement, Render},
+};
 
 #[derive(Debug)]
 pub struct InsertHintElement {
@@ -54,12 +57,19 @@ impl InsertHintElement {
         self.inner
             .update_render_elements(size, true, false, false, view_rect, radius, scale, 1.);
     }
+}
 
-    pub fn render<R: NiriRenderer>(
-        &self,
-        renderer: &mut R,
-        location: Point<f64, Logical>,
-    ) -> impl Iterator<Item = FocusRingRenderElement> + use<R> {
-        self.inner.render(renderer, location)
+impl<R> Render<'_, R> for InsertHintElement
+where
+    R: NiriRenderer,
+{
+    type RenderContext = Point<f64, Logical>;
+    type RenderElement = FocusRingRenderElement;
+
+    fn render<C>(&'_ self, renderer: &mut R, context: Self::RenderContext, collector: &mut C)
+    where
+        C: PushRenderElement<Self::RenderElement, R>,
+    {
+        self.inner.render(renderer, context, collector);
     }
 }

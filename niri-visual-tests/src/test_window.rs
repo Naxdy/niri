@@ -3,19 +3,18 @@ use std::cmp::{max, min};
 use std::rc::Rc;
 
 use niri::layout::{
-    ConfigureIntent, InteractiveResizeData, LayoutElement, LayoutElementRenderElement,
-    LayoutElementRenderSnapshot, SizingMode,
+    ConfigureIntent, InteractiveResizeData, LayoutElement, LayoutElementRenderContext,
+    LayoutElementRenderElement, LayoutElementRenderSnapshot, SizingMode,
 };
 use niri::render_helpers::offscreen::OffscreenData;
 use niri::render_helpers::renderer::NiriRenderer;
 use niri::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
-use niri::render_helpers::{RenderTarget, SplitElements};
 use niri::utils::transaction::Transaction;
 use niri::window::ResolvedWindowRules;
 use smithay::backend::renderer::element::Kind;
 use smithay::output::{self, Output};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::{Logical, Point, Scale, Serial, Size, Transform};
+use smithay::utils::{Logical, Point, Serial, Size, Transform};
 
 #[derive(Debug)]
 struct TestWindowInner {
@@ -149,38 +148,6 @@ impl LayoutElement for TestWindow {
         false
     }
 
-    fn render<R: NiriRenderer>(
-        &self,
-        _renderer: &mut R,
-        location: Point<f64, Logical>,
-        _scale: Scale<f64>,
-        alpha: f32,
-        _target: RenderTarget,
-    ) -> SplitElements<LayoutElementRenderElement<R>> {
-        let inner = self.inner.borrow();
-
-        SplitElements {
-            normal: vec![
-                SolidColorRenderElement::from_buffer(
-                    &inner.buffer,
-                    location,
-                    alpha,
-                    Kind::Unspecified,
-                )
-                .into(),
-                SolidColorRenderElement::from_buffer(
-                    &inner.csd_shadow_buffer,
-                    location
-                        - Point::from((inner.csd_shadow_width, inner.csd_shadow_width)).to_f64(),
-                    alpha,
-                    Kind::Unspecified,
-                )
-                .into(),
-            ],
-            popups: vec![],
-        }
-    }
-
     fn request_size(
         &mut self,
         size: Size<i32, Logical>,
@@ -276,5 +243,46 @@ impl LayoutElement for TestWindow {
 
     fn is_urgent(&self) -> bool {
         false
+    }
+
+    fn render_popups<R, C>(
+        &self,
+        _renderer: &mut R,
+        _context: niri::layout::LayoutElementRenderContext,
+        _collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: niri::utils::render::PushRenderElement<LayoutElementRenderElement<R>, R>,
+    {
+    }
+
+    fn render_normal<R, C>(
+        &self,
+        _renderer: &mut R,
+        context: niri::layout::LayoutElementRenderContext,
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: niri::utils::render::PushRenderElement<LayoutElementRenderElement<R>, R>,
+    {
+        let LayoutElementRenderContext {
+            location, alpha, ..
+        } = context;
+
+        let inner = self.inner.borrow();
+
+        collector.push_element(SolidColorRenderElement::from_buffer(
+            &inner.buffer,
+            location,
+            alpha,
+            Kind::Unspecified,
+        ));
+
+        collector.push_element(SolidColorRenderElement::from_buffer(
+            &inner.csd_shadow_buffer,
+            location - Point::from((inner.csd_shadow_width, inner.csd_shadow_width)).to_f64(),
+            alpha,
+            Kind::Unspecified,
+        ));
     }
 }
