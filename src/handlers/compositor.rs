@@ -85,6 +85,8 @@ impl CompositorHandler for State {
                         window,
                         state,
                         activation_token_data,
+                        #[cfg(feature = "dbus")]
+                        appmenu,
                     } = entry.remove();
 
                     window.on_commit();
@@ -195,7 +197,7 @@ impl CompositorHandler for State {
                     // The mapped pre-commit hook deals with dma-bufs on its own.
                     self.remove_default_dmabuf_pre_commit_hook(surface);
                     let hook = add_mapped_toplevel_pre_commit_hook(toplevel);
-                    let mapped = Mapped::new(window, rules, hook);
+                    let mapped = Mapped::new(window, rules, hook, appmenu);
                     let window = mapped.window.clone();
 
                     let target = if let Some(p) = &parent {
