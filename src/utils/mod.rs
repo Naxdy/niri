@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use std::{f64, io, thread};
+use std::{f64, io};
 
 use anyhow::{Context, bail, ensure};
 use bitflags::bitflags;
@@ -570,24 +570,6 @@ pub fn cause_panic() {
     let a = Duration::from_secs(1);
     let b = Duration::from_secs(2);
     let _ = a - b;
-}
-
-/// Run blocking task from async context
-pub async fn run_blocking<T: Send + Sync + 'static>(
-    task: impl FnOnce() -> T + Send + 'static,
-) -> T {
-    let (mut tx, rx) = async_oneshot::oneshot();
-    let handle = thread::spawn(move || {
-        if tx.send(task()).is_err() {
-            warn!("async task requesting run_blocking has dead before the result")
-        }
-    });
-    if let Ok(v) = rx.await {
-        return v;
-    }
-    // Error is only possible if the thread has panicked, joining it will propagate the panic
-    handle.join().expect("run_blocking task panicked");
-    unreachable!("line above should always panic");
 }
 
 #[cfg(test)]

@@ -699,7 +699,9 @@ pub enum ScreenshotTarget {
 
 pub trait ScreenshotOutput: 'static {
     type Pipe: Write + ScreenshotPipe;
+
     fn image_meta_failed(self, err: anyhow::Error);
+
     fn image_meta_success(
         self,
         state: &mut Niri,
@@ -708,7 +710,9 @@ pub trait ScreenshotOutput: 'static {
 }
 pub trait ScreenshotPipe: Send + 'static {
     type Output;
+
     fn finish_success(self) -> anyhow::Result<Self::Output>;
+
     fn finish_failure(self, e: anyhow::Error);
 }
 
