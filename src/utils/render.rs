@@ -38,9 +38,12 @@ where
     R: NiriRenderer,
 {
     /// Add a new element to this [`PushRenderElement`].
-    ///
-    /// Note that elements
     fn push_element<T>(&mut self, element: T)
+    where
+        T: Into<E>;
+
+    /// Extend this [`PushRenderElement`] with a series of elements.
+    fn extend_elements<T>(&mut self, elements: impl IntoIterator<Item = T>)
     where
         T: Into<E>;
 
@@ -70,6 +73,13 @@ where
     {
         (self)(element.into())
     }
+
+    fn extend_elements<T>(&mut self, elements: impl IntoIterator<Item = T>)
+    where
+        T: Into<E>,
+    {
+        elements.into_iter().for_each(|e| (self)(e.into()));
+    }
 }
 
 impl<E, R> PushRenderElement<E, R> for Vec<E>
@@ -81,5 +91,12 @@ where
         T: Into<E>,
     {
         self.push(element.into());
+    }
+
+    fn extend_elements<T>(&mut self, elements: impl IntoIterator<Item = T>)
+    where
+        T: Into<E>,
+    {
+        self.extend(elements.into_iter().map(Into::into));
     }
 }

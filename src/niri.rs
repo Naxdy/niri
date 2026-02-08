@@ -25,9 +25,7 @@ use smithay::backend::input::Keycode;
 use smithay::backend::renderer::Color32F;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
-use smithay::backend::renderer::element::surface::{
-    WaylandSurfaceRenderElement, render_elements_from_surface_tree,
-};
+use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::{
     CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
     select_dmabuf_feedback,
@@ -4572,13 +4570,39 @@ impl Niri {
         }
     }
 
-    pub fn render<R: NiriRenderer>(
+    pub fn render<R>(
+        &self,
+        renderer: &mut R,
+        output: &Output,
+        include_pointer: bool,
+        target: RenderTarget,
+    ) -> Vec<OutputRenderElements<R>>
+    where
+        R: NiriRenderer,
+    {
+        let mut elements = Vec::new();
+
+        self.render_pushing(renderer, output, include_pointer, target, &mut elements);
+
+        if self.debug_draw_opaque_regions {
+            let output_scale = Scale::from(output.current_scale().fractional_scale());
+            draw_opaque_regions(&mut elements, output_scale);
+        }
+
+        elements
+    }
+
+    pub fn render_pushing<R, C>(
         &self,
         renderer: &mut R,
         output: &Output,
         include_pointer: bool,
         mut target: RenderTarget,
-    ) -> Vec<OutputRenderElements<R>> {
+        collector: &mut C,
+    ) where
+        R: NiriRenderer,
+        C: PushRenderElement<OutputRenderElements<R>, R>,
+    {
         let _span = tracy_client::span!("Niri::render");
 
         if target == RenderTarget::Output
@@ -4593,61 +4617,50 @@ impl Niri {
         let output_scale = Scale::from(output.current_scale().fractional_scale());
 
         // The pointer goes on the top.
-        let mut elements = vec![];
         if include_pointer {
-            self.render_pointer(renderer, output, &mut elements.as_child());
+            self.render_pointer(renderer, output, &mut collector.as_child());
         }
 
         // Next, the screen transition texture.
         {
             let state = self.output_state.get(output).unwrap();
             if let Some(transition) = &state.screen_transition {
-                elements.push(transition.render(target).into());
+                collector.push_element(transition.render(target));
             }
         }
 
         // Next, the exit confirm dialog.
-        elements.extend(
-            self.exit_confirm_dialog
-                .render(renderer, output)
-                .into_iter()
-                .map(OutputRenderElements::from),
-        );
+        collector.extend_elements(self.exit_confirm_dialog.render(renderer, output));
 
         // Next, the config error notification too.
         if let Some(element) = self.config_error_notification.render(renderer, output) {
-            elements.push(element.into());
+            collector.push_element(element);
         }
 
         // If the session is locked, draw the lock surface.
         if self.is_locked() {
             let state = self.output_state.get(output).unwrap();
             if let Some(surface) = state.lock_surface.as_ref() {
-                elements.extend(render_elements_from_surface_tree(
+                push_elements_from_surface_tree(
                     renderer,
                     surface.wl_surface(),
-                    (0, 0),
+                    Point::new(0, 0),
                     output_scale,
                     1.,
                     Kind::ScanoutCandidate,
-                ));
+                    &mut collector.as_child(),
+                );
             }
 
             // Draw the solid color background.
-            elements.push(
-                SolidColorRenderElement::from_buffer(
-                    &state.lock_color_buffer,
-                    (0., 0.),
-                    1.,
-                    Kind::Unspecified,
-                )
-                .into(),
-            );
+            collector.push_element(SolidColorRenderElement::from_buffer(
+                &state.lock_color_buffer,
+                (0., 0.),
+                1.,
+                Kind::Unspecified,
+            ));
 
-            if self.debug_draw_opaque_regions {
-                draw_opaque_regions(&mut elements, output_scale);
-            }
-            return elements;
+            return;
         }
 
         // Prepare the background elements.
@@ -4657,35 +4670,27 @@ impl Niri {
             (0., 0.),
             1.,
             Kind::Unspecified,
-        )
-        .into();
+        );
 
         // If the screenshot UI is open, draw it.
         if self.screenshot_ui.is_open() {
-            elements.extend(
-                self.screenshot_ui
-                    .render_output(output, target)
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
+            self.screenshot_ui
+                .render_output(output, target, &mut collector.as_child());
 
             // Add the backdrop for outputs that were connected while the screenshot UI was open.
-            elements.push(backdrop);
+            collector.push_element(backdrop);
 
-            if self.debug_draw_opaque_regions {
-                draw_opaque_regions(&mut elements, output_scale);
-            }
-            return elements;
+            return;
         }
 
         // Draw the hotkey overlay on top.
         if let Some(element) = self.hotkey_overlay.render(renderer, output) {
-            elements.push(element.into());
+            collector.push_element(element);
         }
 
         // Then, the Alt-Tab switcher.
         self.window_mru_ui
-            .render_output(self, output, renderer, target, &mut elements.as_child());
+            .render_output(self, output, renderer, target, &mut collector.as_child());
 
         // Don't draw the focus ring on the workspaces while interactively moving above those
         // workspaces, since the interactively-moved window already has a focus ring.
@@ -4710,7 +4715,7 @@ impl Niri {
                         scale: output.current_scale().fractional_scale().into(),
                         target: RenderTarget::Output,
                     },
-                    &mut elements.as_child(),
+                    &mut collector.as_child(),
                 );
             });
         }
@@ -4727,7 +4732,7 @@ impl Niri {
             Layer::Overlay,
             false,
             fx_buffers.clone(),
-            &mut elements.as_child(),
+            &mut collector.as_child(),
         );
 
         // When rendering above the top layer, we put the regular monitor elements first.
@@ -4737,10 +4742,10 @@ impl Niri {
                 renderer,
                 output,
                 target,
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
-            mon.render_insert_hint_between_workspaces(renderer, &mut elements.as_child());
-            mon.render_workspaces(renderer, target, focus_ring, &mut elements.as_child());
+            mon.render_insert_hint_between_workspaces(renderer, &mut collector.as_child());
+            mon.render_workspaces(renderer, target, focus_ring, &mut collector.as_child());
 
             self.render_layer(
                 renderer,
@@ -4749,7 +4754,7 @@ impl Niri {
                 Layer::Top,
                 false,
                 fx_buffers.clone(),
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
 
             // popups go above surfaces
@@ -4760,7 +4765,7 @@ impl Niri {
                 Layer::Bottom,
                 false,
                 fx_buffers.clone(),
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
             self.render_layer_popups(
                 renderer,
@@ -4769,7 +4774,7 @@ impl Niri {
                 Layer::Background,
                 false,
                 fx_buffers.clone(),
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
 
             self.render_layer_normal(
@@ -4779,7 +4784,7 @@ impl Niri {
                 Layer::Bottom,
                 false,
                 fx_buffers.clone(),
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
             self.render_layer_normal(
                 renderer,
@@ -4788,12 +4793,12 @@ impl Niri {
                 Layer::Background,
                 false,
                 fx_buffers.clone(),
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
 
             // We don't expect more than one workspace when render_above_top_layer().
             if let Some((ws, _)) = mon.workspaces_with_render_geo().next() {
-                elements.push(ws.render_background().into());
+                collector.push_element(ws.render_background());
             }
         } else {
             /// Returns a closure that accepts a render element and scales it by the specified
@@ -4822,17 +4827,17 @@ impl Niri {
                 Layer::Top,
                 false,
                 fx_buffers.clone(),
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
 
             self.layout.render_interactive_move_for_output(
                 renderer,
                 output,
                 target,
-                &mut elements.as_child(),
+                &mut collector.as_child(),
             );
 
-            mon.render_insert_hint_between_workspaces(renderer, &mut elements.as_child());
+            mon.render_insert_hint_between_workspaces(renderer, &mut collector.as_child());
 
             for (_ws, geo) in mon.workspaces_with_render_geo() {
                 // Collect all other layer-shell elements.
@@ -4843,7 +4848,7 @@ impl Niri {
                     Layer::Bottom,
                     false,
                     fx_buffers.clone(),
-                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                    &mut scale_then_push(geo, output_scale, zoom, collector),
                 );
                 self.render_layer_popups(
                     renderer,
@@ -4852,11 +4857,11 @@ impl Niri {
                     Layer::Background,
                     false,
                     fx_buffers.clone(),
-                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                    &mut scale_then_push(geo, output_scale, zoom, collector),
                 );
             }
 
-            mon.render_workspaces(renderer, target, focus_ring, &mut elements.as_child());
+            mon.render_workspaces(renderer, target, focus_ring, &mut collector.as_child());
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 self.render_layer_normal(
@@ -4866,7 +4871,7 @@ impl Niri {
                     Layer::Bottom,
                     false,
                     fx_buffers.clone(),
-                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                    &mut scale_then_push(geo, output_scale, zoom, collector),
                 );
                 self.render_layer_normal(
                     renderer,
@@ -4875,16 +4880,14 @@ impl Niri {
                     Layer::Background,
                     false,
                     fx_buffers.clone(),
-                    &mut scale_then_push(geo, output_scale, zoom, &mut elements),
+                    &mut scale_then_push(geo, output_scale, zoom, collector),
                 );
 
-                scale_then_push(geo, output_scale, zoom, &mut elements)(
-                    ws.render_background().into(),
-                );
+                scale_then_push(geo, output_scale, zoom, collector)(ws.render_background().into());
             }
         }
 
-        mon.render_workspace_shadows(renderer, &mut elements.as_child());
+        mon.render_workspace_shadows(renderer, &mut collector.as_child());
 
         self.render_layer(
             renderer,
@@ -4893,14 +4896,10 @@ impl Niri {
             Layer::Background,
             true,
             fx_buffers,
-            &mut elements.as_child(),
+            &mut collector.as_child(),
         );
 
-        elements.push(backdrop);
-
-        if self.debug_draw_opaque_regions {
-            draw_opaque_regions(&mut elements, output_scale);
-        }
+        collector.push_element(backdrop);
 
         if let Some(mut fx_buffers) = EffectsFramebuffers::get(output) {
             let blur_config = self.config.borrow().layout.blur;
@@ -4916,8 +4915,6 @@ impl Niri {
                 error!("failed to update optimized blur buffer: {e:?}");
             };
         }
-
-        elements
     }
 
     fn layers_in_render_order<'a>(

@@ -25,9 +25,11 @@ use crate::animation::{Animation, Clock};
 use crate::layout::floating::DIRECTIONAL_MOVE_PX;
 use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
+use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::{RenderTarget, render_to_texture};
+use crate::utils::render::PushRenderElement;
 use crate::utils::to_physical_precise_round;
 
 const SELECTION_BORDER: i32 = 2;
@@ -617,11 +619,11 @@ impl ScreenshotUi {
         }
     }
 
-    pub fn render_output(
-        &self,
-        output: &Output,
-        target: RenderTarget,
-    ) -> ArrayVec<ScreenshotUiRenderElement, 11> {
+    pub fn render_output<R, C>(&self, output: &Output, target: RenderTarget, collector: &mut C)
+    where
+        R: NiriRenderer,
+        C: PushRenderElement<ScreenshotUiRenderElement, R>,
+    {
         let _span = tracy_client::span!("ScreenshotUi::render_output");
 
         let Self::Open {
@@ -635,10 +637,8 @@ impl ScreenshotUi {
             panic!("screenshot UI must be open to render it");
         };
 
-        let mut elements = ArrayVec::new();
-
         let Some(output_data) = output_data.get(output) else {
-            return elements;
+            return;
         };
 
         let scale = output_data.scale;
@@ -664,18 +664,17 @@ impl ScreenshotUi {
                 None,
                 Kind::Unspecified,
             ));
-            elements.push(elem.into());
+            collector.push_element(elem);
         }
 
         let buf_loc = zip(&output_data.buffers, &output_data.locations);
-        elements.extend(buf_loc.map(|(buffer, loc)| {
+        collector.extend_elements(buf_loc.map(|(buffer, loc)| {
             SolidColorRenderElement::from_buffer(
                 buffer,
                 loc.to_f64().to_logical(scale),
                 progress,
                 Kind::Unspecified,
             )
-            .into()
         }));
 
         // The screenshot itself goes last.
@@ -687,11 +686,10 @@ impl ScreenshotUi {
         let screenshot = &output_data.screenshot[index];
 
         if *show_pointer && let Some(pointer) = screenshot.pointer.clone() {
-            elements.push(pointer.into());
+            collector.push_element(pointer);
         }
-        elements.push(screenshot.buffer.clone().into());
 
-        elements
+        collector.push_element(screenshot.buffer.clone());
     }
 
     pub fn capture(
