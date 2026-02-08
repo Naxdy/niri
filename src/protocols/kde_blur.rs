@@ -1,9 +1,8 @@
-use std::sync::{Arc, RwLock};
-
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
     protocol::{wl_region::WlRegion, wl_surface::WlSurface},
 };
+use tokio::sync::watch;
 use wayland_protocols_plasma::blur::server::{
     org_kde_kwin_blur::OrgKdeKwinBlur, org_kde_kwin_blur_manager::OrgKdeKwinBlurManager,
 };
@@ -12,7 +11,8 @@ const PROTOCOL_VERSION: u32 = 1;
 
 pub struct OrgKdeKwinBlurState {
     pub surface: WlSurface,
-    pub region: Arc<RwLock<Option<WlRegion>>>,
+    region_tx: watch::Sender<Option<WlRegion>>,
+    region_rx: watch::Receiver<Option<WlRegion>>,
 }
 
 pub struct OrgKdeKwinBlurManagerState {}
@@ -90,9 +90,11 @@ where
     ) {
         match request {
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur_manager::Request::Create { id, surface } => {
+                let (region_tx, region_rx) = watch::channel(None);
                 data_init.init(id, OrgKdeKwinBlurState {
                     surface,
-                        region: Arc::new(RwLock::new(None))
+                    region_tx,
+                    region_rx,
                 });
             },
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur_manager::Request::Unset { surface } => {
@@ -121,13 +123,16 @@ where
     ) {
         match request {
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::Commit => {
-                state.set_blur_region(&data.surface, data.region.read().unwrap().clone());
+                let region = data.region_rx.borrow().clone();
+                state.set_blur_region(&data.surface, region);
                 state.enable_blur(&data.surface);
             }
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::SetRegion {
                 region,
             } => {
-                *data.region.write().unwrap() = region;
+                if let Err(e) = data.region_tx.send(region) {
+                    error!("failed to set blur region: {e}")
+                };
             }
             wayland_protocols_plasma::blur::server::org_kde_kwin_blur::Request::Release => {}
             e => {

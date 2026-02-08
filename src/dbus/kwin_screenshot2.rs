@@ -19,24 +19,24 @@ pub struct KwinScreenshot2 {
 }
 
 pub struct KwinScreenshotOutput {
-    data_tx: async_oneshot::Sender<anyhow::Result<ScreenshotData>>,
+    data_tx: tokio::sync::oneshot::Sender<anyhow::Result<ScreenshotData>>,
     pipe: File,
 }
 impl ScreenshotOutput for KwinScreenshotOutput {
     type Pipe = NoopScreenshotPipe<File>;
 
-    fn image_meta_failed(mut self, err: anyhow::Error) {
+    fn image_meta_failed(self, err: anyhow::Error) {
         // Receiver is dead
         let _ = self.data_tx.send(Err(err));
     }
 
     fn image_meta_success(
-        mut self,
+        self,
         _state: &mut Niri,
         data: ScreenshotData,
     ) -> anyhow::Result<Self::Pipe> {
-        if let Err(e) = self.data_tx.send(Ok(data)) {
-            bail!("client no longer waits on the image: {e:?}")
+        if self.data_tx.send(Ok(data)).is_err() {
+            bail!("client no longer waits on the image")
         }
         Ok(NoopScreenshotPipe(self.pipe))
     }
@@ -48,8 +48,8 @@ pub enum KwinScreenshot2ToNiri {
         include_pointer: bool,
         out: KwinScreenshotOutput,
     },
-    PickWindow(async_oneshot::Sender<Option<MappedId>>),
-    PickOutput(async_oneshot::Sender<Option<String>>),
+    PickWindow(tokio::sync::oneshot::Sender<Option<MappedId>>),
+    PickOutput(tokio::sync::oneshot::Sender<Option<String>>),
 }
 
 const QIMAGE_FORMAT_RGBA8888: u32 = 17;
@@ -101,7 +101,7 @@ async fn capture(
         .map_err(|e| fdhow!("failed to prepare pipe: {e:?}"))?;
     let pipe = File::from(pipe);
 
-    let (data_tx, data_rx) = async_oneshot::oneshot();
+    let (data_tx, data_rx) = tokio::sync::oneshot::channel();
 
     let include_pointer = match options.get("include-cursor").map(bool::try_from) {
         Some(Ok(v)) => v,
@@ -178,7 +178,7 @@ impl KwinScreenshot2 {
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
         match InteractiveKind::from(kind) {
             InteractiveKind::Window => {
-                let (tx, rx) = async_oneshot::oneshot();
+                let (tx, rx) = tokio::sync::oneshot::channel();
                 self.to_niri
                     .send(KwinScreenshot2ToNiri::PickWindow(tx))
                     .map_err(|e| fdhow!("failed to request window pick: {e:?}"))?;
@@ -191,7 +191,7 @@ impl KwinScreenshot2 {
                 capture(self, ScreenshotTarget::Window(window), options, pipe).await
             }
             InteractiveKind::Output => {
-                let (tx, rx) = async_oneshot::oneshot();
+                let (tx, rx) = tokio::sync::oneshot::channel();
                 self.to_niri
                     .send(KwinScreenshot2ToNiri::PickOutput(tx))
                     .map_err(|e| fdhow!("failed to request window pick: {e:?}"))?;

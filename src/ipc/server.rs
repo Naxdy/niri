@@ -336,7 +336,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             Response::FocusedWindow(window)
         }
         Request::PickWindow => {
-            let (tx, rx) = async_oneshot::oneshot();
+            let (tx, rx) = tokio::sync::oneshot::channel();
             ctx.event_loop
                 .insert_idle(move |state| state.handle_pick_window(tx));
             let result = rx.await;
@@ -348,7 +348,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             Response::PickedWindow(window)
         }
         Request::PickColor => {
-            let (tx, rx) = async_oneshot::oneshot();
+            let (tx, rx) = tokio::sync::oneshot::channel();
             ctx.event_loop
                 .insert_idle(move |state| state.handle_pick_color(tx));
             let result = rx.await;

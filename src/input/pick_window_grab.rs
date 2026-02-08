@@ -21,7 +21,7 @@ impl PickWindowGrab {
     }
 
     fn on_ungrab(&mut self, state: &mut State) {
-        if let Some(mut tx) = state.niri.pick_window.take() {
+        if let Some(tx) = state.niri.pick_window.take() {
             let _ = tx.send(None);
         }
         state
@@ -67,7 +67,7 @@ impl PointerGrab<State> for PickWindowGrab {
         // We're handling this press, don't send the release to the window.
         data.niri.suppressed_buttons.insert(event.button);
 
-        if let Some(mut tx) = data.niri.pick_window.take() {
+        if let Some(tx) = data.niri.pick_window.take() {
             let _ = tx.send(
                 data.niri
                     .window_under(handle.current_location())

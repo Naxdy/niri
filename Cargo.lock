@@ -287,15 +287,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-oneshot"
-version = "0.5.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae47de2a02d543205f3f5457a90b6ecbc9494db70557bd29590ec8f1ddff5463"
-dependencies = [
- "futures-micro",
-]
-
-[[package]]
 name = "async-process"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1266,15 +1257,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
-]
-
-[[package]]
-name = "futures-micro"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b460264b3593d68b16a7bc35f7bc226ddfebdf9a1c8db1ed95d5cc6b7168c826"
-dependencies = [
- "pin-project-lite",
 ]
 
 [[package]]
@@ -2340,7 +2322,6 @@ dependencies = [
  "arrayvec",
  "async-channel",
  "async-io",
- "async-oneshot",
  "atomic",
  "bitflags 2.10.0",
  "bytemuck",
@@ -2380,6 +2361,7 @@ dependencies = [
  "serde_json",
  "smithay",
  "smithay-drm-extras",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "tracy-client",
@@ -3872,6 +3854,15 @@ checksum = "42d3e9c45c09de15d06dd8acf5f4e0e399e85927b7f00711024eb7ae10fa4869"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "tokio"
+version = "1.49.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
+dependencies = [
+ "pin-project-lite",
 ]
 
 [[package]]

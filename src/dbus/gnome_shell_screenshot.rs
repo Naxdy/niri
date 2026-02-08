@@ -24,22 +24,22 @@ pub enum ScreenshotToNiri {
         target: ScreenshotTarget,
         out: GnomeScreenshotOutput,
     },
-    PickColor(async_oneshot::Sender<Option<PickedColor>>),
+    PickColor(tokio::sync::oneshot::Sender<Option<PickedColor>>),
 }
 
 pub struct GnomeScreenshotOutput {
     filename: PathBuf,
-    finish: async_oneshot::Sender<anyhow::Result<()>>,
+    finish: tokio::sync::oneshot::Sender<anyhow::Result<()>>,
 }
 pub struct GnomeScreenshotPipe {
     out: LazyWriter<png::StreamWriter<'static, File>>,
-    finish: async_oneshot::Sender<anyhow::Result<()>>,
+    finish: tokio::sync::oneshot::Sender<anyhow::Result<()>>,
 }
 
 impl ScreenshotOutput for GnomeScreenshotOutput {
     type Pipe = GnomeScreenshotPipe;
 
-    fn image_meta_failed(mut self, err: anyhow::Error) {
+    fn image_meta_failed(self, err: anyhow::Error) {
         let _ = self.finish.send(Err(err));
     }
 
@@ -74,12 +74,12 @@ impl Write for GnomeScreenshotPipe {
 impl ScreenshotPipe for GnomeScreenshotPipe {
     type Output = ();
 
-    fn finish_success(mut self) -> anyhow::Result<Self::Output> {
+    fn finish_success(self) -> anyhow::Result<Self::Output> {
         let _ = self.finish.send(Ok(()));
         Ok(())
     }
 
-    fn finish_failure(mut self, e: anyhow::Error) {
+    fn finish_failure(self, e: anyhow::Error) {
         let _ = self.finish.send(Err(e));
     }
 }
@@ -102,7 +102,7 @@ impl Screenshot {
             base.join(filename)
         };
 
-        let (finish, finished) = async_oneshot::oneshot();
+        let (finish, finished) = tokio::sync::oneshot::channel();
 
         let out = GnomeScreenshotOutput {
             filename: filename.clone(),
@@ -134,7 +134,7 @@ impl Screenshot {
     }
 
     async fn pick_color(&self) -> fdo::Result<HashMap<String, OwnedValue>> {
-        let (tx, rx) = async_oneshot::oneshot();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         if let Err(err) = self.to_niri.send(ScreenshotToNiri::PickColor(tx)) {
             warn!("error sending pick color message to niri: {err:?}");
             return Err(fdo::Error::Failed("internal error".to_owned()));

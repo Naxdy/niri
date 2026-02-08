@@ -410,9 +410,9 @@ pub struct Niri {
     pub window_mru_ui: WindowMruUi,
     pub pending_mru_commit: Option<PendingMruCommit>,
 
-    pub pick_window: Option<async_oneshot::Sender<Option<MappedId>>>,
-    pub pick_output: Option<async_oneshot::Sender<Option<String>>>,
-    pub pick_color: Option<async_oneshot::Sender<Option<niri_ipc::PickedColor>>>,
+    pub pick_window: Option<tokio::sync::oneshot::Sender<Option<MappedId>>>,
+    pub pick_output: Option<tokio::sync::oneshot::Sender<Option<String>>>,
+    pub pick_color: Option<tokio::sync::oneshot::Sender<Option<niri_ipc::PickedColor>>>,
 
     pub debug_draw_opaque_regions: bool,
     pub debug_draw_damage: bool,
@@ -2240,7 +2240,10 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
-    pub fn handle_pick_color(&mut self, tx: async_oneshot::Sender<Option<niri_ipc::PickedColor>>) {
+    pub fn handle_pick_color(
+        &mut self,
+        tx: tokio::sync::oneshot::Sender<Option<niri_ipc::PickedColor>>,
+    ) {
         let pointer = self.niri.seat.get_pointer().unwrap();
         let start_data = PointerGrabStartData {
             focus: None,
@@ -2256,7 +2259,7 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
-    pub fn handle_pick_window(&mut self, tx: async_oneshot::Sender<Option<MappedId>>) {
+    pub fn handle_pick_window(&mut self, tx: tokio::sync::oneshot::Sender<Option<MappedId>>) {
         let pointer = self.niri.seat.get_pointer().unwrap();
         let start_data = PointerGrabStartData {
             focus: None,
@@ -2275,7 +2278,7 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
-    pub fn handle_pick_output(&mut self, tx: async_oneshot::Sender<Option<String>>) {
+    pub fn handle_pick_output(&mut self, tx: tokio::sync::oneshot::Sender<Option<String>>) {
         let pointer = self.niri.seat.get_pointer().unwrap();
         let start_data = PointerGrabStartData {
             focus: None,
