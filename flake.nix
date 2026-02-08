@@ -4,6 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
+    # FIXME: remove once https://github.com/NixOS/nixpkgs/pull/476455 is merged
+    nixpkgs-tracy.url = "github:davidkern/nixpkgs?ref=tracy-split-package";
+
     fenix.url = "github:nix-community/fenix";
 
     treefmt-nix.url = "github:numtide/treefmt-nix";
@@ -14,12 +17,14 @@
       url = "github:rustsec/advisory-db";
       flake = false;
     };
+
   };
 
   outputs =
     {
       self,
       nixpkgs,
+      nixpkgs-tracy,
       treefmt-nix,
       fenix,
       crane,
@@ -42,6 +47,17 @@
               inherit system;
               overlays = [
                 self.overlays.default
+                (
+                  final: prev:
+                  let
+                    pkgs-tracy = import nixpkgs-tracy {
+                      inherit (final.stdenv.hostPlatform) system;
+                    };
+                  in
+                  {
+                    inherit (pkgs-tracy) tracy;
+                  }
+                )
               ];
             };
 
@@ -124,6 +140,7 @@
                 };
               in
               [
+                pkgs.tracy
                 pkgs.cargo-insta
                 pkgs.flamegraph
                 pkgs.pkg-config
@@ -140,10 +157,14 @@
             ];
 
             env = {
+              # to make niri load `config-debug.kdl` even when built with release profile
+              NIRI_DEV = "true";
               LD_LIBRARY_PATH = builtins.concatStringsSep ":" (
                 map (e: "${e.lib or e.out}/lib") (
                   ourBuildInputs
                   ++ [
+                    pkgs.stdenv.cc.cc
+
                     pkgs.glib
                     pkgs.pixman
 

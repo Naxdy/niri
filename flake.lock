@@ -66,6 +66,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-tracy": {
+      "locked": {
+        "lastModified": 1769755524,
+        "narHash": "sha256-WdOgKw0aDi71hrGy7Zi0kTHEIGJFGB2lWBO32rAPgYA=",
+        "owner": "davidkern",
+        "repo": "nixpkgs",
+        "rev": "c15c8f34f27eeece2b38f570f676f3ec62a85122",
+        "type": "github"
+      },
+      "original": {
+        "owner": "davidkern",
+        "ref": "tracy-split-package",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixpkgs_2": {
       "locked": {
         "lastModified": 1765270179,
@@ -104,6 +120,7 @@
         "crane": "crane",
         "fenix": "fenix",
         "nixpkgs": "nixpkgs_2",
+        "nixpkgs-tracy": "nixpkgs-tracy",
         "treefmt-nix": "treefmt-nix"
       }
     },

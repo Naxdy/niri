@@ -344,12 +344,11 @@ fn default_config_path() -> Option<PathBuf> {
     };
 
     let mut path = dirs.config_dir().to_owned();
-    #[cfg(debug_assertions)]
+    if cfg!(debug_assertions)
+        || std::env::var("NIRI_DEV").is_ok_and(|e| e.parse::<bool>().is_ok_and(|e| e))
     {
         path.push("config-debug.kdl");
-    }
-    #[cfg(not(debug_assertions))]
-    {
+    } else {
         path.push("config.kdl");
     }
     Some(path)
