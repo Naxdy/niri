@@ -525,7 +525,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), GlesError> {
-        let _span = trace_span!("blur_draw_gles").entered();
+        let _span = tracy_client::span!("BlurRenderElement::draw");
 
         let src = Rectangle::new(
             src.loc,
@@ -643,17 +643,8 @@ impl<'render> RenderElement<TtyRenderer<'render>> for BlurRenderElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), TtyRendererError<'render>> {
-        let _span = trace_span!("blur_draw_tty").entered();
-
-        <Self as RenderElement<GlesRenderer>>::draw(
-            self,
-            frame.as_gles_frame(),
-            src,
-            dst,
-            damage,
-            opaque_regions,
-        )?;
-
+        let frame = frame.as_gles_frame();
+        <Self as RenderElement<GlesRenderer>>::draw(self, frame, src, dst, damage, opaque_regions)?;
         Ok(())
     }
 
