@@ -570,19 +570,6 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
     ) -> Result<(), GlesError> {
         let _span = tracy_client::span!("BlurRenderElement::draw");
 
-        let src = Rectangle::new(
-            src.loc,
-            Size::new(src.size.w * self.scale, src.size.h * self.scale),
-        );
-
-        let scaled_dst = Rectangle::new(
-            dst.loc,
-            Size::from((
-                (dst.size.w as f64 * self.scale) as i32,
-                (dst.size.h as f64 * self.scale) as i32,
-            )),
-        );
-
         let program = Shaders::get_from_frame(gles_frame)
             .blur_finish
             .clone()
@@ -604,7 +591,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
             BlurVariant::Optimized { texture } => gles_frame.render_texture_from_to(
                 texture,
                 src,
-                scaled_dst,
+                dst,
                 damage,
                 opaque_regions,
                 Transform::Normal,
@@ -646,11 +633,10 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                                 &shaders,
                                 *config,
                                 projection_matrix,
-                                self.scale as i32,
                                 &vbos,
                                 debug,
                                 supports_instancing,
-                                scaled_dst,
+                                dst,
                                 texture,
                                 self.alpha_tex.as_ref(),
                             )
@@ -666,7 +652,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
                 gles_frame.render_texture_from_to(
                     texture,
                     src,
-                    scaled_dst,
+                    dst,
                     damage,
                     opaque_regions,
                     fx_buffers.transform(),

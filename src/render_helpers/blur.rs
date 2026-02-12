@@ -302,7 +302,6 @@ pub(super) unsafe fn get_main_buffer_blur(
     shaders: &BlurShaders,
     blur_config: Blur,
     projection_matrix: Mat3,
-    scale: i32,
     vbos: &[u32; 2],
     debug: bool,
     supports_instancing: bool,
@@ -316,7 +315,7 @@ pub(super) unsafe fn get_main_buffer_blur(
             .effects
             .size()
             .to_logical(1, Transform::Normal)
-            .to_physical(scale);
+            .to_physical(1);
 
         let dst_expanded = {
             let mut dst = dst;
@@ -422,7 +421,6 @@ pub(super) unsafe fn get_main_buffer_blur(
                     projection_matrix,
                     sample_buffer,
                     render_buffer,
-                    scale,
                     &shaders.down,
                     half_pixel,
                     blur_config,
@@ -446,7 +444,6 @@ pub(super) unsafe fn get_main_buffer_blur(
                     projection_matrix,
                     sample_buffer,
                     render_buffer,
-                    scale,
                     &shaders.up,
                     half_pixel,
                     blur_config,
@@ -718,7 +715,6 @@ unsafe fn render_blur_pass_with_gl(
     // The buffers used for blurring
     sample_buffer: &GlesTexture,
     render_buffer: &mut GlesTexture,
-    scale: i32,
     // The current blur program + config
     blur_program: &shader::BlurShader,
     half_pixel: [f32; 2],
@@ -734,7 +730,7 @@ unsafe fn render_blur_pass_with_gl(
         let src = Rectangle::from_size(tex_size.to_f64());
         let dest = src
             .to_logical(1.0, Transform::Normal, &src.size)
-            .to_physical(scale as f64)
+            .to_physical(1.0)
             .to_i32_round();
 
         let damage = dest;
