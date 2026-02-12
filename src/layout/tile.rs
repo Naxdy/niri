@@ -1796,7 +1796,6 @@ where
         // If we're not resizing, render the window itself.
         let has_border_shader = BorderRenderElement::has_shader(renderer);
         let geo = Rectangle::new(window_render_loc, window_size);
-        let animated_geo = Rectangle::new(window_render_loc, animated_window_size);
 
         if !pushed_resize {
             let radius = radius.fit_to(window_size.w as f32, window_size.h as f32);
@@ -1945,7 +1944,7 @@ where
                     )),
                     corner_radius: radius,
                     scale: self.scale,
-                    geometry: animated_geo,
+                    geometry: blur_sample_area,
                     true_blur: self.focused_window().is_floating()
                         && !self.focused_window().rules().blur.x_ray.unwrap_or_default(),
                     render_loc: Some(window_render_loc),
