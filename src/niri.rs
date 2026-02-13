@@ -4732,6 +4732,10 @@ impl Niri {
         // Get layer-shell elements.
         let layer_map = layer_map_for_output(output);
         let fx_buffers = EffectsFramebuffers::get_user_data(output);
+        let has_sticky_backdrop_layers = self
+            .layers_in_render_order(&layer_map, Layer::Background, true)
+            .next()
+            .is_some();
 
         // Overlay is rendered first
         self.render_layer(
@@ -4751,10 +4755,17 @@ impl Niri {
                 renderer,
                 output,
                 target,
+                has_sticky_backdrop_layers,
                 &mut collector.as_child(),
             );
             mon.render_insert_hint_between_workspaces(renderer, &mut collector.as_child());
-            mon.render_workspaces(renderer, target, focus_ring, &mut collector.as_child());
+            mon.render_workspaces(
+                renderer,
+                target,
+                focus_ring,
+                has_sticky_backdrop_layers,
+                &mut collector.as_child(),
+            );
 
             self.render_layer(
                 renderer,
@@ -4843,6 +4854,7 @@ impl Niri {
                 renderer,
                 output,
                 target,
+                has_sticky_backdrop_layers,
                 &mut collector.as_child(),
             );
 
@@ -4870,7 +4882,13 @@ impl Niri {
                 );
             }
 
-            mon.render_workspaces(renderer, target, focus_ring, &mut collector.as_child());
+            mon.render_workspaces(
+                renderer,
+                target,
+                focus_ring,
+                has_sticky_backdrop_layers,
+                &mut collector.as_child(),
+            );
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 self.render_layer_normal(

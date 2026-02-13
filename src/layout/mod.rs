@@ -4890,6 +4890,7 @@ impl<W: LayoutElement> Layout<W> {
         renderer: &mut R,
         output: &Output,
         target: RenderTarget,
+        apply_blur_sample_transform: bool,
         collector: &mut C,
     ) where
         R: NiriRenderer,
@@ -4905,6 +4906,11 @@ impl<W: LayoutElement> Layout<W> {
             let scale = Scale::from(move_.output.current_scale().fractional_scale());
             let zoom = self.overview_zoom();
             let location = move_.tile_render_location(zoom);
+            let (blur_sample_offset, blur_sample_scale) = if apply_blur_sample_transform {
+                (location - location.upscale(zoom), zoom)
+            } else {
+                (Point::from((0., 0.)), 1.)
+            };
             let fx_buffers = EffectsFramebuffers::get_user_data(output);
             move_.tile.render(
                 renderer,
@@ -4914,6 +4920,8 @@ impl<W: LayoutElement> Layout<W> {
                     target,
                     fx_buffers,
                     overview_zoom: Some(zoom),
+                    blur_sample_offset,
+                    blur_sample_scale,
                 },
                 &mut |elem| {
                     let elem = RescaleRenderElement::from_element(
