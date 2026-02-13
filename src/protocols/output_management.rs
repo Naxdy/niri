@@ -92,7 +92,7 @@ impl OutputManagementManagerState {
         self.current_config = new_config;
     }
 
-    pub fn notify_changes(&mut self, new_state: HashMap<OutputId, niri_ipc::Output>) {
+    pub fn notify_changes(&mut self, new_state: &HashMap<OutputId, niri_ipc::Output>) {
         let mut changed = false; /* most likely to end up true */
         for (output, conf) in new_state.iter() {
             if let Some(old) = self.current_state.get(output) {
@@ -257,7 +257,7 @@ impl OutputManagementManagerState {
             }
         }
         if changed {
-            self.current_state = new_state;
+            self.current_state = new_state.clone();
             self.serial += 1;
             for data in self.clients.values() {
                 data.manager.done(self.serial);
