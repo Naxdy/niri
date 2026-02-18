@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File};
+use std::{collections::HashMap, os::fd::OwnedFd};
 
 use anyhow::bail;
 use smithay::reexports::rustix;
@@ -10,7 +10,7 @@ use zbus::{
 
 use crate::{
     dbus::{DbusInterface, fdbail, fdhow},
-    niri::{Niri, NoopScreenshotPipe, ScreenshotData, ScreenshotOutput, ScreenshotTarget},
+    niri::{Niri, ScreenshotData, ScreenshotOutput, ScreenshotTarget, UnixPipeScreenshotPipe},
     window::mapped::MappedId,
 };
 
@@ -20,11 +20,11 @@ pub struct KwinScreenshot2 {
 
 pub struct KwinScreenshotOutput {
     data_tx: tokio::sync::oneshot::Sender<anyhow::Result<ScreenshotData>>,
-    pipe: File,
+    pipe: OwnedFd,
 }
 
 impl ScreenshotOutput for KwinScreenshotOutput {
-    type Pipe = NoopScreenshotPipe<File>;
+    type Pipe = UnixPipeScreenshotPipe;
 
     fn image_meta_failed(self, err: anyhow::Error) {
         // Receiver is dead
@@ -39,7 +39,8 @@ impl ScreenshotOutput for KwinScreenshotOutput {
         if self.data_tx.send(Ok(data)).is_err() {
             bail!("client no longer waits on the image")
         }
-        Ok(NoopScreenshotPipe(self.pipe))
+
+        Ok(UnixPipeScreenshotPipe::new(self.pipe))
     }
 }
 
@@ -208,7 +209,6 @@ impl KwinScreenshot2 {
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
         let pipe = rustix::io::fcntl_dupfd_cloexec(pipe, 0)
             .map_err(|e| fdhow!("failed to prepare pipe: {e:?}"))?;
-        let pipe = File::from(pipe);
 
         let (data_tx, data_rx) = tokio::sync::oneshot::channel();
 

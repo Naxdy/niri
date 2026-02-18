@@ -1,7 +1,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::io::Write;
+use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -111,6 +111,7 @@ use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::xdg_activation::XdgActivationState;
 use smithay::wayland::xdg_foreign::XdgForeignState;
+use tokio::io::AsyncWriteExt;
 
 #[cfg(feature = "dbus")]
 use crate::a11y::A11y;
@@ -703,7 +704,7 @@ pub enum ScreenshotTarget {
 }
 
 pub trait ScreenshotOutput: 'static {
-    type Pipe: Write + ScreenshotPipe;
+    type Pipe: ScreenshotPipe;
 
     fn image_meta_failed(self, err: anyhow::Error);
 
@@ -713,29 +714,76 @@ pub trait ScreenshotOutput: 'static {
         data: ScreenshotData,
     ) -> anyhow::Result<Self::Pipe>;
 }
+
 pub trait ScreenshotPipe: Send + 'static {
     type Output;
+
+    fn init_stream(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    fn write_pixels(&mut self, pixels: &[u8]) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    fn flush(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     fn finish_success(self) -> anyhow::Result<Self::Output>;
 
     fn finish_failure(self, e: anyhow::Error);
 }
 
-pub struct NoopScreenshotPipe<W>(pub W);
-impl<W> Write for NoopScreenshotPipe<W>
-where
-    W: Write,
-{
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.write(buf)
-    }
+pub struct UnixPipeScreenshotPipe {
+    owned_fd: Option<OwnedFd>,
+    sender: Option<tokio::net::unix::pipe::Sender>,
+}
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
+impl UnixPipeScreenshotPipe {
+    pub const fn new(owned_fd: OwnedFd) -> Self {
+        Self {
+            owned_fd: Some(owned_fd),
+            sender: None,
+        }
     }
 }
-impl<W: Send + 'static> ScreenshotPipe for NoopScreenshotPipe<W> {
+
+impl ScreenshotPipe for UnixPipeScreenshotPipe {
     type Output = ();
+
+    async fn init_stream(&mut self) -> anyhow::Result<()> {
+        self.sender = Some(
+            tokio::net::unix::pipe::Sender::from_owned_fd(
+                self.owned_fd
+                    .take()
+                    .context("stream is already initialized")?,
+            )
+            .context("failed to initialize tokio pipe sender")?,
+        );
+
+        Ok(())
+    }
+
+    async fn write_pixels(&mut self, pixels: &[u8]) -> anyhow::Result<()> {
+        let stream = self.sender.as_mut().context("stream is not initialized")?;
+
+        stream
+            .writable()
+            .await
+            .context("failed to wait for pipe to be writable")?;
+
+        stream
+            .write_all(pixels)
+            .await
+            .context("failed to write to async writer")
+    }
+
+    async fn flush(&mut self) -> anyhow::Result<()> {
+        let stream = self.sender.as_mut().context("stream is not initialized")?;
+
+        stream
+            .writable()
+            .await
+            .context("failed to wait for pipe to be writable")?;
+
+        stream.flush().await.context("failed to flush async writer")
+    }
+
     fn finish_success(self) -> anyhow::Result<()> {
         Ok(())
     }
@@ -796,18 +844,25 @@ pub struct LegacyScreenshotPipe {
     ipc_taken: SyncSender<Option<String>>,
     copy_to_clipboard: Option<SyncSender<Arc<[u8]>>>,
 }
-impl Write for LegacyScreenshotPipe {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.collector.write(buf)
-    }
 
-    fn flush(&mut self) -> io::Result<()> {
-        // Noop
-        self.collector.flush()
-    }
-}
 impl ScreenshotPipe for LegacyScreenshotPipe {
     type Output = Option<PathBuf>;
+
+    async fn init_stream(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn write_pixels(&mut self, pixels: &[u8]) -> anyhow::Result<()> {
+        tokio::io::AsyncWriteExt::write_all(&mut self.collector, pixels)
+            .await
+            .context("failed to write to cursor")
+    }
+
+    async fn flush(&mut self) -> anyhow::Result<()> {
+        tokio::io::AsyncWriteExt::flush(&mut self.collector)
+            .await
+            .context("failed to flush cursor")
+    }
 
     fn finish_success(self) -> anyhow::Result<Self::Output> {
         let mut image_path = None;
@@ -6354,14 +6409,39 @@ impl Niri {
         };
 
         thread::spawn(move || {
-            // TODO: render_to_vec can be reimplemented as render_to_writer
-            if let Err(e) = pipe.write_all(&pixels).and_then(|()| pipe.flush()) {
-                pipe.finish_failure(anyhow::anyhow!("image writing failed: {e:?}"));
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .build()
+            else {
+                pipe.finish_failure(anyhow::anyhow!(
+                    "failed to start async runtime for image writing"
+                ));
                 return;
-            }
-            if let Err(e) = pipe.finish_success() {
-                warn!("screenshot receiver failed to process output: {e:?}")
-            }
+            };
+
+            runtime.block_on(async move {
+                // TODO: render_to_vec can be reimplemented as render_to_writer
+                if let Err(e) = pipe.init_stream().await {
+                    pipe.finish_failure(anyhow::anyhow!(
+                        "failed to initialize write stream: {e:?}"
+                    ));
+                    return;
+                }
+
+                if let Err(e) = pipe.write_pixels(&pixels).await {
+                    pipe.finish_failure(anyhow::anyhow!("image writing failed: {e:?}"));
+                    return;
+                };
+
+                if let Err(e) = pipe.flush().await {
+                    pipe.finish_failure(anyhow::anyhow!("image buffer flushing failed: {e:?}"));
+                    return;
+                }
+
+                if let Err(e) = pipe.finish_success() {
+                    warn!("screenshot receiver failed to process output: {e:?}");
+                }
+            });
         });
     }
 
