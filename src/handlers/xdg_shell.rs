@@ -1241,7 +1241,9 @@ impl State {
     fn unconstrain_window_popup(&self, popup: &PopupKind, window: &Window) {
         // The target geometry for the positioner should be relative to its parent's geometry, so
         // we will compute that here.
-        let mut target = self.niri.layout.popup_target_rect(window);
+        let Some(mut target) = self.niri.layout.popup_target_rect(window) else {
+            return;
+        };
         target.loc -= get_popup_toplevel_coords(popup).to_f64();
 
         self.position_popup_within_rect(popup, target, true);

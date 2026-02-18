@@ -1443,7 +1443,7 @@ impl<W: LayoutElement> Layout<W> {
     /// Computes the window-geometry-relative target rect for popup unconstraining.
     ///
     /// We will try to fit popups inside this rect.
-    pub fn popup_target_rect(&self, window: &W::Id) -> Rectangle<f64, Logical> {
+    pub fn popup_target_rect(&self, window: &W::Id) -> Option<Rectangle<f64, Logical>> {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move
             && move_.tile.focused_window().id() == window
         {
@@ -1456,12 +1456,11 @@ impl<W: LayoutElement> Layout<W> {
             // duplication would be a bit annoying for this edge case.
             target.loc.y -= move_.tile_render_location(1.).y;
             target.loc.y -= move_.tile.window_loc().y;
-            return target;
+            return Some(target);
         }
 
         self.workspaces()
             .find_map(|(_, _, ws)| ws.popup_target_rect(window))
-            .unwrap()
     }
 
     pub fn update_output_size(&mut self, output: &Output) {
