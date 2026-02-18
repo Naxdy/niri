@@ -82,6 +82,7 @@ use crate::protocols::foreign_toplevel::{
 };
 use crate::protocols::gamma_control::{GammaControlHandler, GammaControlManagerState};
 use crate::protocols::kde_blur::OrgKdeKwinBlurManagerHandler;
+use crate::protocols::kde_output_order::KdeOutputOrderV1Handler;
 use crate::protocols::mutter_x11_interop::MutterX11InteropHandler;
 use crate::protocols::output_management::{OutputManagementHandler, OutputManagementManagerState};
 use crate::protocols::screencopy::{Screencopy, ScreencopyHandler, ScreencopyManagerState};
@@ -94,8 +95,9 @@ use crate::utils::region::Region;
 use crate::utils::{output_size, send_scale_transform};
 use crate::{
     delegate_ext_background_effect, delegate_ext_workspace, delegate_foreign_toplevel,
-    delegate_gamma_control, delegate_mutter_x11_interop, delegate_org_kde_kwin_blur,
-    delegate_output_management, delegate_screencopy, delegate_virtual_pointer,
+    delegate_gamma_control, delegate_kde_output_order_v1, delegate_mutter_x11_interop,
+    delegate_org_kde_kwin_blur, delegate_output_management, delegate_screencopy,
+    delegate_virtual_pointer,
 };
 
 pub const XDG_ACTIVATION_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -952,3 +954,13 @@ impl ExtBackgroundEffectManagerHandler for State {
     }
 }
 delegate_ext_background_effect!(State);
+
+impl KdeOutputOrderV1Handler for State {
+    fn kde_output_order_v1_state(
+        &mut self,
+    ) -> &mut crate::protocols::kde_output_order::KdeOutputOrderV1State {
+        &mut self.niri.kde_output_order_v1_state
+    }
+}
+
+delegate_kde_output_order_v1!(State);
