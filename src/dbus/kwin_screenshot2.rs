@@ -91,46 +91,12 @@ fn image_data_to_dbus(data: ScreenshotData) -> HashMap<String, OwnedValue> {
     out
 }
 
-async fn capture(
-    this: &KwinScreenshot2,
-    target: ScreenshotTarget,
-    options: HashMap<String, OwnedValue>,
-    pipe: zbus::zvariant::OwnedFd,
-) -> fdo::Result<HashMap<String, OwnedValue>> {
-    let pipe = rustix::io::fcntl_dupfd_cloexec(pipe, 0)
-        .map_err(|e| fdhow!("failed to prepare pipe: {e:?}"))?;
-    let pipe = File::from(pipe);
-
-    let (data_tx, data_rx) = tokio::sync::oneshot::channel();
-
-    let include_pointer = match options.get("include-cursor").map(bool::try_from) {
-        Some(Ok(v)) => v,
-        _ => false,
-    };
-
-    let out = KwinScreenshotOutput { data_tx, pipe };
-
-    this.to_niri
-        .send(KwinScreenshot2ToNiri::Screenshot {
-            target,
-            include_pointer,
-            out,
-        })
-        .map_err(|e| fdhow!("failed to request screenshot: {e:?}"))?;
-
-    let data = match data_rx.await {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => fdbail!("{e:?}"),
-        Err(e) => fdbail!("failed to request screenshot: {e:?}"),
-    };
-    Ok(image_data_to_dbus(data))
-}
-
 enum InteractiveKind {
     Window,
     Output,
     Unknown,
 }
+
 impl From<u32> for InteractiveKind {
     fn from(value: u32) -> Self {
         match value {
@@ -148,28 +114,35 @@ impl KwinScreenshot2 {
     fn version(&self) -> u32 {
         4
     }
+
     async fn capture_active_screen(
         &self,
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        capture(self, ScreenshotTarget::CurrentOutput, options, pipe).await
+        self.capture(ScreenshotTarget::CurrentOutput, options, pipe)
+            .await
     }
+
     async fn capture_screen(
         &self,
         name: String,
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        capture(self, ScreenshotTarget::Output(name), options, pipe).await
+        self.capture(ScreenshotTarget::Output(name), options, pipe)
+            .await
     }
+
     async fn capture_active_window(
         &self,
         options: HashMap<String, OwnedValue>,
         pipe: zbus::zvariant::OwnedFd,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
-        capture(self, ScreenshotTarget::CurrentWindow, options, pipe).await
+        self.capture(ScreenshotTarget::CurrentWindow, options, pipe)
+            .await
     }
+
     async fn capture_interactive(
         &self,
         kind: u32,
@@ -188,7 +161,8 @@ impl KwinScreenshot2 {
                 else {
                     fdbail!("no window selected");
                 };
-                capture(self, ScreenshotTarget::Window(window), options, pipe).await
+                self.capture(ScreenshotTarget::Window(window), options, pipe)
+                    .await
             }
             InteractiveKind::Output => {
                 let (tx, rx) = tokio::sync::oneshot::channel();
@@ -201,7 +175,8 @@ impl KwinScreenshot2 {
                 else {
                     fdbail!("no output selected");
                 };
-                capture(self, ScreenshotTarget::Output(output), options, pipe).await
+                self.capture(ScreenshotTarget::Output(output), options, pipe)
+                    .await
             }
             _ => fdbail!("unsupported pick option"),
         }
@@ -216,6 +191,41 @@ impl KwinScreenshot2 {
 impl KwinScreenshot2 {
     pub const fn new(to_niri: calloop::channel::Sender<KwinScreenshot2ToNiri>) -> Self {
         Self { to_niri }
+    }
+
+    async fn capture(
+        self: &KwinScreenshot2,
+        target: ScreenshotTarget,
+        options: HashMap<String, OwnedValue>,
+        pipe: zbus::zvariant::OwnedFd,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
+        let pipe = rustix::io::fcntl_dupfd_cloexec(pipe, 0)
+            .map_err(|e| fdhow!("failed to prepare pipe: {e:?}"))?;
+        let pipe = File::from(pipe);
+
+        let (data_tx, data_rx) = tokio::sync::oneshot::channel();
+
+        let include_pointer = options
+            .get("include-cursor")
+            .and_then(|e| bool::try_from(e).ok())
+            .unwrap_or_default();
+
+        let out = KwinScreenshotOutput { data_tx, pipe };
+
+        self.to_niri
+            .send(KwinScreenshot2ToNiri::Screenshot {
+                target,
+                include_pointer,
+                out,
+            })
+            .map_err(|e| fdhow!("failed to request screenshot: {e:?}"))?;
+
+        let data = match data_rx.await {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => fdbail!("{e:?}"),
+            Err(e) => fdbail!("failed to request screenshot: {e:?}"),
+        };
+        Ok(image_data_to_dbus(data))
     }
 }
 

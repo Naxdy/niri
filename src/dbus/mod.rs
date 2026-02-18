@@ -1,6 +1,7 @@
 use zbus::blocking::Connection;
 use zbus::object_server::Interface;
 
+use crate::dbus::kwin_colorpicker::{KwinColorpicker, KwinColorpickerToNiri};
 use crate::dbus::kwin_screenshot2::KwinScreenshot2ToNiri;
 use crate::niri::State;
 
@@ -10,6 +11,7 @@ pub mod freedesktop_login1;
 pub mod freedesktop_screensaver;
 pub mod gnome_shell_introspect;
 pub mod gnome_shell_screenshot;
+pub mod kwin_colorpicker;
 pub mod kwin_screenshot2;
 pub mod mutter_display_config;
 pub mod mutter_service_channel;
@@ -43,6 +45,7 @@ pub struct DBusServers {
     pub conn_locale1: Option<Connection>,
     pub conn_keyboard_monitor: Option<Connection>,
     pub conn_kwin_screenshot2: Option<Connection>,
+    pub conn_kwin_colorpicker: Option<Connection>,
 }
 
 impl DBusServers {
@@ -56,6 +59,36 @@ impl DBusServers {
         let mut dbus = Self::default();
 
         if is_session_instance {
+            let (to_niri, from_service_channel) = calloop::channel::channel();
+            let service_channel = ServiceChannel::new(to_niri);
+            niri.event_loop
+                .insert_source(from_service_channel, move |event, _, state| match event {
+                    calloop::channel::Event::Msg(new_client) => {
+                        state.niri.insert_client(new_client);
+                    }
+                    calloop::channel::Event::Closed => (),
+                })
+                .unwrap();
+            dbus.conn_service_channel = try_start(service_channel);
+        }
+
+        if is_session_instance || config.debug.dbus_interfaces_in_non_session_instances {
+            let (to_niri, from_kwin_colorpicker) = calloop::channel::channel();
+            niri.event_loop
+                .insert_source(from_kwin_colorpicker, move |event, _, state| match event {
+                    calloop::channel::Event::Msg(msg) => match msg {
+                        KwinColorpickerToNiri::PickColor(sender) => {
+                            state.handle_pick_color(sender);
+                        }
+                    },
+                    calloop::channel::Event::Closed => (),
+                })
+                .unwrap();
+
+            let kwin_colorpicker = KwinColorpicker::new(to_niri);
+
+            dbus.conn_kwin_colorpicker = try_start(kwin_colorpicker);
+
             let (to_niri, from_kwin_screenshot2) = calloop::channel::channel();
             niri.event_loop
                 .insert_source(from_kwin_screenshot2, move |event, _, state| match event {
@@ -74,23 +107,7 @@ impl DBusServers {
             let kwin_screenshot2 = KwinScreenshot2::new(to_niri);
 
             dbus.conn_kwin_screenshot2 = try_start(kwin_screenshot2);
-        }
 
-        if is_session_instance {
-            let (to_niri, from_service_channel) = calloop::channel::channel();
-            let service_channel = ServiceChannel::new(to_niri);
-            niri.event_loop
-                .insert_source(from_service_channel, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(new_client) => {
-                        state.niri.insert_client(new_client);
-                    }
-                    calloop::channel::Event::Closed => (),
-                })
-                .unwrap();
-            dbus.conn_service_channel = try_start(service_channel);
-        }
-
-        if is_session_instance || config.debug.dbus_interfaces_in_non_session_instances {
             let (to_niri, from_display_config) = calloop::channel::channel();
             let display_config = DisplayConfig::new(to_niri, backend.ipc_outputs());
             niri.event_loop
