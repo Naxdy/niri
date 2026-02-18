@@ -6454,7 +6454,7 @@ impl Niri {
         renderer: &mut GlesRenderer,
         out: O,
     ) {
-        // Screenshoting multiple outputs is not implemented, captures the current output instead
+        // FIXME: Screenshoting multiple outputs is not implemented, captures the current output instead
         // Not a regression, as old version of this function had ensure!(outputs.len() == 1)
         self.screenshot_output_to_pipe(renderer, None, false, out)
     }

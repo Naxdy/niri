@@ -22,6 +22,7 @@ pub struct KwinScreenshotOutput {
     data_tx: tokio::sync::oneshot::Sender<anyhow::Result<ScreenshotData>>,
     pipe: File,
 }
+
 impl ScreenshotOutput for KwinScreenshotOutput {
     type Pipe = NoopScreenshotPipe<File>;
 
@@ -155,12 +156,14 @@ impl KwinScreenshot2 {
                 self.to_niri
                     .send(KwinScreenshot2ToNiri::PickWindow(tx))
                     .map_err(|e| fdhow!("failed to request window pick: {e:?}"))?;
+
                 let Some(window) = rx
                     .await
                     .map_err(|e| fdhow!("compositor failed to pick window: {e:?}"))?
                 else {
                     fdbail!("no window selected");
                 };
+
                 self.capture(ScreenshotTarget::Window(window), options, pipe)
                     .await
             }
@@ -169,12 +172,14 @@ impl KwinScreenshot2 {
                 self.to_niri
                     .send(KwinScreenshot2ToNiri::PickOutput(tx))
                     .map_err(|e| fdhow!("failed to request window pick: {e:?}"))?;
+
                 let Some(output) = rx
                     .await
                     .map_err(|e| fdhow!("compositor failed to pick output: {e:?}"))?
                 else {
                     fdbail!("no output selected");
                 };
+
                 self.capture(ScreenshotTarget::Output(output), options, pipe)
                     .await
             }
@@ -182,9 +187,15 @@ impl KwinScreenshot2 {
         }
     }
 
-    // There is also a capture_workspace method, which is supposed to capture all screens, but it is not used by spectacle,
-    // instead spectacle screenshots all outputs and glues them together itself, yay.
-    //
+    async fn capture_workspace(
+        &self,
+        options: HashMap<String, OwnedValue>,
+        pipe: zbus::zvariant::OwnedFd,
+    ) -> fdo::Result<HashMap<String, OwnedValue>> {
+        self.capture(ScreenshotTarget::AllOutputs, options, pipe)
+            .await
+    }
+
     // There is also capture_area, which is being bypassed too.
 }
 

@@ -6,8 +6,8 @@
 
 This repo houses a fork of [niri](https://github.com/YaLTeR/niri), a scrollable tiling Wayland compositor.
 
-This fork changes the behavior of upstream niri in a few ways that do not necessarily align with upstream's vision for
-the project (hence the fork).
+The goal of this fork is to create a Wayland compositor that can, eventually, be used as a drop-in-replacement for KWin,
+with (near-)complete support for KDE Plasma & KDE apps.
 
 If you are on NixOS, an easy way to try out this fork is using the provided flake (more at the bottom of this readme).
 
@@ -176,6 +176,28 @@ layout {
 - When using `toggle-group` on a single window, the resize animation is a little bit jerky, due to being anchored at the
   top as opposed to anchored at the bottom. Personally, I'm fine with it, but if you happen to be bothered by it and fix
   it on your own branch, feel free to send a patch.
+
+### KDE Screenshots
+
+We now implement the necessary Wayland protocols & dbus interfaces to allow KDE apps to perform screenshots. This
+includes e.g. Spectacle and XDG Plasma Portal KDE. We also removed the GNOME screenshot implementation in the process,
+meaning if you want Flatpak apps to be able to perform screenshots, you need to use the KDE portal from now on (for
+screensharing GNOME is still used, but this will also be changed in the future).
+
+To do this, put the following in your `/etc/xdg/xdg-desktop-portal/kde-portals.conf`:
+
+```
+[preferred]
+default=kde;gtk
+org.freedesktop.impl.portal.Screenshot=kde
+org.freedesktop.impl.portal.ScreenCast=gnome
+```
+
+> [!NOTE]
+>
+> The file is called `kde-portals.conf` and not `niri-portals.conf`, because it is required for us to set
+> `XDG_CURRENT_DESKTOP=KDE` to enable certain KDE functionality, e.g. in order for XDG Desktop Portal Plasma to expose
+> its screenshot interface.
 
 ## Removed Features
 
