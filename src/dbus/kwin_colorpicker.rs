@@ -2,7 +2,7 @@ use zbus::fdo;
 use zbus::fdo::RequestNameFlags;
 use zbus::interface;
 
-use crate::dbus::Start;
+use crate::dbus::DbusInterface;
 use crate::dbus::fdbail;
 use crate::dbus::fdhow;
 
@@ -12,12 +12,6 @@ pub enum KwinColorpickerToNiri {
 
 pub struct KwinColorpicker {
     to_niri: calloop::channel::Sender<KwinColorpickerToNiri>,
-}
-
-impl KwinColorpicker {
-    pub const fn new(to_niri: calloop::channel::Sender<KwinColorpickerToNiri>) -> Self {
-        Self { to_niri }
-    }
 }
 
 #[interface(name = "org.kde.kwin.ColorPicker")]
@@ -48,7 +42,10 @@ impl KwinColorpicker {
     }
 }
 
-impl Start for KwinColorpicker {
+impl DbusInterface for KwinColorpicker {
+    type Message = KwinColorpickerToNiri;
+    type InitArgs = ();
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let conn = zbus::blocking::Connection::session()?;
 
@@ -60,5 +57,17 @@ impl Start for KwinColorpicker {
         conn.request_name_with_flags("org.kde.kwin.ColorPicker", flags)?;
 
         Ok(conn)
+    }
+
+    fn init_interface(to_niri: calloop::channel::Sender<Self::Message>, _: Self::InitArgs) -> Self {
+        Self { to_niri }
+    }
+
+    fn on_callback(msg: Self::Message, state: &mut crate::niri::State) {
+        match msg {
+            KwinColorpickerToNiri::PickColor(sender) => {
+                state.handle_pick_color(sender);
+            }
+        }
     }
 }

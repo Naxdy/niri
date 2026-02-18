@@ -9,7 +9,7 @@ use zbus::{
 };
 
 use crate::{
-    dbus::{Start, fdbail, fdhow},
+    dbus::{DbusInterface, fdbail, fdhow},
     niri::{Niri, NoopScreenshotPipe, ScreenshotData, ScreenshotOutput, ScreenshotTarget},
     window::mapped::MappedId,
 };
@@ -189,10 +189,6 @@ impl KwinScreenshot2 {
 }
 
 impl KwinScreenshot2 {
-    pub const fn new(to_niri: calloop::channel::Sender<KwinScreenshot2ToNiri>) -> Self {
-        Self { to_niri }
-    }
-
     async fn capture(
         self: &KwinScreenshot2,
         target: ScreenshotTarget,
@@ -229,7 +225,10 @@ impl KwinScreenshot2 {
     }
 }
 
-impl Start for KwinScreenshot2 {
+impl DbusInterface for KwinScreenshot2 {
+    type Message = KwinScreenshot2ToNiri;
+    type InitArgs = ();
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let conn = zbus::blocking::Connection::session()?;
         let flags = RequestNameFlags::AllowReplacement
@@ -240,5 +239,21 @@ impl Start for KwinScreenshot2 {
         conn.request_name_with_flags("org.kde.KWin.ScreenShot2", flags)?;
 
         Ok(conn)
+    }
+
+    fn init_interface(to_niri: calloop::channel::Sender<Self::Message>, _: Self::InitArgs) -> Self {
+        Self { to_niri }
+    }
+
+    fn on_callback(msg: Self::Message, state: &mut crate::niri::State) {
+        match msg {
+            KwinScreenshot2ToNiri::Screenshot {
+                include_pointer,
+                target,
+                out,
+            } => state.handle_screenshot(target, include_pointer, out),
+            KwinScreenshot2ToNiri::PickWindow(tx) => state.handle_pick_window(tx),
+            KwinScreenshot2ToNiri::PickOutput(tx) => state.handle_pick_output(tx),
+        }
     }
 }

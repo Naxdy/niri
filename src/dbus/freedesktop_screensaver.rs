@@ -11,7 +11,7 @@ use zbus::names::{OwnedUniqueName, UniqueName};
 use zbus::zvariant::NoneValue;
 use zbus::{Task, interface};
 
-use super::Start;
+use crate::dbus::DbusInterface;
 
 #[derive(Clone)]
 pub struct ScreenSaver {
@@ -128,7 +128,11 @@ async fn monitor_disappeared_clients(
     Ok(())
 }
 
-impl Start for ScreenSaver {
+impl DbusInterface for ScreenSaver {
+    type InitArgs = Arc<AtomicBool>;
+
+    type Message = ();
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let is_inhibited = self.is_inhibited.clone();
         let is_broken = self.is_broken.clone();
@@ -173,4 +177,20 @@ impl Start for ScreenSaver {
 
         Ok(conn)
     }
+
+    fn init_interface(
+        _to_niri: calloop::channel::Sender<Self::Message>,
+        is_inhibited: Self::InitArgs,
+    ) -> Self {
+        Self {
+            is_inhibited,
+            is_broken: Arc::new(AtomicBool::new(false)),
+            inhibitors: Arc::new(Mutex::new(HashMap::new())),
+            // Start from 1 because some clients don't like 0.
+            counter: Arc::new(AtomicU32::new(1)),
+            monitor_task: Arc::new(OnceLock::new()),
+        }
+    }
+
+    fn on_callback(_msg: Self::Message, _state: &mut crate::niri::State) {}
 }

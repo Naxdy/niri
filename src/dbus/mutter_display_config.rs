@@ -9,8 +9,8 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{self, OwnedValue, Type};
 use zbus::{fdo, interface};
 
-use super::Start;
 use crate::backend::IpcOutputMap;
+use crate::dbus::DbusInterface;
 use crate::utils::is_laptop_panel;
 use crate::utils::scale::supported_scales;
 
@@ -293,7 +293,10 @@ impl DisplayConfig {
     }
 }
 
-impl Start for DisplayConfig {
+impl DbusInterface for DisplayConfig {
+    type Message = HashMap<String, Option<niri_config::Output>>;
+    type InitArgs = Arc<Mutex<IpcOutputMap>>;
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let conn = zbus::blocking::Connection::session()?;
         let flags = RequestNameFlags::AllowReplacement
@@ -305,6 +308,29 @@ impl Start for DisplayConfig {
         conn.request_name_with_flags("org.gnome.Mutter.DisplayConfig", flags)?;
 
         Ok(conn)
+    }
+
+    fn init_interface(
+        to_niri: calloop::channel::Sender<Self::Message>,
+        ipc_outputs: Self::InitArgs,
+    ) -> Self {
+        Self {
+            to_niri,
+            ipc_outputs,
+        }
+    }
+
+    fn on_callback(new_conf: Self::Message, state: &mut crate::niri::State) {
+        for (name, conf) in new_conf {
+            state.modify_output_config(&name, move |output| {
+                if let Some(new_output) = conf {
+                    *output = new_output;
+                } else {
+                    output.off = true;
+                }
+            });
+        }
+        state.reload_output_config();
     }
 }
 

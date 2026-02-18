@@ -5,19 +5,14 @@ use zbus::interface;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{SerializeDict, Type, Value};
 
-use super::Start;
+use crate::dbus::{DbusInterface, fdhow};
 
 pub struct Introspect {
     to_niri: calloop::channel::Sender<IntrospectToNiri>,
-    from_niri: async_channel::Receiver<NiriToIntrospect>,
 }
 
 pub enum IntrospectToNiri {
-    GetWindows,
-}
-
-pub enum NiriToIntrospect {
-    Windows(HashMap<u64, WindowProperties>),
+    GetWindows(tokio::sync::oneshot::Sender<HashMap<u64, WindowProperties>>),
 }
 
 #[derive(Debug, SerializeDict, Type, Value)]
@@ -37,18 +32,15 @@ pub struct WindowProperties {
 #[interface(name = "org.gnome.Shell.Introspect")]
 impl Introspect {
     async fn get_windows(&self) -> fdo::Result<HashMap<u64, WindowProperties>> {
-        if let Err(err) = self.to_niri.send(IntrospectToNiri::GetWindows) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        if let Err(err) = self.to_niri.send(IntrospectToNiri::GetWindows(tx)) {
             warn!("error sending message to niri: {err:?}");
             return Err(fdo::Error::Failed("internal error".to_owned()));
         }
 
-        match self.from_niri.recv().await {
-            Ok(NiriToIntrospect::Windows(windows)) => Ok(windows),
-            Err(err) => {
-                warn!("error receiving message from niri: {err:?}");
-                Err(fdo::Error::Failed("internal error".to_owned()))
-            }
-        }
+        rx.await
+            .map_err(|e| fdhow!("error receiving message: {e:?}"))
     }
 
     // FIXME: call this upon window changes, once more of the infrastructure is there (will be
@@ -57,16 +49,11 @@ impl Introspect {
     pub async fn windows_changed(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
-impl Introspect {
-    pub const fn new(
-        to_niri: calloop::channel::Sender<IntrospectToNiri>,
-        from_niri: async_channel::Receiver<NiriToIntrospect>,
-    ) -> Self {
-        Self { to_niri, from_niri }
-    }
-}
+impl DbusInterface for Introspect {
+    type InitArgs = ();
 
-impl Start for Introspect {
+    type Message = IntrospectToNiri;
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let conn = zbus::blocking::Connection::session()?;
         let flags = RequestNameFlags::AllowReplacement
@@ -78,5 +65,16 @@ impl Start for Introspect {
         conn.request_name_with_flags("org.gnome.Shell.Introspect", flags)?;
 
         Ok(conn)
+    }
+
+    fn init_interface(
+        to_niri: calloop::channel::Sender<Self::Message>,
+        _init_args: Self::InitArgs,
+    ) -> Self {
+        Self { to_niri }
+    }
+
+    fn on_callback(msg: Self::Message, state: &mut crate::niri::State) {
+        state.on_introspect_msg(msg);
     }
 }

@@ -9,8 +9,8 @@ use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, Value};
 use zbus::{ObjectServer, fdo, interface};
 
-use super::Start;
 use crate::backend::IpcOutputMap;
+use crate::dbus::DbusInterface;
 
 #[derive(Clone)]
 pub struct ScreenCast {
@@ -307,20 +307,11 @@ impl Stream {
     }
 }
 
-impl ScreenCast {
-    pub fn new(
-        ipc_outputs: Arc<Mutex<IpcOutputMap>>,
-        to_niri: calloop::channel::Sender<ScreenCastToNiri>,
-    ) -> Self {
-        Self {
-            ipc_outputs,
-            to_niri,
-            sessions: Arc::new(Mutex::new(vec![])),
-        }
-    }
-}
+impl DbusInterface for ScreenCast {
+    type InitArgs = Arc<Mutex<IpcOutputMap>>;
 
-impl Start for ScreenCast {
+    type Message = ScreenCastToNiri;
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let conn = zbus::blocking::Connection::session()?;
         let flags = RequestNameFlags::AllowReplacement
@@ -332,6 +323,21 @@ impl Start for ScreenCast {
         conn.request_name_with_flags("org.gnome.Mutter.ScreenCast", flags)?;
 
         Ok(conn)
+    }
+
+    fn init_interface(
+        to_niri: calloop::channel::Sender<Self::Message>,
+        ipc_outputs: Self::InitArgs,
+    ) -> Self {
+        Self {
+            ipc_outputs,
+            to_niri,
+            sessions: Arc::new(Mutex::new(vec![])),
+        }
+    }
+
+    fn on_callback(msg: Self::Message, state: &mut crate::niri::State) {
+        state.on_screen_cast_msg(msg)
     }
 }
 

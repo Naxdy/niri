@@ -1,16 +1,15 @@
+use calloop::channel::Event;
 use zbus::blocking::Connection;
 use zbus::object_server::Interface;
 
-use crate::dbus::kwin_colorpicker::{KwinColorpicker, KwinColorpickerToNiri};
-use crate::dbus::kwin_screenshot2::KwinScreenshot2ToNiri;
-use crate::niri::State;
+use crate::dbus::kwin_colorpicker::KwinColorpicker;
+use crate::niri::{Niri, State};
 
 pub mod freedesktop_a11y;
 pub mod freedesktop_locale1;
 pub mod freedesktop_login1;
 pub mod freedesktop_screensaver;
 pub mod gnome_shell_introspect;
-pub mod gnome_shell_screenshot;
 pub mod kwin_colorpicker;
 pub mod kwin_screenshot2;
 pub mod mutter_display_config;
@@ -28,7 +27,17 @@ use self::kwin_screenshot2::KwinScreenshot2;
 use self::mutter_display_config::DisplayConfig;
 use self::mutter_service_channel::ServiceChannel;
 
-trait Start: Interface {
+trait DbusInterface: Sized + Interface {
+    type InitArgs;
+    type Message;
+
+    fn init_interface(
+        to_niri: calloop::channel::Sender<Self::Message>,
+        init_args: Self::InitArgs,
+    ) -> Self;
+
+    fn on_callback(msg: Self::Message, state: &mut State);
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection>;
 }
 
@@ -37,7 +46,6 @@ pub struct DBusServers {
     pub conn_service_channel: Option<Connection>,
     pub conn_display_config: Option<Connection>,
     pub conn_screen_saver: Option<Connection>,
-    pub conn_screen_shot: Option<Connection>,
     pub conn_introspect: Option<Connection>,
     #[cfg(feature = "xdp-gnome-screencast")]
     pub conn_screen_cast: Option<Connection>,
@@ -54,129 +62,36 @@ impl DBusServers {
 
         let backend = &state.backend;
         let niri = &mut state.niri;
-        let config = niri.config.borrow();
 
         let mut dbus = Self::default();
 
         if is_session_instance {
-            let (to_niri, from_service_channel) = calloop::channel::channel();
-            let service_channel = ServiceChannel::new(to_niri);
-            niri.event_loop
-                .insert_source(from_service_channel, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(new_client) => {
-                        state.niri.insert_client(new_client);
-                    }
-                    calloop::channel::Event::Closed => (),
-                })
-                .unwrap();
-            dbus.conn_service_channel = try_start(service_channel);
+            dbus.conn_service_channel = start_interface::<ServiceChannel>(niri, ()).unwrap();
         }
 
-        if is_session_instance || config.debug.dbus_interfaces_in_non_session_instances {
-            let (to_niri, from_kwin_colorpicker) = calloop::channel::channel();
-            niri.event_loop
-                .insert_source(from_kwin_colorpicker, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(msg) => match msg {
-                        KwinColorpickerToNiri::PickColor(sender) => {
-                            state.handle_pick_color(sender);
-                        }
-                    },
-                    calloop::channel::Event::Closed => (),
-                })
-                .unwrap();
+        if is_session_instance
+            || niri
+                .config
+                .borrow()
+                .debug
+                .dbus_interfaces_in_non_session_instances
+        {
+            dbus.conn_kwin_colorpicker = start_interface::<KwinColorpicker>(niri, ()).unwrap();
 
-            let kwin_colorpicker = KwinColorpicker::new(to_niri);
+            dbus.conn_kwin_screenshot2 = start_interface::<KwinScreenshot2>(niri, ()).unwrap();
 
-            dbus.conn_kwin_colorpicker = try_start(kwin_colorpicker);
+            dbus.conn_display_config =
+                start_interface::<DisplayConfig>(niri, backend.ipc_outputs()).unwrap();
 
-            let (to_niri, from_kwin_screenshot2) = calloop::channel::channel();
-            niri.event_loop
-                .insert_source(from_kwin_screenshot2, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(msg) => match msg {
-                        KwinScreenshot2ToNiri::Screenshot {
-                            include_pointer,
-                            target,
-                            out,
-                        } => state.handle_screenshot(target, include_pointer, out),
-                        KwinScreenshot2ToNiri::PickWindow(tx) => state.handle_pick_window(tx),
-                        KwinScreenshot2ToNiri::PickOutput(tx) => state.handle_pick_output(tx),
-                    },
-                    calloop::channel::Event::Closed => (),
-                })
-                .unwrap();
-            let kwin_screenshot2 = KwinScreenshot2::new(to_niri);
+            dbus.conn_screen_saver =
+                try_start(ScreenSaver::new(niri.is_fdo_idle_inhibited.clone()));
 
-            dbus.conn_kwin_screenshot2 = try_start(kwin_screenshot2);
-
-            let (to_niri, from_display_config) = calloop::channel::channel();
-            let display_config = DisplayConfig::new(to_niri, backend.ipc_outputs());
-            niri.event_loop
-                .insert_source(from_display_config, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(new_conf) => {
-                        for (name, conf) in new_conf {
-                            state.modify_output_config(&name, move |output| {
-                                if let Some(new_output) = conf {
-                                    *output = new_output;
-                                } else {
-                                    output.off = true;
-                                }
-                            });
-                        }
-                        state.reload_output_config();
-                    }
-                    calloop::channel::Event::Closed => (),
-                })
-                .unwrap();
-            dbus.conn_display_config = try_start(display_config);
-
-            let screen_saver = ScreenSaver::new(niri.is_fdo_idle_inhibited.clone());
-            dbus.conn_screen_saver = try_start(screen_saver);
-
-            let (to_niri, from_screenshot) = calloop::channel::channel();
-            niri.event_loop
-                .insert_source(from_screenshot, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(msg) => match msg {
-                        gnome_shell_screenshot::ScreenshotToNiri::TakeScreenshot {
-                            include_pointer,
-                            target,
-                            out,
-                        } => state.handle_screenshot(target, include_pointer, out),
-                        gnome_shell_screenshot::ScreenshotToNiri::PickColor(sender) => {
-                            state.handle_pick_color(sender)
-                        }
-                    },
-                    calloop::channel::Event::Closed => (),
-                })
-                .unwrap();
-            let screenshot = gnome_shell_screenshot::Screenshot::new(to_niri);
-            dbus.conn_screen_shot = try_start(screenshot);
-
-            let (to_niri, from_introspect) = calloop::channel::channel();
-            let (to_introspect, from_niri) = async_channel::unbounded();
-            niri.event_loop
-                .insert_source(from_introspect, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(msg) => {
-                        state.on_introspect_msg(&to_introspect, msg)
-                    }
-                    calloop::channel::Event::Closed => (),
-                })
-                .unwrap();
-            let introspect = Introspect::new(to_niri, from_niri);
-            dbus.conn_introspect = try_start(introspect);
+            dbus.conn_introspect = start_interface::<Introspect>(niri, ()).unwrap();
 
             #[cfg(feature = "xdp-gnome-screencast")]
             {
-                let (to_niri, from_screen_cast) = calloop::channel::channel();
-                niri.event_loop
-                    .insert_source(from_screen_cast, {
-                        move |event, _, state| match event {
-                            calloop::channel::Event::Msg(msg) => state.on_screen_cast_msg(msg),
-                            calloop::channel::Event::Closed => (),
-                        }
-                    })
-                    .unwrap();
-                let screen_cast = ScreenCast::new(backend.ipc_outputs(), to_niri);
-                dbus.conn_screen_cast = try_start(screen_cast);
+                dbus.conn_screen_cast =
+                    start_interface::<ScreenCast>(niri, backend.ipc_outputs()).unwrap();
             }
 
             let keyboard_monitor = KeyboardMonitor::new();
@@ -193,6 +108,7 @@ impl DBusServers {
                 calloop::channel::Event::Closed => (),
             })
             .unwrap();
+
         match freedesktop_login1::start(to_niri) {
             Ok(conn) => {
                 dbus.conn_login1 = Some(conn);
@@ -222,11 +138,33 @@ impl DBusServers {
     }
 }
 
-fn try_start<I: Start>(iface: I) -> Option<Connection> {
-    match iface.start() {
+fn start_interface<T>(niri: &mut Niri, init_args: T::InitArgs) -> anyhow::Result<Option<Connection>>
+where
+    T: DbusInterface,
+{
+    let (to_niri, from_interface) = calloop::channel::channel();
+    let interface = T::init_interface(to_niri, init_args);
+
+    niri.event_loop
+        .insert_source(from_interface, move |event, _, state| match event {
+            Event::Msg(msg) => {
+                T::on_callback(msg, state);
+            }
+            Event::Closed => (),
+        })
+        .map_err(|e| anyhow::anyhow!("failed to register event source: {e:?}"))?;
+
+    Ok(try_start(interface))
+}
+
+fn try_start<T>(interface: T) -> Option<Connection>
+where
+    T: DbusInterface,
+{
+    match interface.start() {
         Ok(conn) => Some(conn),
-        Err(err) => {
-            warn!("error starting {}: {err:?}", I::name());
+        Err(e) => {
+            warn!("error starting {}: {e:?}", T::name());
             None
         }
     }

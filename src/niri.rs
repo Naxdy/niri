@@ -123,7 +123,7 @@ use crate::dbus::freedesktop_locale1::Locale1ToNiri;
 #[cfg(feature = "dbus")]
 use crate::dbus::freedesktop_login1::Login1ToNiri;
 #[cfg(feature = "dbus")]
-use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospect};
+use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri};
 #[cfg(feature = "xdp-gnome-screencast")]
 use crate::dbus::mutter_screen_cast::{self, ScreenCastToNiri};
 use crate::frame_clock::FrameClock;
@@ -2615,14 +2615,10 @@ impl State {
     }
 
     #[cfg(feature = "dbus")]
-    pub fn on_introspect_msg(
-        &mut self,
-        to_introspect: &async_channel::Sender<NiriToIntrospect>,
-        msg: IntrospectToNiri,
-    ) {
+    pub fn on_introspect_msg(&mut self, msg: IntrospectToNiri) {
         use crate::utils::with_toplevel_role;
 
-        let IntrospectToNiri::GetWindows = msg;
+        let IntrospectToNiri::GetWindows(sender) = msg;
         let _span = tracy_client::span!("GetWindows");
 
         let mut windows = HashMap::new();
@@ -2655,8 +2651,7 @@ impl State {
             windows.insert(id, props);
         });
 
-        let msg = NiriToIntrospect::Windows(windows);
-        if let Err(err) = to_introspect.send_blocking(msg) {
+        if let Err(err) = sender.send(windows) {
             warn!("error sending windows to introspect: {err:?}");
         }
     }

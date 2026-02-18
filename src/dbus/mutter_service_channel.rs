@@ -2,8 +2,7 @@ use std::os::unix::net::UnixStream;
 
 use zbus::{fdo, interface, zvariant};
 
-use super::Start;
-use crate::niri::NewClient;
+use crate::{dbus::DbusInterface, niri::NewClient};
 
 pub struct ServiceChannel {
     to_niri: calloop::channel::Sender<NewClient>,
@@ -37,18 +36,23 @@ impl ServiceChannel {
     }
 }
 
-impl ServiceChannel {
-    pub const fn new(to_niri: calloop::channel::Sender<NewClient>) -> Self {
+impl DbusInterface for ServiceChannel {
+    type Message = NewClient;
+    type InitArgs = ();
+
+    fn init_interface(to_niri: calloop::channel::Sender<Self::Message>, _: Self::InitArgs) -> Self {
         Self { to_niri }
     }
-}
 
-impl Start for ServiceChannel {
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let conn = zbus::blocking::connection::Builder::session()?
             .name("org.gnome.Mutter.ServiceChannel")?
             .serve_at("/org/gnome/Mutter/ServiceChannel", self)?
             .build()?;
         Ok(conn)
+    }
+
+    fn on_callback(msg: Self::Message, state: &mut crate::niri::State) {
+        state.niri.insert_client(msg);
     }
 }

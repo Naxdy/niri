@@ -18,7 +18,7 @@ use zbus::names::{BusName, OwnedUniqueName, UniqueName};
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::NoneValue;
 
-use super::Start;
+use crate::dbus::DbusInterface;
 use crate::niri::State;
 
 #[derive(Debug, Default)]
@@ -403,7 +403,11 @@ async fn monitor_disappeared_clients(
     Ok(())
 }
 
-impl Start for KeyboardMonitor {
+impl DbusInterface for KeyboardMonitor {
+    type InitArgs = ();
+
+    type Message = ();
+
     fn start(self) -> anyhow::Result<zbus::blocking::Connection> {
         let data = self.data.clone();
 
@@ -444,6 +448,15 @@ impl Start for KeyboardMonitor {
 
         Ok(conn)
     }
+
+    fn init_interface(
+        _to_niri: calloop::channel::Sender<Self::Message>,
+        _init_args: Self::InitArgs,
+    ) -> Self {
+        Self::new()
+    }
+
+    fn on_callback(_msg: Self::Message, _state: &mut State) {}
 }
 
 impl State {
