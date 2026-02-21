@@ -156,6 +156,7 @@ use crate::protocols::foreign_toplevel::{self, ForeignToplevelManagerState};
 use crate::protocols::gamma_control::GammaControlManagerState;
 use crate::protocols::kde_blur::OrgKdeKwinBlurManagerState;
 use crate::protocols::kde_output_order::KdeOutputOrderV1State;
+use crate::protocols::kde_window_management::OrgKdePlasmaWindowManagementState;
 use crate::protocols::mutter_x11_interop::MutterX11InteropManagerState;
 use crate::protocols::output_management::OutputManagementManagerState;
 use crate::protocols::screencopy::{Screencopy, ScreencopyBuffer, ScreencopyManagerState};
@@ -327,6 +328,7 @@ pub struct Niri {
     pub org_kde_kwin_blur_manager_state: OrgKdeKwinBlurManagerState,
     pub ext_background_effect_manager_state: ExtBackgroundEffectManagerState,
     pub kde_output_order_v1_state: KdeOutputOrderV1State,
+    pub kde_plasma_window_management_state: OrgKdePlasmaWindowManagementState,
 
     // This will not work as is outside of tests, so it is gated with #[cfg(test)] for now. In
     // particular, shaders will need to learn about the single pixel buffer. Also, it must be
@@ -2892,6 +2894,9 @@ impl Niri {
         let kde_output_order_v1_state =
             KdeOutputOrderV1State::new::<State, _>(&display_handle, |_| true);
 
+        let kde_plasma_window_management_state =
+            OrgKdePlasmaWindowManagementState::new::<State, _>(&display_handle, |_| true);
+
         #[cfg(test)]
         let single_pixel_buffer_state = SinglePixelBufferState::new::<State>(&display_handle);
 
@@ -3097,6 +3102,7 @@ impl Niri {
             org_kde_kwin_blur_manager_state,
             ext_background_effect_manager_state,
             kde_output_order_v1_state,
+            kde_plasma_window_management_state,
 
             #[cfg(test)]
             single_pixel_buffer_state,

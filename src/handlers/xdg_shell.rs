@@ -839,6 +839,11 @@ impl XdgShellHandler for State {
             error!("toplevel missing from both unmapped_windows and layout");
             return;
         };
+
+        self.niri
+            .kde_plasma_window_management_state
+            .unmap_window(&mapped.window);
+
         let window = mapped.window.clone();
         let output = output.cloned();
 
@@ -885,6 +890,20 @@ impl XdgShellHandler for State {
     }
 
     fn title_changed(&mut self, toplevel: ToplevelSurface) {
+        if let Some((mapped, _)) = self
+            .niri
+            .layout
+            .find_window_and_output(toplevel.wl_surface())
+        {
+            self.niri
+                .kde_plasma_window_management_state
+                .each_plasma_window(&mapped.window, |w| {
+                    self.niri
+                        .kde_plasma_window_management_state
+                        .title_changed(w);
+                });
+        }
+
         self.update_window_rules(&toplevel);
     }
 
