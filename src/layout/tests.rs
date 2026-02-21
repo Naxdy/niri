@@ -4,8 +4,8 @@ use niri_config::utils::{Flag, MergeWith as _};
 use niri_config::workspace::WorkspaceName;
 use niri_config::{
     CenterFocusedColumn, FloatOrInt, OutputName, Struts, TabIndicatorLength, TabIndicatorPosition,
-    WorkspaceReference,
 };
+use niri_ipc::WorkspaceReference;
 use proptest::prelude::*;
 use proptest_derive::Arbitrary;
 use smithay::output::{Mode, PhysicalProperties, Subpixel};

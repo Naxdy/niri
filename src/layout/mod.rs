@@ -50,11 +50,8 @@ use std::time::Duration;
 
 use monitor::{InsertHint, InsertPosition, InsertWorkspace, MonitorAddWindowTarget};
 use niri_config::utils::MergeWith as _;
-use niri_config::{
-    Config, CornerRadius, LayoutPart, PresetSize, WindowMoveDirection,
-    Workspace as WorkspaceConfig, WorkspaceReference,
-};
-use niri_ipc::{PositionChange, SizeChange, WindowLayout};
+use niri_config::{Config, CornerRadius, LayoutPart, PresetSize, Workspace as WorkspaceConfig};
+use niri_ipc::{PositionChange, SizeChange, WindowLayout, WindowMoveDirection, WorkspaceReference};
 use scrolling::{Column, ColumnWidth};
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::RescaleRenderElement;

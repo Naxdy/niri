@@ -56,8 +56,13 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 
+#[cfg(feature = "knus")]
+use knus::errors::DecodeError;
 use serde::{Deserialize, Serialize};
 
+use crate::recent_windows::{MruDirection, MruFilter, MruScope};
+
+pub mod recent_windows;
 pub mod socket;
 pub mod state;
 
@@ -179,11 +184,26 @@ pub struct PickedColor {
     pub rgb: [f64; 3],
 }
 
+/// Direction for window to move to
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[cfg_attr(feature = "knus", derive(knus::DecodeScalar))]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum WindowMoveDirection {
+    /// Up
+    Up,
+    /// Left
+    Left,
+    /// Right
+    Right,
+    /// Down
+    Down,
+}
+
 /// Actions that niri can perform.
-// Variants in this enum should match the spelling of the ones in niri-config. Most, but not all,
-// variants from niri-config should be present here.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(feature = "knus", derive(knus::Decode))]
 #[cfg_attr(feature = "clap", command(subcommand_value_name = "ACTION"))]
 #[cfg_attr(feature = "clap", command(subcommand_help_heading = "Actions"))]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
@@ -192,8 +212,17 @@ pub enum Action {
     Quit {
         /// Skip the "Press Enter to confirm" prompt.
         #[cfg_attr(feature = "clap", arg(short, long))]
+        #[cfg_attr(feature = "knus", knus(property, default))]
         skip_confirmation: bool,
     },
+    /// Switch backend to another TTY
+    #[cfg_attr(feature = "knus", knus(skip))]
+    ChangeVt {
+        /// TTY id
+        vt: i32,
+    },
+    /// Suspend logind session
+    Suspend {},
     /// Power off all monitors via DPMS.
     PowerOffMonitors {},
     /// Power on all monitors via DPMS.
@@ -202,24 +231,28 @@ pub enum Action {
     Spawn {
         /// Command to spawn.
         #[cfg_attr(feature = "clap", arg(last = true, required = true))]
+        #[cfg_attr(feature = "knus", knus(arguments))]
         command: Vec<String>,
     },
     /// Spawn a command through the shell.
     SpawnSh {
         /// Command to run.
         #[cfg_attr(feature = "clap", arg(last = true, required = true))]
+        #[cfg_attr(feature = "knus", knus(argument))]
         command: String,
     },
     /// Do a screen transition.
     DoScreenTransition {
         /// Delay in milliseconds for the screen to freeze before starting the transition.
         #[cfg_attr(feature = "clap", arg(short, long))]
+        #[cfg_attr(feature = "knus", knus(property))]
         delay_ms: Option<u16>,
     },
     /// Open the screenshot UI.
     Screenshot {
         ///  Whether to show the mouse pointer by default in the screenshot UI.
         #[cfg_attr(feature = "clap", arg(short = 'p', long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         show_pointer: bool,
 
         /// Path to save the screenshot to.
@@ -236,10 +269,12 @@ pub enum Action {
         ///
         /// The screenshot is saved according to the `screenshot-path` config setting.
         #[cfg_attr(feature = "clap", arg(short = 'd', long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         write_to_disk: bool,
 
         /// Whether to include the mouse pointer in the screenshot.
         #[cfg_attr(feature = "clap", arg(short = 'p', long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         show_pointer: bool,
 
         /// Path to save the screenshot to.
@@ -262,6 +297,7 @@ pub enum Action {
         ///
         /// The screenshot is saved according to the `screenshot-path` config setting.
         #[cfg_attr(feature = "clap", arg(short = 'd', long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         write_to_disk: bool,
 
         /// Path to save the screenshot to.
@@ -283,6 +319,19 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
     },
+    /// Toggle window grouping as tabs
+    ToggleGroup {},
+    /// Move window into/from the tab group
+    MoveWindowIntoOrOutOfGroup {
+        /// Move target direction
+        #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
+        direction: WindowMoveDirection,
+    },
+    /// Focus next window
+    FocusNextWindow {},
+    /// Focus previous window
+    FocusPreviousWindow {},
     /// Toggle fullscreen on a window.
     #[cfg_attr(
         feature = "clap",
@@ -308,6 +357,7 @@ pub enum Action {
         id: Option<u64>,
     },
     /// Focus a window by id.
+    #[cfg_attr(feature = "knus", knus(skip))]
     FocusWindow {
         /// Id of the window to focus.
         #[cfg_attr(feature = "clap", arg(long))]
@@ -319,14 +369,21 @@ pub enum Action {
         ///
         /// The index starts from 1 for the topmost window.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         index: u8,
     },
     /// Focus the previously focused window.
     FocusWindowPrevious {},
     /// Focus the column to the left.
     FocusColumnLeft {},
+    /// Focus the column to the left on the output under the cursor.
+    #[cfg_attr(feature = "knus", knus(skip))]
+    FocusColumnLeftUnderMouse {},
     /// Focus the column to the right.
     FocusColumnRight {},
+    /// Focus the column to the right on the output under the cursor.
+    #[cfg_attr(feature = "knus", knus(skip))]
+    FocusColumnRightUnderMouse {},
     /// Focus the first column.
     FocusColumnFirst {},
     /// Focus the last column.
@@ -341,6 +398,7 @@ pub enum Action {
         ///
         /// The index starts from 1 for the first column.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         index: usize,
     },
     /// Focus the window or the monitor above.
@@ -393,6 +451,7 @@ pub enum Action {
         ///
         /// The index starts from 1 for the first column.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         index: usize,
     },
     /// Move the focused window down in a column.
@@ -453,13 +512,20 @@ pub enum Action {
     CenterVisibleColumns {},
     /// Focus the workspace below.
     FocusWorkspaceDown {},
+    /// Focus the workspace below on the output under mouse cursor.
+    #[cfg_attr(feature = "knus", knus(skip))]
+    FocusWorkspaceDownUnderMouse,
     /// Focus the workspace above.
     FocusWorkspaceUp {},
+    /// Focus the workspace above on the output under mouse cursor.
+    #[cfg_attr(feature = "knus", knus(skip))]
+    FocusWorkspaceUpUnderMouse,
     /// Focus a workspace by reference (index or name).
     FocusWorkspace {
         /// Reference (index or name) of the workspace to focus.
         #[cfg_attr(feature = "clap", arg())]
-        reference: WorkspaceReferenceArg,
+        #[cfg_attr(feature = "knus", knus(argument))]
+        reference: WorkspaceReference,
     },
     /// Focus the previous workspace.
     FocusWorkspacePrevious {},
@@ -470,6 +536,7 @@ pub enum Action {
         /// If `true` (the default), the focus will follow the window to the new workspace. If
         /// `false`, the focus will remain on the original workspace.
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         focus: bool,
     },
     /// Move the focused window to the workspace above.
@@ -479,6 +546,7 @@ pub enum Action {
         /// If `true` (the default), the focus will follow the window to the new workspace. If
         /// `false`, the focus will remain on the original workspace.
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         focus: bool,
     },
     /// Move a window to a workspace.
@@ -495,7 +563,8 @@ pub enum Action {
 
         /// Reference (index or name) of the workspace to move the window to.
         #[cfg_attr(feature = "clap", arg())]
-        reference: WorkspaceReferenceArg,
+        #[cfg_attr(feature = "knus", knus(argument))]
+        reference: WorkspaceReference,
 
         /// Whether the focus should follow the moved window.
         ///
@@ -503,6 +572,7 @@ pub enum Action {
         /// window to the new workspace. If `false`, the focus will remain on the original
         /// workspace.
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         focus: bool,
     },
     /// Move the focused column to the workspace below.
@@ -512,6 +582,7 @@ pub enum Action {
         /// If `true` (the default), the focus will follow the column to the new workspace. If
         /// `false`, the focus will remain on the original workspace.
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         focus: bool,
     },
     /// Move the focused column to the workspace above.
@@ -521,19 +592,22 @@ pub enum Action {
         /// If `true` (the default), the focus will follow the column to the new workspace. If
         /// `false`, the focus will remain on the original workspace.
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         focus: bool,
     },
     /// Move the focused column to a workspace by reference (index or name).
     MoveColumnToWorkspace {
         /// Reference (index or name) of the workspace to move the column to.
         #[cfg_attr(feature = "clap", arg())]
-        reference: WorkspaceReferenceArg,
+        #[cfg_attr(feature = "knus", knus(argument))]
+        reference: WorkspaceReference,
 
         /// Whether the focus should follow the target workspace.
         ///
         /// If `true` (the default), the focus will follow the column to the new workspace. If
         /// `false`, the focus will remain on the original workspace.
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        #[cfg_attr(feature = "knus", knus(property, default = true))]
         focus: bool,
     },
     /// Move the focused workspace down.
@@ -548,13 +622,14 @@ pub enum Action {
     MoveWorkspaceToIndex {
         /// New index for the workspace.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         index: usize,
 
         /// Reference (index or name) of the workspace to move.
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg(long))]
-        reference: Option<WorkspaceReferenceArg>,
+        reference: Option<WorkspaceReference>,
     },
     /// Set the name of a workspace.
     #[cfg_attr(
@@ -564,13 +639,14 @@ pub enum Action {
     SetWorkspaceName {
         /// New name for the workspace.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         name: String,
 
         /// Reference (index or name) of the workspace to name.
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg(long))]
-        workspace: Option<WorkspaceReferenceArg>,
+        workspace: Option<WorkspaceReference>,
     },
     /// Unset the name of a workspace.
     #[cfg_attr(
@@ -582,7 +658,7 @@ pub enum Action {
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg())]
-        reference: Option<WorkspaceReferenceArg>,
+        reference: Option<WorkspaceReference>,
     },
     /// Focus the monitor to the left.
     FocusMonitorLeft {},
@@ -600,6 +676,7 @@ pub enum Action {
     FocusMonitor {
         /// Name of the output to focus.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         output: String,
     },
     /// Move the focused window to the monitor to the left.
@@ -628,6 +705,7 @@ pub enum Action {
 
         /// The target output name.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         output: String,
     },
     /// Move the focused column to the monitor to the left.
@@ -646,6 +724,7 @@ pub enum Action {
     MoveColumnToMonitor {
         /// The target output name.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         output: String,
     },
     /// Change the width of a window.
@@ -662,6 +741,7 @@ pub enum Action {
 
         /// How to change the width.
         #[cfg_attr(feature = "clap", arg(allow_hyphen_values = true))]
+        #[cfg_attr(feature = "knus", knus(argument, str))]
         change: SizeChange,
     },
     /// Change the height of a window.
@@ -678,6 +758,7 @@ pub enum Action {
 
         /// How to change the height.
         #[cfg_attr(feature = "clap", arg(allow_hyphen_values = true))]
+        #[cfg_attr(feature = "knus", knus(argument, str))]
         change: SizeChange,
     },
     /// Reset the height of a window back to automatic.
@@ -742,6 +823,7 @@ pub enum Action {
     SetColumnWidth {
         /// How to change the width.
         #[cfg_attr(feature = "clap", arg(allow_hyphen_values = true))]
+        #[cfg_attr(feature = "knus", knus(argument, str))]
         change: SizeChange,
     },
     /// Expand the focused column to space not taken up by other fully visible columns.
@@ -750,6 +832,7 @@ pub enum Action {
     SwitchLayout {
         /// Layout to switch to.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument, str))]
         layout: LayoutSwitchTarget,
     },
     /// Show the hotkey overlay.
@@ -774,13 +857,14 @@ pub enum Action {
     MoveWorkspaceToMonitor {
         /// The target output name.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         output: String,
 
         // Reference (index or name) of the workspace to move.
         ///
         /// If `None`, uses the focused workspace.
         #[cfg_attr(feature = "clap", arg(long))]
-        reference: Option<WorkspaceReferenceArg>,
+        reference: Option<WorkspaceReference>,
     },
     /// Toggle a debug tint on windows.
     ToggleDebugTint {},
@@ -820,6 +904,7 @@ pub enum Action {
     SwitchFocusBetweenFloatingAndTiling {},
     /// Move a floating window on screen.
     #[cfg_attr(feature = "clap", clap(about = "Move the floating window on screen"))]
+    #[cfg_attr(feature = "knus", knus(skip))]
     MoveFloatingWindow {
         /// Id of the window to move.
         ///
@@ -875,6 +960,7 @@ pub enum Action {
         ///
         /// If `None`, uses the focused output.
         #[cfg_attr(feature = "clap", arg())]
+        #[cfg_attr(feature = "knus", knus(argument))]
         output: Option<String>,
     },
     /// Clear the dynamic cast target, making it show nothing.
@@ -886,18 +972,21 @@ pub enum Action {
     /// Close the Overview.
     CloseOverview {},
     /// Toggle urgent status of a window.
+    #[cfg_attr(feature = "knus", knus(skip))]
     ToggleWindowUrgent {
         /// Id of the window to toggle urgent.
         #[cfg_attr(feature = "clap", arg(long))]
         id: u64,
     },
     /// Set urgent status of a window.
+    #[cfg_attr(feature = "knus", knus(skip))]
     SetWindowUrgent {
         /// Id of the window to set urgent.
         #[cfg_attr(feature = "clap", arg(long))]
         id: u64,
     },
     /// Unset urgent status of a window.
+    #[cfg_attr(feature = "knus", knus(skip))]
     UnsetWindowUrgent {
         /// Id of the window to unset urgent.
         #[cfg_attr(feature = "clap", arg(long))]
@@ -907,7 +996,56 @@ pub enum Action {
     ///
     /// Can be useful for scripts changing the config file, to avoid waiting the small duration for
     /// niri's config file watcher to notice the changes.
+    #[cfg_attr(feature = "knus", knus(skip))]
     LoadConfigFile {},
+    /// Screenshot UI: confirm screenshot area selection
+    #[cfg_attr(feature = "knus", knus(skip))]
+    ConfirmScreenshot {
+        /// Write the screenshot to disk in addition to putting it in your clipboard.
+        ///
+        /// The screenshot is saved according to the `screenshot-path` config setting.
+        write_to_disk: bool,
+    },
+    /// Screenshot UI: cancel screenshot area selection
+    #[cfg_attr(feature = "knus", knus(skip))]
+    CancelScreenshot,
+    /// Screenshot UI: toggle between rendering cursor to screenshot or not
+    #[cfg_attr(feature = "knus", knus(skip))]
+    ScreenshotTogglePointer,
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruAdvance {
+        /// IDK
+        direction: MruDirection,
+        /// IDK
+        scope: Option<MruScope>,
+        /// IDK
+        filter: Option<MruFilter>,
+    },
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruConfirm,
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruCancel,
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruCloseCurrentWindow,
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruFirst,
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruLast,
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruSetScope {
+        /// IDK
+        scope: MruScope,
+    },
+    /// IDK
+    #[cfg_attr(feature = "knus", knus(skip))]
+    MruCycleScope,
 }
 
 /// Change in window or column size.
@@ -941,7 +1079,7 @@ pub enum PositionChange {
 /// Workspace reference (id, index or name) to operate on.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
-pub enum WorkspaceReferenceArg {
+pub enum WorkspaceReference {
     /// Id of the workspace.
     Id(u64),
     /// Index of the workspace.
@@ -1587,7 +1725,46 @@ impl From<Timestamp> for Duration {
     }
 }
 
-impl FromStr for WorkspaceReferenceArg {
+#[cfg(feature = "knus")]
+impl<S: knus::traits::ErrorSpan> knus::DecodeScalar<S> for WorkspaceReference {
+    fn type_check(
+        type_name: &Option<knus::span::Spanned<knus::ast::TypeName, S>>,
+        ctx: &mut knus::decode::Context<S>,
+    ) {
+        if let Some(type_name) = &type_name {
+            ctx.emit_error(DecodeError::unexpected(
+                type_name,
+                "type name",
+                "no type name expected for this node",
+            ));
+        }
+    }
+
+    fn raw_decode(
+        val: &knus::span::Spanned<knus::ast::Literal, S>,
+        ctx: &mut knus::decode::Context<S>,
+    ) -> Result<Self, DecodeError<S>> {
+        match &**val {
+            knus::ast::Literal::String(s) => Ok(Self::Name(s.clone().into())),
+            knus::ast::Literal::Int(value) => match value.try_into() {
+                Ok(v) => Ok(Self::Index(v)),
+                Err(e) => {
+                    ctx.emit_error(DecodeError::conversion(val, e));
+                    Ok(Self::Index(0))
+                }
+            },
+            _ => {
+                ctx.emit_error(DecodeError::unsupported(
+                    val,
+                    "Unsupported value, only numbers and strings are recognized",
+                ));
+                Ok(Self::Index(0))
+            }
+        }
+    }
+}
+
+impl FromStr for WorkspaceReference {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
