@@ -82,6 +82,10 @@ pub struct BlurRenderContext<'a> {
     pub scale: f64,
     pub geometry: Rectangle<f64, Logical>,
     pub true_blur: bool,
+    /// Additional transform applied to optimized blur sampling to match outer render wrappers
+    /// (e.g. workspace rescale/relocate during gestures and overview)
+    pub optimized_sample_offset: Point<f64, Logical>,
+    pub optimized_sample_scale: f64,
     /// used for elements that are rendered offscreen (e.g. tiles that are being dragged)
     pub render_loc: Option<Point<f64, Logical>>,
     pub overview_zoom: Option<f64>,
@@ -190,6 +194,8 @@ where
             scale,
             geometry,
             mut true_blur,
+            optimized_sample_offset,
+            optimized_sample_scale,
             render_loc,
             overview_zoom,
             alpha,
@@ -238,6 +244,16 @@ where
             sample_area.to_i32_round()
         } else {
             destination_area
+        };
+        let sample_area = if !true_blur
+            && ((optimized_sample_scale - 1.).abs() > f64::EPSILON
+                || optimized_sample_offset != Point::from((0., 0.)))
+        {
+            let mut sample_area = sample_area.to_f64().upscale(optimized_sample_scale);
+            sample_area.loc += optimized_sample_offset;
+            sample_area.to_i32_round()
+        } else {
+            sample_area
         };
 
         let mut tex_buffer = || {

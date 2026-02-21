@@ -1681,6 +1681,7 @@ impl<W: LayoutElement> Monitor<W> {
         renderer: &mut R,
         target: RenderTarget,
         focus_ring: bool,
+        apply_blur_sample_transform: bool,
         collector: &mut C,
     ) where
         R: NiriRenderer,
@@ -1733,6 +1734,8 @@ impl<W: LayoutElement> Monitor<W> {
         };
 
         for (ws, geo) in self.workspaces_with_render_geo() {
+            let blur_sample_transform = apply_blur_sample_transform.then_some((geo.loc, zoom));
+
             // Macro instead of closure because ws and insert hint have different elem types.
             macro_rules! push {
                 () => {
@@ -1747,7 +1750,14 @@ impl<W: LayoutElement> Monitor<W> {
                 };
             }
 
-            ws.render_floating(renderer, target, focus_ring, zoom, push!());
+            ws.render_floating(
+                renderer,
+                target,
+                focus_ring,
+                zoom,
+                blur_sample_transform,
+                push!(),
+            );
 
             if let Some(loc) = insert_hint_render_loc
                 && loc.workspace == InsertWorkspace::Existing(ws.id())
@@ -1756,7 +1766,14 @@ impl<W: LayoutElement> Monitor<W> {
                     .render(renderer, loc.location, push!());
             }
 
-            ws.render_scrolling(renderer, target, focus_ring, zoom, push!());
+            ws.render_scrolling(
+                renderer,
+                target,
+                focus_ring,
+                zoom,
+                blur_sample_transform,
+                push!(),
+            );
         }
     }
     pub fn render_workspace_shadows<R, C>(&self, renderer: &mut R, collector: &mut C)

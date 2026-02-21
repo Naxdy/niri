@@ -485,6 +485,8 @@ pub struct TileRenderContext {
     pub target: RenderTarget,
     pub fx_buffers: Option<EffectsFramebuffersUserData>,
     pub overview_zoom: Option<f64>,
+    pub blur_sample_offset: Point<f64, Logical>,
+    pub blur_sample_scale: f64,
 }
 
 impl<W> Tile<W>
@@ -1629,6 +1631,8 @@ where
             target,
             ref fx_buffers,
             overview_zoom,
+            blur_sample_offset,
+            blur_sample_scale,
         } = context;
 
         let _span = tracy_client::span!("Tile::render_inner");
@@ -1947,6 +1951,8 @@ where
                     geometry: blur_sample_area,
                     true_blur: self.focused_window().is_floating()
                         && !self.focused_window().rules().blur.x_ray.unwrap_or_default(),
+                    optimized_sample_offset: blur_sample_offset,
+                    optimized_sample_scale: blur_sample_scale,
                     render_loc: Some(window_render_loc),
                     overview_zoom,
                     alpha: 1.,
@@ -1981,6 +1987,8 @@ where
                 target: RenderTarget::Output,
                 fx_buffers: None,
                 overview_zoom: None,
+                blur_sample_offset: Point::from((0., 0.)),
+                blur_sample_scale: 1.,
             },
             &mut contents,
         );
@@ -1995,6 +2003,8 @@ where
                 target: RenderTarget::Screencast,
                 fx_buffers: None,
                 overview_zoom: None,
+                blur_sample_offset: Point::from((0., 0.)),
+                blur_sample_scale: 1.,
             },
             &mut blocked_out_contents,
         );
