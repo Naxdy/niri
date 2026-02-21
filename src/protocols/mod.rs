@@ -4,6 +4,7 @@ pub mod foreign_toplevel;
 pub mod gamma_control;
 pub mod kde_blur;
 pub mod kde_output_order;
+pub mod kde_window_management;
 pub mod mutter_x11_interop;
 pub mod output_management;
 pub mod screencopy;
