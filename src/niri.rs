@@ -111,6 +111,7 @@ use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::xdg_activation::XdgActivationState;
 use smithay::wayland::xdg_foreign::XdgForeignState;
+use smithay::wayland::xdg_toplevel_tag::XdgToplevelTagManager;
 use tokio::io::AsyncWriteExt;
 
 #[cfg(feature = "dbus")]
@@ -327,6 +328,7 @@ pub struct Niri {
     pub org_kde_kwin_blur_manager_state: OrgKdeKwinBlurManagerState,
     pub ext_background_effect_manager_state: ExtBackgroundEffectManagerState,
     pub kde_output_order_v1_state: KdeOutputOrderV1State,
+    pub xdg_toplevel_tag_manager: XdgToplevelTagManager,
 
     // This will not work as is outside of tests, so it is gated with #[cfg(test)] for now. In
     // particular, shaders will need to learn about the single pixel buffer. Also, it must be
@@ -2892,6 +2894,8 @@ impl Niri {
         let kde_output_order_v1_state =
             KdeOutputOrderV1State::new::<State, _>(&display_handle, |_| true);
 
+        let xdg_toplevel_tag_manager = XdgToplevelTagManager::new::<State>(&display_handle);
+
         #[cfg(test)]
         let single_pixel_buffer_state = SinglePixelBufferState::new::<State>(&display_handle);
 
@@ -3097,6 +3101,7 @@ impl Niri {
             org_kde_kwin_blur_manager_state,
             ext_background_effect_manager_state,
             kde_output_order_v1_state,
+            xdg_toplevel_tag_manager,
 
             #[cfg(test)]
             single_pixel_buffer_state,
