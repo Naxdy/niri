@@ -131,6 +131,8 @@ impl TestCase for Tile {
                 target: RenderTarget::Output,
                 fx_buffers: None,
                 overview_zoom: None,
+                blur_sample_offset: Point::from((0., 0.)),
+                blur_sample_scale: 1.,
             },
             &mut |elem| elements.push(Box::new(elem) as _),
         );
