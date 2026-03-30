@@ -146,7 +146,10 @@ impl<W: LayoutElement> WindowInner<W> {
         match self {
             Self::Single(w) => w.as_ref().unwrap(),
             Self::Multiple { windows, focus_idx } => {
-                *focus_idx = (*focus_idx - 1) % windows.len();
+                *focus_idx = focus_idx
+                    .checked_sub(1)
+                    .unwrap_or_else(|| windows.len() - 1);
+
                 windows
                     .get(*focus_idx)
                     .expect("should have correct focus_idx")
