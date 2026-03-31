@@ -1847,8 +1847,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     fn tile_render_pos(&self, col_idx: usize, tile_idx: usize) -> Option<Point<f64, Logical>> {
         let column = self.columns.get(col_idx)?;
+        info!("have column");
 
         let tile = column.tiles.get(tile_idx)?;
+        info!("have tile");
 
         let source_x = self.column_x(col_idx) + self.columns[col_idx].render_offset().x;
 
@@ -1944,8 +1946,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             }
         }
 
-        if !can_move {
-            // if we want to ungroup, we can still add a new tile / column
+        let is_target_grouped =
+            self.columns[target_col_idx].tiles[target_tile_idx].is_grouped_tile();
+
+        // if we want to ungroup, we can still add a new tile / column
+        if !can_move || !is_target_grouped {
             if is_source_grouped {
                 let source_tile = &mut self.columns[source_col_idx].tiles[source_tile_idx];
 
@@ -2069,9 +2074,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             return;
         }
 
-        let is_target_grouped =
-            self.columns[target_col_idx].tiles[target_tile_idx].is_grouped_tile();
-
         // neither tiles are grouped
         if !is_target_grouped && !is_source_grouped {
             // if we are staying in the same column, we can still move the tile instead
@@ -2080,83 +2082,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     self.columns[source_col_idx].move_down();
                 } else {
                     self.columns[source_col_idx].move_up();
-                }
-            }
-        } else if !is_target_grouped {
-            // only the target is not grouped, in this case we expel the given window
-            let source_tile = &mut self.columns[source_col_idx].tiles[source_tile_idx];
-
-            match source_tile.ungroup_single(&id) {
-                Some(ungrouped) => {
-                    let to_update = source_tile.focused_window().id().clone();
-                    let extra_offset = source_tile.tab_indicator_content_offset();
-                    // we need to refresh the window here to avoid triggering its resize animation
-                    source_tile.focused_window().refresh();
-                    self.update_window(&to_update, None);
-
-                    let new_tile = Tile::new(
-                        ungrouped,
-                        self.view_size,
-                        self.scale,
-                        self.clock.clone(),
-                        self.options.clone(),
-                    );
-
-                    let final_target_tile_idx = if matches!(
-                        direction,
-                        WindowMoveDirection::Left | WindowMoveDirection::Right
-                    ) {
-                        0
-                    } else {
-                        target_tile_idx
-                            + if direction == WindowMoveDirection::Up {
-                                1
-                            } else {
-                                0
-                            }
-                    };
-
-                    if direction == WindowMoveDirection::Left {
-                        target_col_idx += 1;
-                    }
-
-                    let extra_x_offset = if target_col_idx <= source_col_idx {
-                        self.column_x(target_col_idx + 1) - self.column_x(target_col_idx)
-                    } else {
-                        0.
-                    };
-
-                    let width = ColumnWidth::Fixed(new_tile.focused_window().size().w as f64);
-
-                    self.add_tile(
-                        Some(target_col_idx),
-                        new_tile,
-                        true,
-                        width,
-                        false,
-                        Some(self.options.animations.window_movement.0),
-                    );
-
-                    let target_position = self
-                        .tile_render_pos(target_col_idx, final_target_tile_idx)
-                        .expect("should determine source tile render pos");
-
-                    let inserted_tile =
-                        &mut self.columns[target_col_idx].tiles[final_target_tile_idx];
-                    inserted_tile.animate_move_from(
-                        source_position - target_position
-                            + extra_offset
-                            + Point::new(extra_x_offset, 0.),
-                    );
-
-                    if source_col_idx != target_col_idx {
-                        self.columns[source_col_idx].update_tile_sizes(false);
-                    }
-                }
-                _ => {
-                    // in this case the tile turns from grouped to single, so all we should do is
-                    // ensure it gets updated
-                    self.update_window(&id, None);
                 }
             }
         } else {
