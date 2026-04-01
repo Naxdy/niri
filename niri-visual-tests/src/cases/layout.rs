@@ -275,7 +275,7 @@ impl TestCase for Layout {
         self.layout
             .monitor_for_output(&self.output)
             .unwrap()
-            .render_workspaces(renderer, RenderTarget::Output, true, &mut |elem| {
+            .render_workspaces(renderer, RenderTarget::Output, true, false, &mut |elem| {
                 elements.push(Box::new(elem) as _)
             });
 
