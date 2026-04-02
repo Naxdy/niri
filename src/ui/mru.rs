@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use anyhow::ensure;
 use niri_config::{
-    Action, Bind, Color, Config, CornerRadius, GradientInterpolation, Key, Modifiers, MruDirection,
-    MruFilter, MruScope, Trigger,
+    Bind, Color, Config, CornerRadius, GradientInterpolation, Key, Modifiers, Trigger,
 };
+use niri_ipc::Action;
+use niri_ipc::recent_windows::{MruDirection, MruFilter, MruScope};
 use pango::FontDescription;
 use pangocairo::cairo::{self, ImageSurface};
 use smithay::backend::allocator::Fourcc;
@@ -1906,9 +1907,24 @@ fn make_preset_opened_binds() -> Vec<Bind> {
     push(Keysym::Escape, Action::MruCancel);
     push(Keysym::Return, Action::MruConfirm);
     push(Keysym::space, Action::MruConfirm);
-    push(Keysym::a, Action::MruSetScope(MruScope::All));
-    push(Keysym::o, Action::MruSetScope(MruScope::Output));
-    push(Keysym::w, Action::MruSetScope(MruScope::Workspace));
+    push(
+        Keysym::a,
+        Action::MruSetScope {
+            scope: MruScope::All,
+        },
+    );
+    push(
+        Keysym::o,
+        Action::MruSetScope {
+            scope: MruScope::Output,
+        },
+    );
+    push(
+        Keysym::w,
+        Action::MruSetScope {
+            scope: MruScope::Workspace,
+        },
+    );
     push(Keysym::s, Action::MruCycleScope);
 
     // Leave these in since they are the most expected and generally uncontroversial keys, so that
@@ -1943,26 +1959,26 @@ fn make_dynamic_opened_binds(config: &Config) -> Vec<Bind> {
 
     for bind in &config.binds.0 {
         let action = match &bind.action {
-            Action::FocusColumnRight
-            | Action::FocusColumnRightOrFirst
-            | Action::FocusColumnOrMonitorRight
-            | Action::FocusWindowDownOrColumnRight => Action::MruAdvance {
+            Action::FocusColumnRight {}
+            | Action::FocusColumnRightOrFirst {}
+            | Action::FocusColumnOrMonitorRight {}
+            | Action::FocusWindowDownOrColumnRight {} => Action::MruAdvance {
                 direction: MruDirection::Forward,
                 scope: None,
                 filter: None,
             },
-            Action::FocusColumnLeft
-            | Action::FocusColumnLeftOrLast
-            | Action::FocusColumnOrMonitorLeft
-            | Action::FocusWindowUpOrColumnLeft => Action::MruAdvance {
+            Action::FocusColumnLeft {}
+            | Action::FocusColumnLeftOrLast {}
+            | Action::FocusColumnOrMonitorLeft {}
+            | Action::FocusWindowUpOrColumnLeft {} => Action::MruAdvance {
                 direction: MruDirection::Backward,
                 scope: None,
                 filter: None,
             },
-            Action::FocusColumnFirst => Action::MruFirst,
-            Action::FocusColumnLast => Action::MruLast,
-            Action::CloseWindow => Action::MruCloseCurrentWindow,
-            x @ Action::Screenshot(_, _) => x.clone(),
+            Action::FocusColumnFirst {} => Action::MruFirst,
+            Action::FocusColumnLast {} => Action::MruLast,
+            Action::CloseWindow { .. } => Action::MruCloseCurrentWindow,
+            x @ Action::Screenshot { .. } => x.clone(),
             _ => continue,
         };
 
