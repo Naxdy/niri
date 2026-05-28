@@ -76,7 +76,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 ] }
 git-version = "0.3.9"
 glam = "0.30.8"
-input = { version = "0.9.1", features = ["libinput_1_21"] }
+input = { version = "0.10.0", features = ["libinput_1_21"] }
 keyframe = { version = "1.1.1", default-features = false }
 libc = "0.2.176"
 libdisplay-info = "0.3.0"

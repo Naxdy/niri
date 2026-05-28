@@ -48,7 +48,6 @@ use crate::dbus::freedesktop_a11y::KbMonBlock;
 use crate::layout::scrolling::ScrollDirection;
 use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{CastTarget, LegacyScreenshotOutput, PointerVisibility, ScreenshotTarget, State};
-use crate::protocols::virtual_keyboard::VirtualKeyboard;
 use crate::ui::mru::{WindowMru, WindowMruUi};
 use crate::ui::screenshot_ui::ScreenshotUi;
 use crate::utils::spawning::{spawn, spawn_sh};
@@ -369,24 +368,18 @@ impl State {
     {
         // Reset the keymap when handling a physical keyboard after a virtual one.
         if self.niri.reset_keymap {
-            let device = event.device();
-            let is_virtual_keyboard = (&device as &dyn Any)
-                .downcast_ref::<VirtualKeyboard>()
-                .is_some();
-            if !is_virtual_keyboard {
-                self.niri.reset_keymap = false;
+            self.niri.reset_keymap = false;
 
-                let config = self.niri.config.borrow();
-                let xkb_config = config.input.keyboard.xkb.clone();
-                std::mem::drop(config);
+            let config = self.niri.config.borrow();
+            let xkb_config = config.input.keyboard.xkb.clone();
+            std::mem::drop(config);
 
-                if xkb_config != Xkb::default() {
-                    self.set_xkb_config(xkb_config.to_xkb_config());
-                } else {
-                    // Use locale1 settings if xkb config is unset.
-                    let xkb = self.niri.xkb_from_locale1.clone().unwrap_or_default();
-                    self.set_xkb_config(xkb.to_xkb_config());
-                }
+            if xkb_config != Xkb::default() {
+                self.set_xkb_config(xkb_config.to_xkb_config());
+            } else {
+                // Use locale1 settings if xkb config is unset.
+                let xkb = self.niri.xkb_from_locale1.clone().unwrap_or_default();
+                self.set_xkb_config(xkb.to_xkb_config());
             }
         }
 
@@ -4685,7 +4678,11 @@ pub fn apply_libinput_settings(config: &niri_config::Input, device: &mut input::
         let _ = device.config_tap_set_enabled(c.tap);
         let _ = device.config_dwt_set_enabled(c.dwt);
         let _ = device.config_dwtp_set_enabled(c.dwtp);
-        let _ = device.config_tap_set_drag_lock_enabled(c.drag_lock);
+        let _ = device.config_tap_set_drag_lock_enabled(if c.drag_lock {
+            input::DragLockState::EnabledTimeout
+        } else {
+            input::DragLockState::Disabled
+        });
         let _ = device.config_scroll_set_natural_scroll_enabled(c.natural_scroll);
         let _ = device.config_accel_set_speed(c.accel_speed.0);
         let _ = device.config_left_handed_set(c.left_handed);

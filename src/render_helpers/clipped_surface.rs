@@ -5,6 +5,7 @@ use smithay::backend::renderer::gles::{
     GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, ffi,
 };
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
+use smithay::utils::user_data::UserDataMap;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use super::damage::ExtraDamage;
@@ -254,6 +255,7 @@ where
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
     ) -> Result<(), GlesError> {
         frame.override_default_tex_program(self.program.clone(), self.compute_uniforms());
 
@@ -266,7 +268,15 @@ where
             })?;
         }
 
-        RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions)?;
+        RenderElement::<GlesRenderer>::draw(
+            &self.inner,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            cache,
+        )?;
         frame.clear_tex_program_override();
         Ok(())
     }
@@ -289,6 +299,7 @@ where
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
     ) -> Result<(), TtyRendererError<'render>> {
         frame
             .as_gles_frame()
@@ -303,7 +314,7 @@ where
             })?;
         }
 
-        RenderElement::draw(&self.inner, frame, src, dst, damage, opaque_regions)?;
+        RenderElement::draw(&self.inner, frame, src, dst, damage, opaque_regions, cache)?;
         frame.as_gles_frame().clear_tex_program_override();
         Ok(())
     }

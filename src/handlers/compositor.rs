@@ -16,7 +16,6 @@ use smithay::wayland::compositor::{
 use smithay::wayland::dmabuf::get_dmabuf;
 use smithay::wayland::shell::xdg::ToplevelCachedState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
-use smithay::{delegate_compositor, delegate_shm};
 
 use super::xdg_shell::add_mapped_toplevel_pre_commit_hook;
 use crate::handlers::XDG_ACTIVATION_TOKEN_TIMEOUT;
@@ -506,9 +505,6 @@ impl ShmHandler for State {
     }
 }
 
-delegate_compositor!(State);
-delegate_shm!(State);
-
 impl State {
     pub fn add_default_dmabuf_pre_commit_hook(&mut self, surface: &WlSurface) {
         let hook = add_pre_commit_hook::<Self, _>(surface, move |state, _dh, surface| {
@@ -548,14 +544,14 @@ impl State {
         let s = surface.clone();
         if let Some(prev) = self.niri.dmabuf_pre_commit_hook.insert(s, hook) {
             error!("tried to add dmabuf pre-commit hook when there was already one");
-            remove_pre_commit_hook(surface, prev);
+            remove_pre_commit_hook(surface, &prev);
         }
     }
 
     pub fn remove_default_dmabuf_pre_commit_hook(&mut self, surface: &WlSurface) {
         match self.niri.dmabuf_pre_commit_hook.remove(surface) {
             Some(hook) => {
-                remove_pre_commit_hook(surface, hook);
+                remove_pre_commit_hook(surface, &hook);
             }
             _ => {
                 error!("tried to remove dmabuf pre-commit hook but there was none");

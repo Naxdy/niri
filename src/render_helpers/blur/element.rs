@@ -17,6 +17,7 @@ use smithay::backend::renderer::gles::{
 use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
 use smithay::gpu_span_location;
 use smithay::reexports::gbm::Format;
+use smithay::utils::user_data::UserDataMap;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
@@ -567,6 +568,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&UserDataMap>,
     ) -> Result<(), GlesError> {
         let _span = tracy_client::span!("BlurRenderElement::draw");
 
@@ -677,9 +679,18 @@ impl<'render> RenderElement<TtyRenderer<'render>> for BlurRenderElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
     ) -> Result<(), TtyRendererError<'render>> {
         let frame = frame.as_gles_frame();
-        <Self as RenderElement<GlesRenderer>>::draw(self, frame, src, dst, damage, opaque_regions)?;
+        <Self as RenderElement<GlesRenderer>>::draw(
+            self,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            cache,
+        )?;
         Ok(())
     }
 
