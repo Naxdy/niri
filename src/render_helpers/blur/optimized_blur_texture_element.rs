@@ -3,6 +3,7 @@ use smithay::backend::renderer::element::texture::TextureRenderElement;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::CommitCounter;
+use smithay::utils::user_data::UserDataMap;
 use smithay::utils::{Buffer, Physical, Point, Rectangle, Scale, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
@@ -71,6 +72,7 @@ impl RenderElement<GlesRenderer> for OptimizedBlurTextureElement<GlesTexture> {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
     ) -> Result<(), GlesError> {
         <TextureRenderElement<GlesTexture> as RenderElement<GlesRenderer>>::draw(
             &self.0,
@@ -79,6 +81,7 @@ impl RenderElement<GlesRenderer> for OptimizedBlurTextureElement<GlesTexture> {
             dst,
             damage,
             opaque_regions,
+            cache,
         )
     }
 
@@ -98,6 +101,7 @@ impl<'render> RenderElement<TtyRenderer<'render>> for OptimizedBlurTextureElemen
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
     ) -> Result<(), TtyRendererError<'render>> {
         let frame = frame.as_gles_frame();
 
@@ -108,6 +112,7 @@ impl<'render> RenderElement<TtyRenderer<'render>> for OptimizedBlurTextureElemen
             dst,
             damage,
             opaque_regions,
+            cache,
         )?;
 
         Ok(())

@@ -1,6 +1,7 @@
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::gles::GlesTexture;
 use smithay::backend::renderer::sync::SyncPoint;
+use smithay::utils::user_data::UserDataMap;
 use smithay::{
     backend::renderer::{
         Color32F, Frame, Renderer,
@@ -74,6 +75,7 @@ where
         _dst: Rectangle<i32, smithay::utils::Physical>,
         damage: &[Rectangle<i32, smithay::utils::Physical>],
         _opaque_regions: &[Rectangle<i32, smithay::utils::Physical>],
+        _cache: Option<&UserDataMap>,
     ) -> Result<(), <R>::Error> {
         for rect in self.region.rects() {
             frame.draw_solid(

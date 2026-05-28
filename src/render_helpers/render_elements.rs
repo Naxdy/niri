@@ -105,10 +105,11 @@ macro_rules! niri_render_elements {
                 dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
                 damage: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
                 opaque_regions: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
+                cache: Option<&smithay::utils::user_data::UserDataMap>,
             ) -> Result<(), smithay::backend::renderer::gles::GlesError> {
                 match self {
                     $($name::$variant(elem) => {
-                        smithay::backend::renderer::element::RenderElement::<smithay::backend::renderer::gles::GlesRenderer>::draw(elem, frame, src, dst, damage, opaque_regions)
+                        smithay::backend::renderer::element::RenderElement::<smithay::backend::renderer::gles::GlesRenderer>::draw(elem, frame, src, dst, damage, opaque_regions, cache)
                     })+
                 }
             }
@@ -130,10 +131,11 @@ macro_rules! niri_render_elements {
                 dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
                 damage: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
                 opaque_regions: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
+                cache: Option<&smithay::utils::user_data::UserDataMap>,
             ) -> Result<(), $crate::backend::tty::TtyRendererError<'render>> {
                 match self {
                     $($name::$variant(elem) => {
-                        smithay::backend::renderer::element::RenderElement::<$crate::backend::tty::TtyRenderer<'render>>::draw(elem, frame, src, dst, damage, opaque_regions)
+                        smithay::backend::renderer::element::RenderElement::<$crate::backend::tty::TtyRenderer<'render>>::draw(elem, frame, src, dst, damage, opaque_regions, cache)
                     })+
                 }
             }
