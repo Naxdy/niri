@@ -570,10 +570,8 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         // Now, descendants is in back-to-front order, and repositioning them in the front-to-back
         // order will preserve the subsequent indices and work out right.
-        let mut idx = idx;
-        for descendant_idx in descendants.into_iter().rev() {
+        for (idx, descendant_idx) in (idx..).zip(descendants.into_iter().rev()) {
             self.raise_window(descendant_idx, idx);
-            idx += 1;
         }
     }
 

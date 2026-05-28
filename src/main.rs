@@ -54,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directives = env::var("RUST_LOG").unwrap_or_else(|_| DEFAULT_LOG_FILTER.to_owned());
     let env_filter = EnvFilter::builder().parse_lossy(directives);
     tracing_subscriber::fmt()
+        .with_ansi_sanitization(false)
         .compact()
         .with_writer(io::stderr)
         .with_env_filter(env_filter)
@@ -246,7 +247,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if env::var_os("NIRI_DISABLE_SYSTEM_MANAGER_NOTIFY").is_none_or(|x| x != "1") {
         // Notify systemd we're ready.
-        if let Err(err) = sd_notify::notify(true, &[NotifyState::Ready]) {
+        if let Err(err) = sd_notify::notify(&[NotifyState::Ready]) {
             warn!("error notifying systemd: {err:?}");
         };
 
