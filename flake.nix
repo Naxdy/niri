@@ -4,9 +4,6 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
-    # FIXME: remove once https://github.com/NixOS/nixpkgs/pull/476455 is merged
-    nixpkgs-tracy.url = "github:davidkern/nixpkgs?ref=tracy-split-package";
-
     fenix.url = "github:nix-community/fenix";
 
     treefmt-nix.url = "github:numtide/treefmt-nix";
@@ -24,7 +21,6 @@
     {
       self,
       nixpkgs,
-      nixpkgs-tracy,
       treefmt-nix,
       fenix,
       crane,
@@ -47,17 +43,6 @@
               inherit system;
               overlays = [
                 self.overlays.default
-                (
-                  final: prev:
-                  let
-                    pkgs-tracy = import nixpkgs-tracy {
-                      inherit (final.stdenv.hostPlatform) system;
-                    };
-                  in
-                  {
-                    inherit (pkgs-tracy) tracy;
-                  }
-                )
               ];
             };
 
