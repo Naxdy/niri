@@ -38,6 +38,8 @@ pub struct ScrollingSpaceRenderContext {
     pub focus_ring: bool,
     pub fx_buffers: Option<EffectsFramebuffersUserData>,
     pub overview_zoom: f64,
+    pub blur_sample_offset: Point<f64, Logical>,
+    pub blur_sample_scale: f64,
 }
 
 /// A scrollable-tiling space for windows.
@@ -5549,6 +5551,8 @@ where
             focus_ring,
             fx_buffers,
             overview_zoom,
+            blur_sample_offset,
+            blur_sample_scale,
         } = context;
 
         let scale = Scale::from(self.scale);
@@ -5599,6 +5603,8 @@ where
                         target,
                         fx_buffers: fx_buffers.clone(),
                         overview_zoom: Some(overview_zoom),
+                        blur_sample_offset,
+                        blur_sample_scale,
                     },
                     &mut collector.as_child(),
                 );

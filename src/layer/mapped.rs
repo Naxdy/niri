@@ -508,6 +508,8 @@ impl MappedLayer {
                     scale: self.scale,
                     geometry: geo,
                     true_blur: !self.rules.blur.x_ray.unwrap_or_default(),
+                    optimized_sample_offset: Point::from((0., 0.)),
+                    optimized_sample_scale: 1.,
                     render_loc: None,
                     overview_zoom: None,
                     alpha,
