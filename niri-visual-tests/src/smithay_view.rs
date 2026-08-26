@@ -1,5 +1,6 @@
 use gtk::glib;
-use gtk::prelude::*;
+use gtk::glib::clone::Downgrade;
+use gtk::prelude::AdjustmentExt;
 use gtk::subclass::prelude::*;
 use smithay::utils::Size;
 
