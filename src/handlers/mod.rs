@@ -39,7 +39,7 @@ use smithay::wayland::keyboard_shortcuts_inhibit::{
 };
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::pointer_constraints::{
-    PointerConstraint, PointerConstraintsHandler, with_pointer_constraint,
+    ConstraintRemove, PointerConstraintsHandler, with_pointer_constraint,
 };
 use smithay::wayland::security_context::{
     SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
@@ -215,7 +215,7 @@ impl PointerConstraintsHandler for State {
         &mut self,
         _surface: &WlSurface,
         _pointer: &PointerHandle<Self>,
-        _constraint: Option<&PointerConstraint>,
+        _constraint_remove: ConstraintRemove,
     ) {
     }
 }
