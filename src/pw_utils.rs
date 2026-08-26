@@ -388,8 +388,8 @@ impl PipeWire {
                             return;
                         };
 
-                        let ChoiceEnum::Enum { alternatives, .. } = modifiers.1 else {
-                            warn!(stream_id, "pw stream: wrong modifier choice type");
+                        let Some(alternatives) = parse_modifier_choice(modifiers) else {
+                            warn!(stream_id, "pw stream: unsupported modifier choice");
                             stop_cast();
                             return;
                         };
@@ -1085,6 +1085,21 @@ impl CastState {
     }
 }
 
+/// Extract the list of candidate modifiers from a DONT_FIXATE modifier choice.
+///
+/// The PipeWire daemon narrows the negotiated format with `spa_pod_filter`, which
+/// collapses a modifier choice to a single value (SPA_CHOICE_None) while keeping
+/// the DONT_FIXATE flag when both sides of the link had it set. This happens e.g.
+/// on NVIDIA, where the intersection of the two modifier sets is a single
+/// modifier, so handle it like a one-element enum.
+fn parse_modifier_choice(modifiers: Choice<i64>) -> Option<Vec<i64>> {
+    match modifiers.1 {
+        ChoiceEnum::Enum { alternatives, .. } => Some(alternatives),
+        ChoiceEnum::None(modifier) => Some(vec![modifier]),
+        _ => None,
+    }
+}
+
 fn make_video_params(
     formats: &FormatSet,
     size: Size<u32, Physical>,
@@ -1286,5 +1301,85 @@ unsafe fn find_meta_header(buffer: *mut spa_buffer) -> Option<NonNull<spa_meta_h
         let p =
             spa_buffer_find_meta_data(buffer, SPA_META_Header, size_of::<spa_meta_header>()).cast();
         NonNull::new(p)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_format_object(modifier_choice: Choice<i64>) -> pod::Object {
+        pod::object!(
+            SpaTypes::ObjectParamFormat,
+            ParamType::Format,
+            pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
+            pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
+            pod::property!(FormatProperties::VideoFormat, Id, VideoFormat::BGRx),
+            Property {
+                key: FormatProperties::VideoModifier.as_raw(),
+                flags: PropertyFlags::MANDATORY | PropertyFlags::DONT_FIXATE,
+                value: pod::Value::Choice(ChoiceValue::Long(modifier_choice)),
+            },
+            pod::property!(
+                FormatProperties::VideoSize,
+                Rectangle,
+                Rectangle {
+                    width: 7680,
+                    height: 2160,
+                }
+            ),
+        )
+    }
+
+    fn deserialize_modifiers(format: &pod::PodObject) -> Vec<i64> {
+        let prop_modifier = format
+            .find_prop(spa::utils::Id(FormatProperties::VideoModifier.0))
+            .unwrap();
+        assert!(prop_modifier
+            .flags()
+            .contains(PodPropFlags::DONT_FIXATE));
+
+        let pod_modifier = prop_modifier.value();
+        let (_, modifiers) = PodDeserializer::deserialize_from::<Choice<i64>>(pod_modifier.as_bytes())
+            .expect("failed to deserialize modifier choice");
+
+        parse_modifier_choice(modifiers).expect("unsupported modifier choice")
+    }
+
+    #[test]
+    fn modifier_choice_narrowed_to_single_value() {
+        // The PipeWire daemon narrows the negotiated format with `spa_pod_filter`.
+        // When the intersection of the two modifier sets is a single modifier, it
+        // emits a fixated single-value choice (SPA_CHOICE_None) while keeping the
+        // DONT_FIXATE flag (both sides had it set). This is what happens on NVIDIA.
+        // https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/master/spa/include/spa/pod/filter.h
+        // DRM_FORMAT_MOD_INVALID, as an i64 on the wire.
+        let mod_invalid = -1i64;
+        let format = make_format_object(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::None(mod_invalid),
+        ));
+        let mut buffer = Vec::new();
+        let pod = make_pod(&mut buffer, format);
+
+        let alternatives = deserialize_modifiers(pod.as_object().unwrap());
+        assert_eq!(alternatives, vec![mod_invalid]);
+    }
+
+    #[test]
+    fn modifier_choice_enum() {
+        // The plain multi-modifier enum case keeps working.
+        let format = make_format_object(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::Enum {
+                default: 0x1,
+                alternatives: vec![0x1, 0x2],
+            },
+        ));
+        let mut buffer = Vec::new();
+        let pod = make_pod(&mut buffer, format);
+
+        let alternatives = deserialize_modifiers(pod.as_object().unwrap());
+        assert_eq!(alternatives, vec![0x1, 0x2]);
     }
 }
