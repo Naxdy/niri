@@ -8,7 +8,7 @@
   installShellFiles,
   lib,
   libGL,
-  libdisplay-info,
+  libdisplay-info_0_3,
   libgbm,
   libinput,
   libxkbcommon,
@@ -56,7 +56,7 @@ let
           cairo
           dbus
           libGL
-          libdisplay-info
+          libdisplay-info_0_3
           libinput
           seatd
           libxkbcommon
