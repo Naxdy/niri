@@ -21,7 +21,7 @@ use niri_config::{
     WorkspaceReference, Xkb,
 };
 use smithay::backend::allocator::Fourcc;
-use smithay::backend::input::Keycode;
+use smithay::backend::input::{InputTime, Keycode};
 use smithay::backend::renderer::Color32F;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
@@ -1171,7 +1171,7 @@ impl State {
             &MotionEvent {
                 location,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: get_monotonic_time().as_millis() as u32,
+                time: InputTime::now(),
             },
         );
         pointer.frame(self);
@@ -1391,7 +1391,7 @@ impl State {
             &MotionEvent {
                 location,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: get_monotonic_time().as_millis() as u32,
+                time: InputTime::now(),
             },
         );
 
@@ -1619,7 +1619,7 @@ impl State {
                 self.niri.seat.get_pointer().unwrap().unset_grab(
                     self,
                     SERIAL_COUNTER.next_serial(),
-                    get_monotonic_time().as_millis() as u32,
+                    InputTime::now(),
                 );
                 self.niri.popup_grab = None;
             }
@@ -2284,7 +2284,7 @@ impl State {
         self.niri.seat.get_pointer().unwrap().unset_grab(
             self,
             SERIAL_COUNTER.next_serial(),
-            get_monotonic_time().as_millis() as u32,
+            InputTime::now(),
         );
         if let Some(touch) = self.niri.seat.get_touch() {
             touch.unset_grab(self);

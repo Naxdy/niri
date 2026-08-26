@@ -14,7 +14,7 @@ use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay::reexports::winit::dpi::LogicalSize;
-use smithay::reexports::winit::window::Window;
+use smithay::reexports::winit::window::WindowAttributes;
 use smithay::wayland::presentation::Refresh;
 
 use super::{IpcOutputMap, OutputId, RenderResult};
@@ -40,8 +40,8 @@ impl Winit {
     ) -> Result<Self, winit::Error> {
         let _span = tracy_client::span!("Winit::new");
 
-        let builder = Window::default_attributes()
-            .with_inner_size(LogicalSize::new(1280.0, 800.0))
+        let builder = WindowAttributes::default()
+            .with_surface_size(LogicalSize::new(1280.0, 800.0))
             // .with_resizable(false)
             .with_title("niri");
         let (backend, winit) = winit::init_from_attributes(builder)?;

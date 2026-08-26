@@ -28,6 +28,12 @@ use smithay::input::pointer::{
     GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
     GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, RelativeMotionEvent,
 };
+use smithay::input::tablet::tool::{
+    AxisFrame as TabletAxisFrame, ButtonEvent as TabletButtonEvent, DownEvent as TabletDownEvent,
+    MotionEvent as TabletMotionEvent, ProximityInEvent as TabletProximityInEvent,
+    ProximityOutEvent as TabletProximityOutEvent, UpEvent as TabletUpEvent,
+};
+use smithay::input::tablet::{TabletDescriptor, TabletSeatTrait};
 use smithay::input::touch::{
     DownEvent, GrabStartData as TouchGrabStartData, MotionEvent as TouchMotionEvent, UpEvent,
 };
@@ -37,7 +43,6 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Transform};
 use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor;
 use smithay::wayland::pointer_constraints::{PointerConstraint, with_pointer_constraint};
-use smithay::wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait};
 use touch_overview_grab::TouchOverviewGrab;
 
 use self::move_grab::MoveGrab;
@@ -245,7 +250,7 @@ impl State {
             let tablet_seat = self.niri.seat.tablet_seat();
 
             let desc = TabletDescriptor::from(&device);
-            tablet_seat.add_tablet::<Self>(&self.niri.display_handle, &desc);
+            tablet_seat.add_tablet(&desc);
         }
         if device.has_capability(DeviceCapability::Touch) && self.niri.seat.get_touch().is_none() {
             self.niri.seat.add_touch();
@@ -386,7 +391,7 @@ impl State {
         let mod_key = self.backend.mod_key(&self.niri.config.borrow());
 
         let serial = SERIAL_COUNTER.next_serial();
-        let time = Event::time_msec(&event);
+        let time = event.time();
         let pressed = event.state() == KeyState::Pressed;
 
         // Stop bind key repeat on any release. This won't work 100% correctly in cases like:
@@ -414,7 +419,7 @@ impl State {
         #[cfg(feature = "dbus")]
         let block = {
             let block = self.a11y_process_key(
-                Duration::from_millis(u64::from(time)),
+                Duration::from_millis(u64::from(time.millis())),
                 event.key_code(),
                 event.state(),
             );
@@ -2444,7 +2449,7 @@ impl State {
                     &RelativeMotionEvent {
                         delta: event.delta(),
                         delta_unaccel: event.delta_unaccel(),
-                        utime: event.time(),
+                        time: event.time(),
                     },
                 );
 
@@ -2563,7 +2568,7 @@ impl State {
                     &RelativeMotionEvent {
                         delta: event.delta(),
                         delta_unaccel: event.delta_unaccel(),
-                        utime: event.time(),
+                        time: event.time(),
                     },
                 );
 
@@ -2583,7 +2588,7 @@ impl State {
             &MotionEvent {
                 location: new_pos,
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
             },
         );
 
@@ -2593,7 +2598,7 @@ impl State {
             &RelativeMotionEvent {
                 delta: event.delta(),
                 delta_unaccel: event.delta_unaccel(),
-                utime: event.time(),
+                time: event.time(),
             },
         );
 
@@ -2685,7 +2690,7 @@ impl State {
             &MotionEvent {
                 location: pos,
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
             },
         );
 
@@ -3053,7 +3058,7 @@ impl State {
                 button: button_code,
                 state: button_state,
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
             },
         );
         pointer.frame(self);
@@ -3072,7 +3077,7 @@ impl State {
         self.niri.pointer_visibility = PointerVisibility::Visible;
         self.niri.tablet_cursor_location = None;
 
-        let timestamp = Duration::from_micros(event.time());
+        let timestamp = Duration::from_micros(event.time().micros());
 
         let horizontal_amount_v120 = event.amount_v120(Axis::Horizontal);
         let vertical_amount_v120 = event.amount_v120(Axis::Vertical);
@@ -3474,7 +3479,7 @@ impl State {
         let horizontal_amount_v120 = horizontal_amount_v120.map(|x| x * horizontal_factor);
         let vertical_amount_v120 = vertical_amount_v120.map(|x| x * vertical_factor);
 
-        let mut frame = AxisFrame::new(event.time_msec()).source(source);
+        let mut frame = AxisFrame::new(event.time()).source(source);
         if horizontal_amount != 0.0 {
             frame = frame
                 .relative_direction(Axis::Horizontal, event.relative_direction(Axis::Horizontal));
@@ -3540,33 +3545,39 @@ impl State {
         let tablet_seat = self.niri.seat.tablet_seat();
         let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&event.device()));
         let tool = tablet_seat.get_tool(&event.tool());
-        if let (Some(tablet), Some(tool)) = (tablet, tool) {
+        if let (Some(_tablet), Some(tool)) = (tablet, tool) {
+            let mut frame = TabletAxisFrame::new();
             if event.pressure_has_changed() {
-                tool.pressure(event.pressure());
+                frame = frame.pressure(event.pressure());
             }
             if event.distance_has_changed() {
-                tool.distance(event.distance());
+                frame = frame.distance(event.distance());
             }
             if event.tilt_has_changed() {
-                tool.tilt(event.tilt());
+                let (tilt_x, tilt_y) = event.tilt();
+                frame = frame.tilt(tilt_x, tilt_y);
             }
             if event.slider_has_changed() {
-                tool.slider_position(event.slider_position());
+                frame = frame.slider(event.slider_position());
             }
             if event.rotation_has_changed() {
-                tool.rotation(event.rotation());
+                frame = frame.rotation(event.rotation());
             }
             if event.wheel_has_changed() {
-                tool.wheel(event.wheel_delta(), event.wheel_delta_discrete());
+                frame = frame.wheel(event.wheel_delta(), event.wheel_delta_discrete());
             }
+            tool.axis(self, frame);
 
             tool.motion(
-                pos,
-                under.surface,
-                &tablet,
-                SERIAL_COUNTER.next_serial(),
-                event.time_msec(),
+                self,
+                under.surface.clone(),
+                &TabletMotionEvent {
+                    location: pos,
+                    serial: SERIAL_COUNTER.next_serial(),
+                    time: event.time(),
+                },
             );
+            tool.frame(self, event.time());
 
             self.niri.pointer_visibility = PointerVisibility::Visible;
             self.niri.tablet_cursor_location = Some(pos);
@@ -3590,7 +3601,14 @@ impl State {
         match tip_state {
             TabletToolTipState::Down => {
                 let serial = SERIAL_COUNTER.next_serial();
-                tool.tip_down(serial, event.time_msec());
+                tool.down(
+                    self,
+                    &TabletDownEvent {
+                        serial,
+                        time: event.time(),
+                    },
+                );
+                tool.frame(self, event.time());
 
                 if let Some(pos) = self.niri.tablet_cursor_location {
                     let under = self.niri.contents_under(pos);
@@ -3678,7 +3696,14 @@ impl State {
                     }
                 }
 
-                tool.tip_up(event.time_msec());
+                tool.up(
+                    self,
+                    &TabletUpEvent {
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time: event.time(),
+                    },
+                );
+                tool.frame(self, event.time());
             }
         }
     }
@@ -3694,26 +3719,37 @@ impl State {
         let under = self.niri.contents_under(pos);
 
         let tablet_seat = self.niri.seat.tablet_seat();
-        let display_handle = self.niri.display_handle.clone();
-        let tool = tablet_seat.add_tool::<Self>(self, &display_handle, &event.tool());
+        let tool = tablet_seat.add_tool(&event.tool());
         let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&event.device()));
         if let Some(tablet) = tablet {
             match event.state() {
                 ProximityState::In => {
                     if let Some(under) = under.surface {
                         tool.proximity_in(
-                            pos,
-                            under,
-                            &tablet,
-                            SERIAL_COUNTER.next_serial(),
-                            event.time_msec(),
+                            self,
+                            Some(under),
+                            tablet,
+                            &TabletProximityInEvent {
+                                location: pos,
+                                axis: None,
+                                serial: SERIAL_COUNTER.next_serial(),
+                                time: event.time(),
+                            },
                         );
+                        tool.frame(self, event.time());
                     }
                     self.niri.pointer_visibility = PointerVisibility::Visible;
                     self.niri.tablet_cursor_location = Some(pos);
                 }
                 ProximityState::Out => {
-                    tool.proximity_out(event.time_msec());
+                    tool.proximity_out(
+                        self,
+                        &TabletProximityOutEvent {
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: event.time(),
+                        },
+                    );
+                    tool.frame(self, event.time());
 
                     // Move the mouse pointer here to avoid discontinuity.
                     //
@@ -3738,11 +3774,15 @@ impl State {
 
         if let Some(tool) = tool {
             tool.button(
-                event.button(),
-                event.button_state(),
-                SERIAL_COUNTER.next_serial(),
-                event.time_msec(),
+                self,
+                &TabletButtonEvent {
+                    serial: SERIAL_COUNTER.next_serial(),
+                    button: event.button(),
+                    state: event.button_state(),
+                    time: event.time(),
+                },
             );
+            tool.frame(self, event.time());
         }
     }
 
@@ -3776,7 +3816,7 @@ impl State {
             self,
             &GestureSwipeBeginEvent {
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
                 fingers: event.fingers(),
             },
         );
@@ -3847,7 +3887,7 @@ impl State {
             }
         }
 
-        let timestamp = Duration::from_micros(event.time());
+        let timestamp = Duration::from_micros(event.time().micros());
 
         let mut handled = false;
         let res = self
@@ -3897,7 +3937,7 @@ impl State {
         pointer.gesture_swipe_update(
             self,
             &GestureSwipeUpdateEvent {
-                time: event.time_msec(),
+                time: event.time(),
                 delta: event.delta(),
             },
         );
@@ -3941,7 +3981,7 @@ impl State {
             self,
             &GestureSwipeEndEvent {
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
                 cancelled: event.cancelled(),
             },
         );
@@ -3959,7 +3999,7 @@ impl State {
             self,
             &GesturePinchBeginEvent {
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
                 fingers: event.fingers(),
             },
         );
@@ -3975,7 +4015,7 @@ impl State {
         pointer.gesture_pinch_update(
             self,
             &GesturePinchUpdateEvent {
-                time: event.time_msec(),
+                time: event.time(),
                 delta: event.delta(),
                 scale: event.scale(),
                 rotation: event.rotation(),
@@ -3995,7 +4035,7 @@ impl State {
             self,
             &GesturePinchEndEvent {
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
                 cancelled: event.cancelled(),
             },
         );
@@ -4013,7 +4053,7 @@ impl State {
             self,
             &GestureHoldBeginEvent {
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
                 fingers: event.fingers(),
             },
         );
@@ -4031,7 +4071,7 @@ impl State {
             self,
             &GestureHoldEndEvent {
                 serial,
-                time: event.time_msec(),
+                time: event.time(),
                 cancelled: event.cancelled(),
             },
         );
@@ -4141,7 +4181,7 @@ impl State {
                     slot,
                     location: pos,
                 };
-                let start_timestamp = Duration::from_micros(evt.time());
+                let start_timestamp = Duration::from_micros(evt.time().micros());
                 let grab = TouchOverviewGrab::new(
                     start_data,
                     start_timestamp,
@@ -4187,7 +4227,7 @@ impl State {
                 slot,
                 location: pos,
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
             },
         );
 
@@ -4214,7 +4254,7 @@ impl State {
             &UpEvent {
                 slot,
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
             },
         )
     }
@@ -4250,7 +4290,7 @@ impl State {
             &TouchMotionEvent {
                 slot,
                 location: pos,
-                time: evt.time_msec(),
+                time: evt.time(),
             },
         );
 

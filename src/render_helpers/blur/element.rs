@@ -454,7 +454,7 @@ impl BlurRenderElement {
         let src_size = Vec2::new(view_src.size.w as f32, view_src.size.h as f32);
 
         let transform_matrix = Mat3::from_translation(Vec2::new(0.5, 0.5))
-            * Mat3::from_cols_array(transform.matrix().as_ref())
+            * Mat3::from(transform.matrix())
             * Mat3::from_translation(-Vec2::new(0.5, 0.5));
 
         // FIXME: y_inverted

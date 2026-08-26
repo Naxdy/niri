@@ -88,7 +88,7 @@ where
         };
 
         let transform_matrix = Mat3::from_translation(Vec2::new(0.5, 0.5))
-            * Mat3::from_cols_array(transform.matrix().as_ref())
+            * Mat3::from(transform.matrix())
             * Mat3::from_translation(-Vec2::new(0.5, 0.5));
 
         // FIXME: y_inverted

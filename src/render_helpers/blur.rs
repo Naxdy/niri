@@ -892,7 +892,7 @@ fn build_texture_mat(
     tex_mat = Mat3::from_scale(Vec2::new(scale.x as f32, scale.y as f32)) * tex_mat;
 
     // then compensate for the texture transform
-    let transform_mat = Mat3::from_cols_array(transform.matrix().as_ref());
+    let transform_mat = Mat3::from(transform.matrix());
     let translation = match transform {
         Transform::Normal => Mat3::IDENTITY,
         Transform::_90 => Mat3::from_translation(Vec2::new(0f32, dst_src_size.w as f32)),
