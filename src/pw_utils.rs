@@ -1204,6 +1204,62 @@ fn find_preferred_modifier(
     Ok((modifier, plane_count))
 }
 
+/// Extend the offered formats with the modifiers GBM can actually allocate.
+///
+/// `eglQueryDmaBufModifiersEXT` fails on some drivers (NVIDIA returns
+/// EGL_BAD_PARAMETER since the 520 series), so smithay falls back to only
+/// reporting the INVALID modifier for each format, even though GBM can allocate
+/// buffers with real modifiers. The implicit allocation in [`allocate_buffer`]
+/// then produces a buffer with a real modifier that the EGL import needs to know
+/// about. Probe an implicit allocation and offer its modifier as well, so that
+/// consumers which support it can negotiate it explicitly; the INVALID fallback
+/// stays in the list for consumers which don't.
+pub fn probe_gbm_render_formats(
+    gbm: &GbmDevice<DrmDeviceFd>,
+    size: Size<i32, Physical>,
+    formats: &FormatSet,
+) -> FormatSet {
+    let size = Size::from((size.w as u32, size.h as u32));
+    let mut probed = Vec::new();
+
+    let fourccs = formats.iter().map(|f| f.code).collect::<Vec<_>>();
+    for fourcc in fourccs {
+        let Ok((buffer, _)) =
+            allocate_buffer(gbm, size, fourcc, &[u64::from(Modifier::Invalid) as i64])
+        else {
+            continue;
+        };
+
+        let modifier = buffer.modifier();
+        if modifier == Modifier::Invalid {
+            // The implicit allocation produced no real modifier (e.g. on Mesa);
+            // the INVALID fallback already covers this case.
+            continue;
+        }
+
+        // Make sure we can actually allocate a buffer with this modifier
+        // explicitly, since that's what happens once it gets negotiated.
+        let flags = GbmBufferFlags::RENDERING;
+        let ok = gbm
+            .create_buffer_object_with_modifiers2::<()>(
+                size.w,
+                size.h,
+                fourcc,
+                std::iter::once(modifier),
+                flags,
+            )
+            .is_ok();
+        if ok {
+            probed.push(Format {
+                code: fourcc,
+                modifier,
+            });
+        }
+    }
+
+    probed.into_iter().collect()
+}
+
 fn allocate_buffer(
     gbm: &GbmDevice<DrmDeviceFd>,
     size: Size<u32, Physical>,
@@ -1218,7 +1274,13 @@ fn allocate_buffer(
             .create_buffer_object::<()>(w, h, fourcc, flags)
             .context("error creating GBM buffer object")?;
 
-        let buffer = GbmBuffer::from_bo(bo, true);
+        // Note: we deliberately don't mark the buffer as implicitly modified. On
+        // some drivers (notably NVIDIA) the implicit allocation still produces a
+        // buffer with a real tiled modifier (e.g. block-linear), which the EGL
+        // import will refuse to bind unless the actual modifier is passed through
+        // in the EGLImage attributes. Preserve whatever modifier GBM reports so
+        // the exported dmabuf carries it.
+        let buffer = GbmBuffer::from_bo(bo, false);
         Ok((buffer, Modifier::Invalid))
     } else {
         let modifiers = modifiers
@@ -1335,13 +1397,12 @@ mod tests {
         let prop_modifier = format
             .find_prop(spa::utils::Id(FormatProperties::VideoModifier.0))
             .unwrap();
-        assert!(prop_modifier
-            .flags()
-            .contains(PodPropFlags::DONT_FIXATE));
+        assert!(prop_modifier.flags().contains(PodPropFlags::DONT_FIXATE));
 
         let pod_modifier = prop_modifier.value();
-        let (_, modifiers) = PodDeserializer::deserialize_from::<Choice<i64>>(pod_modifier.as_bytes())
-            .expect("failed to deserialize modifier choice");
+        let (_, modifiers) =
+            PodDeserializer::deserialize_from::<Choice<i64>>(pod_modifier.as_bytes())
+                .expect("failed to deserialize modifier choice");
 
         parse_modifier_choice(modifiers).expect("unsupported modifier choice")
     }
@@ -1355,10 +1416,8 @@ mod tests {
         // https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/master/spa/include/spa/pod/filter.h
         // DRM_FORMAT_MOD_INVALID, as an i64 on the wire.
         let mod_invalid = -1i64;
-        let format = make_format_object(Choice(
-            ChoiceFlags::empty(),
-            ChoiceEnum::None(mod_invalid),
-        ));
+        let format =
+            make_format_object(Choice(ChoiceFlags::empty(), ChoiceEnum::None(mod_invalid)));
         let mut buffer = Vec::new();
         let pod = make_pod(&mut buffer, format);
 

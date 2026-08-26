@@ -2620,6 +2620,13 @@ impl State {
                             .into_iter()
                             .filter(|f| f.modifier == Modifier::Invalid)
                             .collect();
+                    } else {
+                        // eglQueryDmaBufModifiersEXT fails on NVIDIA, so the EGL
+                        // render formats are missing the real modifiers GBM can
+                        // allocate; probe them and offer those as well.
+                        let probed =
+                            crate::pw_utils::probe_gbm_render_formats(&gbm, size, &render_formats);
+                        render_formats = render_formats.into_iter().chain(probed).collect();
                     }
                 }
 
