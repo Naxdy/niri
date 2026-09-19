@@ -7,7 +7,7 @@
 let
   inherit (lib) types mkOption;
 
-  cfg = config.wayland.windowManager.niri;
+  cfg = config.wayland.windowManager.naxdyNiri;
 
   toNiriKDL =
     { }:
@@ -159,8 +159,8 @@ let
   mkKDL = toNiriKDL { };
 in
 {
-  options.wayland.windowManager.niri = {
-    enable = lib.mkEnableOption "Niri, a scrollable tiling Wayland compositor";
+  options.wayland.windowManager.naxdyNiri = {
+    enable = lib.mkEnableOption "Niri, a scrollable tiling Wayland compositor (Naxdy fork)";
 
     package = lib.mkPackageOption pkgs.niriPackages "niri" {
       nullable = true;

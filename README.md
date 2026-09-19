@@ -300,7 +300,7 @@ To use it, simply import the module it provides into your config:
                 niri.homeManagerModules.default
               ];
 
-              wayland.windowManager.niri = {
+              wayland.windowManager.naxdyNiri = {
                 enable = true;
                 # use the package from `programs.niri.package`, which is set by `niri.nixosModules.default`
                 package = null;
